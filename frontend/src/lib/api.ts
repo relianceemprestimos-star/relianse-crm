@@ -2,6 +2,7 @@ import type {
   AuthResponse,
   ChangePasswordResponse,
   Base,
+  Campaign,
   Client,
   ClientsResponse,
   DashboardData,
@@ -171,6 +172,50 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({}),
     }),
+  getCampaigns: (filters: Record<string, string | number | undefined | null> = {}) =>
+    request<{ campaigns: Campaign[] }>(`/api/campaigns${buildQuery(filters)}`),
+  getCampaign: (id: number, filters: Record<string, string | number | undefined | null> = {}) =>
+    request<{ campaign: Campaign }>(`/api/campaigns/${id}${buildQuery(filters)}`),
+  createCampaign: (payload: {
+    name: string;
+    convenio: string;
+    description?: string;
+    product_focus?: string;
+    status?: string;
+    internal_notes?: string;
+    file_name?: string;
+    user_ids?: number[];
+    role?: string;
+  }) =>
+    request<{ campaign: Campaign }>('/api/campaigns', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updateCampaign: (id: number, payload: {
+    name: string;
+    convenio: string;
+    description?: string;
+    product_focus?: string;
+    status?: string;
+    internal_notes?: string;
+    file_name?: string;
+    user_ids?: number[];
+    role?: string;
+  }) =>
+    request<{ campaign: Campaign }>(`/api/campaigns/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  archiveCampaign: (id: number, archived = true) =>
+    request<{ campaign: Campaign }>(`/api/campaigns/${id}/archive`, {
+      method: 'POST',
+      body: JSON.stringify({ archived }),
+    }),
+  updateCampaignUsers: (id: number, payload: { user_ids: number[]; role?: string }) =>
+    request<{ campaignUsers: Array<{ id: number; name: string; login: string; role: string }> }>(`/api/campaigns/${id}/users`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
   getDashboard: (filters: Record<string, string | number | undefined | null> = {}) =>
     request<DashboardData>(`/api/dashboard${buildQuery(filters)}`),
   getSettings: () => request<{ settings: Settings }>('/api/settings'),
@@ -281,7 +326,10 @@ export const api = {
       convenio?: string;
       estado?: string;
       cidade?: string;
+      notes?: string;
       observacao?: string;
+      campaign_id?: number | string | null;
+      campaign_name?: string;
     } = {}
   ) => {
     const formData = new FormData();
@@ -292,9 +340,18 @@ export const api = {
     if (baseInput.convenio) formData.append('convenio', baseInput.convenio);
     if (baseInput.estado) formData.append('estado', baseInput.estado);
     if (baseInput.cidade) formData.append('cidade', baseInput.cidade);
-    if (baseInput.observacao) formData.append('observacao', baseInput.observacao);
-    if (baseInput.nome_base) {
-      formData.append('campaignName', baseInput.nome_base);
+    if (baseInput.notes) {
+      formData.append('notes', baseInput.notes);
+      formData.append('observacao', baseInput.notes);
+    } else if (baseInput.observacao) {
+      formData.append('notes', baseInput.observacao);
+      formData.append('observacao', baseInput.observacao);
+    }
+    if (baseInput.campaign_id !== undefined && baseInput.campaign_id !== null && baseInput.campaign_id !== '') {
+      formData.append('campaign_id', String(baseInput.campaign_id));
+    }
+    if (baseInput.campaign_name) {
+      formData.append('campaign_name', baseInput.campaign_name);
     }
     return request<
       | { mode: 'preview'; file: { name: string; size: number; mime: string }; analysis: UploadAnalysis }

@@ -6,12 +6,13 @@ import toast from 'react-hot-toast';
 import { api } from '../lib/api';
 import { formatCurrencyDisplay, getMarginSummary } from '../lib/margins';
 import { openWhatsAppConversation } from '../lib/whatsapp';
-import type { Base, Client, ClientsResponse, Settings } from '../types';
+import type { Base, Campaign, Client, ClientsResponse, Settings } from '../types';
 import { Badge, Button, Card, Input, Select, SectionHeader, StatCard } from '../components/ui';
 
 type QueueFilters = {
   status_atendimento: string;
   consulta_status: string;
+  campaign_id: string;
   base_id: string;
   base_type: string;
   convenio: string;
@@ -34,6 +35,7 @@ export default function QueuePage() {
   const [filters, setFilters] = useState<QueueFilters>(() => ({
     status_atendimento: '',
     consulta_status: '',
+    campaign_id: searchParams.get('campaign_id') || '',
     base_id: searchParams.get('base_id') || '',
     base_type: '',
     convenio: '',
@@ -96,7 +98,11 @@ export default function QueuePage() {
       setStartingId(client.id);
       const started = await api.startClient(client.id);
       toast.success('Cliente enviado para atendimento.');
-      navigate(`/atendimento?clientId=${started.client.id}${filters.base_id ? `&base_id=${filters.base_id}` : ''}`);
+      navigate(
+        `/atendimento?clientId=${started.client.id}` +
+          `${filters.campaign_id ? `&campaign_id=${filters.campaign_id}` : ''}` +
+          `${filters.base_id ? `&base_id=${filters.base_id}` : ''}`
+      );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Falha ao iniciar atendimento.');
     } finally {
@@ -137,7 +143,8 @@ export default function QueuePage() {
   }
 
   const stats = response?.meta.stats || {};
-  const availableBases = bases.length ? bases : response?.meta.bases || response?.meta.campaigns || [];
+  const availableBases = bases.length ? bases : response?.meta.bases || [];
+  const availableCampaigns: Campaign[] = response?.meta.campaigns || [];
   const users = response?.meta.users || [];
 
   return (
@@ -162,6 +169,18 @@ export default function QueuePage() {
 
       <Card className="p-5">
         <div className="grid gap-3 xl:grid-cols-6">
+          <label className="block text-sm text-slate-300">
+            Campanha
+            <Select className="mt-2" value={filters.campaign_id} onChange={(event) => setFilters((current) => ({ ...current, campaign_id: event.target.value }))}>
+              <option value="">Todas</option>
+              {availableCampaigns.map((campaign) => (
+                <option key={campaign.id} value={campaign.id}>
+                  {campaign.name}
+                </option>
+              ))}
+            </Select>
+          </label>
+
           <label className="block text-sm text-slate-300">
             Base
             <Select className="mt-2" value={filters.base_id} onChange={(event) => setFilters((current) => ({ ...current, base_id: event.target.value }))}>
@@ -378,8 +397,9 @@ function consultaTone(status?: string) {
   return 'neutral';
 }
 
-function baseScopeFilters(filters: Pick<QueueFilters, 'base_id' | 'base_type' | 'convenio' | 'estado' | 'cidade'>) {
+function baseScopeFilters(filters: Pick<QueueFilters, 'campaign_id' | 'base_id' | 'base_type' | 'convenio' | 'estado' | 'cidade'>) {
   return {
+    campaign_id: filters.campaign_id || undefined,
     base_id: filters.base_id || undefined,
     base_type: filters.base_type || undefined,
     convenio: filters.convenio || undefined,

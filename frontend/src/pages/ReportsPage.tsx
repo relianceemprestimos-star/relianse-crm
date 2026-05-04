@@ -5,7 +5,7 @@ import toast from 'react-hot-toast';
 import { api } from '../lib/api';
 import { formatCpfDisplay, formatPhoneDisplay } from '../lib/whatsapp';
 import { formatCurrencyDisplay, productLabel } from '../lib/margins';
-import type { Base, ClientsResponse, ProductType, ReportResponse } from '../types';
+import type { Base, Campaign, ClientsResponse, ProductType, ReportResponse } from '../types';
 import { Badge, Card, Input, Select, SectionHeader, StatCard } from '../components/ui';
 
 type ReportFilters = {
@@ -14,6 +14,7 @@ type ReportFilters = {
   user_id: string;
   status_atendimento: string;
   consulta_status: string;
+  campaign_id: string;
   base_id: string;
   base_type: string;
   convenio: string;
@@ -32,6 +33,7 @@ export default function ReportsPage() {
     user_id: '',
     status_atendimento: '',
     consulta_status: '',
+    campaign_id: '',
     base_id: '',
     base_type: '',
     convenio: '',
@@ -92,7 +94,8 @@ export default function ReportsPage() {
     return sorted[0] || null;
   }, [productStats]);
 
-  const baseOptions = bases.length ? bases : options?.bases || options?.campaigns || [];
+  const baseOptions = bases.length ? bases : options?.bases || [];
+  const campaignOptions: Campaign[] = options?.campaigns || [];
 
   return (
     <div className="space-y-8">
@@ -103,6 +106,18 @@ export default function ReportsPage() {
 
       <Card className="p-5">
         <div className="grid gap-3 xl:grid-cols-6">
+          <label className="block text-sm text-slate-300">
+            Campanha
+            <Select className="mt-2" value={filters.campaign_id} onChange={(event) => setFilters((current) => ({ ...current, campaign_id: event.target.value }))}>
+              <option value="">Todas</option>
+              {campaignOptions.map((campaign) => (
+                <option key={campaign.id} value={campaign.id}>
+                  {campaign.name}
+                </option>
+              ))}
+            </Select>
+          </label>
+
           <label className="block text-sm text-slate-300">
             Base
             <Select className="mt-2" value={filters.base_id} onChange={(event) => setFilters((current) => ({ ...current, base_id: event.target.value }))}>

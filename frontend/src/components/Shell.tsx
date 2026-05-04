@@ -8,6 +8,7 @@ import {
   CircleHelp,
   ClipboardList,
   Files,
+  Flag,
   Landmark,
   LayoutDashboard,
   Layers3,
@@ -31,6 +32,7 @@ type NavItem = {
 
 const navItems: NavItem[] = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, allowedRoles: ['gerencial', 'vendedor'] },
+  { to: '/campanhas', label: 'Campanhas', icon: Flag, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/upload', label: 'Upload de Listas', icon: Files, allowedRoles: ['gerencial'] },
   { to: '/bases', label: 'Bases', icon: Layers3, allowedRoles: ['gerencial'] },
   { to: '/fila', label: 'Fila de Clientes', icon: Users, allowedRoles: ['gerencial', 'vendedor'] },
@@ -44,6 +46,8 @@ const navItems: NavItem[] = [
 
 const pageTitles: Record<string, string> = {
   '/dashboard': 'Dashboard',
+  '/campanhas': 'Campanhas',
+  '/campanhas/': 'Campanhas',
   '/upload': 'Upload de Listas',
   '/bases': 'Bases',
   '/fila': 'Fila de Clientes',
@@ -210,4 +214,3 @@ export function Shell() {
     </div>
   );
 }
-

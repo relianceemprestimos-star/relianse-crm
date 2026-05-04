@@ -13,6 +13,7 @@ export interface Base {
   id: number;
   nome_base: string;
   tipo_base: string;
+  campaign_id?: number | null;
   convenio: string;
   estado: string;
   cidade: string;
@@ -26,6 +27,38 @@ export interface Base {
   archived_at?: string | null;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface Campaign {
+  id: number;
+  name: string;
+  convenio: string;
+  description?: string;
+  product_focus: string;
+  status: 'active' | 'inactive' | 'archived' | string;
+  internal_notes?: string;
+  created_by?: number | null;
+  created_by_name?: string;
+  file_name?: string;
+  total_clients: number;
+  total_bases: number;
+  total_pendente: number;
+  total_em_atendimento: number;
+  total_agendados: number;
+  total_finalizados: number;
+  total_convertidos: number;
+  total_sem_interesse: number;
+  last_base_imported_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  total_users?: number;
+  users?: Array<{
+    id: number;
+    name: string;
+    login: string;
+    role: string;
+  }>;
+  bases?: Base[];
 }
 
 export interface MarginRecord {
@@ -250,7 +283,7 @@ export interface ClientsResponse {
   clients: Client[];
   meta: {
     stats: Record<string, number>;
-    campaigns: Base[];
+    campaigns: Campaign[];
     bases: Base[];
     users: UserRecord[];
   };

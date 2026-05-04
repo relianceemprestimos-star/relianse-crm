@@ -98,6 +98,8 @@ const SAMPLE_CLIENTS = [
   },
 ];
 
+const DEFAULT_CAMPAIGN_NAME = 'Campanha Geral';
+
 let rawDb;
 let db;
 let initPromise;
@@ -433,12 +435,13 @@ function clientDto(database, row, margins = [], interactions = [], returns = [],
 
   const rawData = row.raw_data_json ? safeJsonParse(row.raw_data_json, {}) : {};
   const consultaStatus = row.consulta_status || 'sem_marg';
-  const baseId = row.base_id ?? row.campaign_id ?? null;
+  const baseId = row.base_id ?? null;
+  const campaignId = row.campaign_id ?? null;
   const base = {
     id: baseId,
     nome_base: row.base_name || row.campaign_name || '',
     tipo_base: row.base_type || 'Outro',
-    convenio: row.base_convenio || row.campaign_name || '',
+    convenio: row.base_convenio || row.campaign_convenio || row.campaign_name || '',
     estado: row.base_state || '',
     cidade: row.base_city || '',
     arquivo_original: row.base_file_name || row.campaign_file_name || '',
@@ -447,12 +450,14 @@ function clientDto(database, row, margins = [], interactions = [], returns = [],
     archived_at: row.base_archived_at || null,
     created_at: row.base_created_at || row.created_at || '',
     updated_at: row.base_updated_at || row.updated_at || '',
+    campaign_id: campaignId,
+    campaign_name: row.campaign_name || '',
   };
   const duplicateBases = getClientDuplicateBases(database, row.cpf, baseId);
 
   return {
     id: row.id,
-    campaign_id: row.campaign_id ?? null,
+    campaign_id: campaignId,
     base_id: baseId,
     name: row.name || '',
     cpf: row.cpf || '',
@@ -582,15 +587,42 @@ function initSchema(database) {
     CREATE TABLE IF NOT EXISTS campaigns (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
-      file_name TEXT NOT NULL,
+      convenio TEXT NOT NULL DEFAULT '',
+      description TEXT NOT NULL DEFAULT '',
+      product_focus TEXT NOT NULL DEFAULT 'outros',
+      status TEXT NOT NULL DEFAULT 'active',
+      internal_notes TEXT NOT NULL DEFAULT '',
+      created_by INTEGER,
+      file_name TEXT NOT NULL DEFAULT '',
       total_clients INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL
+      total_bases INTEGER NOT NULL DEFAULT 0,
+      total_pendente INTEGER NOT NULL DEFAULT 0,
+      total_em_atendimento INTEGER NOT NULL DEFAULT 0,
+      total_agendados INTEGER NOT NULL DEFAULT 0,
+      total_finalizados INTEGER NOT NULL DEFAULT 0,
+      total_convertidos INTEGER NOT NULL DEFAULT 0,
+      total_sem_interesse INTEGER NOT NULL DEFAULT 0,
+      last_base_imported_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT '',
+      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS campaign_users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      campaign_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      role TEXT NOT NULL DEFAULT 'vendedor',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS bases (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       nome_base TEXT NOT NULL,
       tipo_base TEXT NOT NULL DEFAULT 'Outro',
+      campaign_id INTEGER,
       convenio TEXT NOT NULL DEFAULT '',
       estado TEXT NOT NULL DEFAULT '',
       cidade TEXT NOT NULL DEFAULT '',
@@ -603,7 +635,8 @@ function initSchema(database) {
       is_active INTEGER NOT NULL DEFAULT 1,
       archived_at TEXT,
       created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE SET NULL
     );
 
     CREATE TABLE IF NOT EXISTS clients (
@@ -651,30 +684,35 @@ function initSchema(database) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       client_id INTEGER NOT NULL,
       user_id INTEGER NOT NULL,
+      campaign_id INTEGER,
       type TEXT NOT NULL,
       note TEXT,
       private_note TEXT,
       created_at TEXT NOT NULL,
       FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE SET NULL
     );
 
     CREATE TABLE IF NOT EXISTS scheduled_returns (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       client_id INTEGER NOT NULL,
       user_id INTEGER NOT NULL,
+      campaign_id INTEGER,
       return_at TEXT NOT NULL,
       note TEXT,
       status TEXT NOT NULL DEFAULT 'pending',
       created_at TEXT NOT NULL,
       FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE SET NULL
     );
 
     CREATE TABLE IF NOT EXISTS deals (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       client_id INTEGER NOT NULL,
       user_id INTEGER NOT NULL,
+      campaign_id INTEGER,
       bank TEXT,
       amount REAL,
       installment REAL,
@@ -682,7 +720,8 @@ function initSchema(database) {
       note TEXT,
       created_at TEXT NOT NULL,
       FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE SET NULL
     );
 
     CREATE TABLE IF NOT EXISTS settings (
@@ -761,6 +800,7 @@ function initSchema(database) {
 
   ensureColumns(database, 'clients', [
     'base_id INTEGER',
+    'campaign_id INTEGER',
     'status_atendimento TEXT NOT NULL DEFAULT \'novo_na_fila\'',
     'consulta_status TEXT NOT NULL DEFAULT \'sem_marg\'',
     'consulta_mensagem TEXT NOT NULL DEFAULT \'\'',
@@ -774,6 +814,41 @@ function initSchema(database) {
     'queue_position INTEGER NOT NULL DEFAULT 0',
     'created_at TEXT NOT NULL',
     'updated_at TEXT NOT NULL',
+  ]);
+
+  ensureColumns(database, 'campaigns', [
+    'convenio TEXT NOT NULL DEFAULT \'\'',
+    'description TEXT NOT NULL DEFAULT \'\'',
+    'product_focus TEXT NOT NULL DEFAULT \'outros\'',
+    'status TEXT NOT NULL DEFAULT \'active\'',
+    'internal_notes TEXT NOT NULL DEFAULT \'\'',
+    'created_by INTEGER',
+    'file_name TEXT NOT NULL DEFAULT \'\'',
+    'total_bases INTEGER NOT NULL DEFAULT 0',
+    'total_pendente INTEGER NOT NULL DEFAULT 0',
+    'total_em_atendimento INTEGER NOT NULL DEFAULT 0',
+    'total_agendados INTEGER NOT NULL DEFAULT 0',
+    'total_finalizados INTEGER NOT NULL DEFAULT 0',
+    'total_convertidos INTEGER NOT NULL DEFAULT 0',
+    'total_sem_interesse INTEGER NOT NULL DEFAULT 0',
+    'last_base_imported_at TEXT',
+    'updated_at TEXT NOT NULL DEFAULT \'\'',
+  ]);
+
+  ensureColumns(database, 'bases', [
+    'campaign_id INTEGER',
+  ]);
+
+  ensureColumns(database, 'interactions', [
+    'campaign_id INTEGER',
+  ]);
+
+  ensureColumns(database, 'scheduled_returns', [
+    'campaign_id INTEGER',
+  ]);
+
+  ensureColumns(database, 'deals', [
+    'campaign_id INTEGER',
   ]);
 
   ensureColumns(database, 'users', [
@@ -805,6 +880,442 @@ function ensureColumns(database, table, columns) {
 
 function hasBaseClientIndex(database) {
   return queryAll(database, "PRAGMA index_list('clients')").some((row) => row.name === 'idx_clients_base_cpf');
+}
+
+function normalizeCampaignStatus(status) {
+  const text = String(status || '').trim().toLowerCase();
+  if (text === 'inactive' || text === 'inativo') {
+    return 'inactive';
+  }
+  if (text === 'archived' || text === 'arquivado') {
+    return 'archived';
+  }
+  return 'active';
+}
+
+function normalizeCampaignProductFocus(value) {
+  const text = String(value || '').trim();
+  if (!text) {
+    return 'outros';
+  }
+  return text;
+}
+
+function getCampaignByName(database, name) {
+  const campaignName = normalizeBaseText(name);
+  if (!campaignName) {
+    return null;
+  }
+
+  return queryOne(database, 'SELECT * FROM campaigns WHERE lower(name) = lower(?) LIMIT 1', [campaignName]);
+}
+
+function createCampaignRecord(database, campaignInput = {}, createdBy = null) {
+  const now = nowIso();
+  const name = normalizeBaseText(campaignInput.name || campaignInput.nome || DEFAULT_CAMPAIGN_NAME) || DEFAULT_CAMPAIGN_NAME;
+  const convenio = normalizeBaseText(campaignInput.convenio || campaignInput.orgao || 'Não definido');
+  const description = normalizeBaseText(campaignInput.description || campaignInput.descricao || '');
+  const productFocus = normalizeCampaignProductFocus(campaignInput.product_focus || campaignInput.productFocus || 'outros');
+  const status = normalizeCampaignStatus(campaignInput.status || 'active');
+  const internalNotes = normalizeBaseText(campaignInput.internal_notes || campaignInput.observacao || '');
+  const fileName = normalizeBaseText(campaignInput.file_name || campaignInput.arquivo_original || '');
+
+  const existing = getCampaignByName(database, name);
+  if (existing) {
+    database
+      .prepare(
+        `
+          UPDATE campaigns
+          SET
+            convenio = COALESCE(NULLIF(?, ''), convenio),
+            description = COALESCE(NULLIF(?, ''), description),
+            product_focus = COALESCE(NULLIF(?, ''), product_focus),
+            status = COALESCE(NULLIF(?, ''), status),
+            internal_notes = COALESCE(NULLIF(?, ''), internal_notes),
+            created_by = COALESCE(?, created_by),
+            file_name = COALESCE(NULLIF(?, ''), file_name),
+            updated_at = ?
+          WHERE id = ?
+        `
+      )
+      .run(
+        convenio,
+        description,
+        productFocus,
+        status,
+        internalNotes,
+        createdBy,
+        fileName,
+        now,
+        existing.id
+      );
+    const campaign = queryOne(database, 'SELECT * FROM campaigns WHERE id = ?', [existing.id]);
+    refreshCampaignTotals(database, existing.id);
+    return campaign;
+  }
+
+  database
+    .prepare(
+      `
+        INSERT INTO campaigns (
+          name, convenio, description, product_focus, status, internal_notes, created_by,
+          file_name, total_clients, total_bases, total_pendente, total_em_atendimento, total_agendados,
+          total_finalizados, total_convertidos, total_sem_interesse, last_base_imported_at,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `
+    )
+    .run(
+      name,
+      convenio,
+      description,
+      productFocus,
+      status,
+      internalNotes,
+      createdBy,
+      fileName,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      null,
+      now,
+      now
+    );
+
+  const campaign = queryOne(database, 'SELECT * FROM campaigns ORDER BY id DESC LIMIT 1');
+  return campaign;
+}
+
+function ensureDefaultCampaign(database) {
+  const existing = getCampaignByName(database, DEFAULT_CAMPAIGN_NAME);
+  const campaign =
+    existing ||
+    createCampaignRecord(
+      database,
+      {
+        name: DEFAULT_CAMPAIGN_NAME,
+        convenio: 'Não definido',
+        description: 'Campanha criada automaticamente para dados legados.',
+        product_focus: 'outros',
+        status: 'active',
+        internal_notes: '',
+      },
+      null
+    );
+
+  if (campaign && String(campaign.status || '').toLowerCase() !== 'active') {
+    database.prepare('UPDATE campaigns SET status = ?, updated_at = ? WHERE id = ?').run('active', nowIso(), campaign.id);
+  }
+
+  return Number(campaign?.id || existing?.id || 0);
+}
+
+function resolveCampaignIdForInput(database, campaignInput = {}) {
+  const campaignIdRaw = campaignInput.campaign_id ?? campaignInput.campaignId ?? campaignInput.campaign ?? null;
+  const numericCampaignId = campaignIdRaw === null || campaignIdRaw === undefined || campaignIdRaw === ''
+    ? null
+    : Number(campaignIdRaw);
+
+  if (numericCampaignId) {
+    const existing = queryOne(database, 'SELECT id FROM campaigns WHERE id = ?', [numericCampaignId]);
+    if (existing) {
+      return numericCampaignId;
+    }
+  }
+
+  const campaignName = normalizeBaseText(
+    campaignInput.campaign_name || campaignInput.campaignName || campaignInput.nome_campanha || campaignInput.nomeCampanha || ''
+  );
+  if (campaignName) {
+    const campaign = createCampaignRecord(
+      database,
+      {
+        name: campaignName,
+        convenio: campaignInput.convenio || campaignInput.orgao || campaignInput.convenio_orgao || 'Não definido',
+        description: campaignInput.description || campaignInput.descricao || '',
+        product_focus: campaignInput.product_focus || campaignInput.productFocus || 'outros',
+        status: campaignInput.status || 'active',
+        internal_notes: campaignInput.internal_notes || campaignInput.observacao || '',
+        file_name: campaignInput.file_name || campaignInput.arquivo_original || '',
+      },
+      campaignInput.created_by ?? campaignInput.createdBy ?? null
+    );
+    return Number(campaign?.id || 0);
+  }
+
+  return ensureDefaultCampaign(database);
+}
+
+function refreshCampaignTotals(database, campaignId) {
+  const resolvedId = Number(campaignId || 0);
+  if (!resolvedId) {
+    return;
+  }
+
+  const totals = queryOne(
+    database,
+    `
+      SELECT
+        COUNT(*) AS total_clients,
+        SUM(CASE WHEN c.status_atendimento = 'novo_na_fila' THEN 1 ELSE 0 END) AS total_pendente,
+        SUM(CASE WHEN c.status_atendimento = 'em_atendimento' THEN 1 ELSE 0 END) AS total_em_atendimento,
+        SUM(CASE WHEN c.status_atendimento = 'aguardando_retorno' THEN 1 ELSE 0 END) AS total_agendados,
+        SUM(CASE WHEN c.status_atendimento = 'finalizado' THEN 1 ELSE 0 END) AS total_finalizados,
+        SUM(CASE WHEN c.status_atendimento = 'convertido' THEN 1 ELSE 0 END) AS total_convertidos,
+        SUM(CASE WHEN c.status_atendimento = 'sem_interesse' THEN 1 ELSE 0 END) AS total_sem_interesse,
+        COUNT(DISTINCT b.id) AS total_bases,
+        MAX(COALESCE(b.updated_at, b.created_at)) AS last_base_imported_at
+      FROM clients c
+      LEFT JOIN bases b ON b.id = c.base_id
+      WHERE COALESCE(c.campaign_id, b.campaign_id) = ?
+    `,
+    [resolvedId]
+  ) || {
+    total_clients: 0,
+    total_pendente: 0,
+    total_em_atendimento: 0,
+    total_agendados: 0,
+    total_finalizados: 0,
+    total_convertidos: 0,
+    total_sem_interesse: 0,
+    total_bases: 0,
+    last_base_imported_at: null,
+  };
+
+  database
+    .prepare(
+      `
+        UPDATE campaigns
+        SET
+          total_clients = ?,
+          total_bases = ?,
+          total_pendente = ?,
+          total_em_atendimento = ?,
+          total_agendados = ?,
+          total_finalizados = ?,
+          total_convertidos = ?,
+          total_sem_interesse = ?,
+          last_base_imported_at = ?,
+          updated_at = ?
+        WHERE id = ?
+      `
+    )
+    .run(
+      Number(totals.total_clients || 0),
+      Number(totals.total_bases || 0),
+      Number(totals.total_pendente || 0),
+      Number(totals.total_em_atendimento || 0),
+      Number(totals.total_agendados || 0),
+      Number(totals.total_finalizados || 0),
+      Number(totals.total_convertidos || 0),
+      Number(totals.total_sem_interesse || 0),
+      totals.last_base_imported_at || null,
+      nowIso(),
+      resolvedId
+    );
+}
+
+function getCampaignUsers(database, campaignId) {
+  return queryAll(
+    database,
+    `
+      SELECT cu.*, u.name AS user_name, u.login AS user_login, u.role AS user_role
+      FROM campaign_users cu
+      LEFT JOIN users u ON u.id = cu.user_id
+      WHERE cu.campaign_id = ?
+      ORDER BY datetime(cu.created_at) DESC, cu.id DESC
+    `,
+    [campaignId]
+  );
+}
+
+function isCampaignVisibleToUser(database, campaignRow, userId, role) {
+  const normalizedRole = String(role || 'vendedor').toLowerCase();
+  if (normalizedRole === 'gerencial' || normalizedRole === 'admin') {
+    return true;
+  }
+
+  if (!campaignRow || normalizeCampaignStatus(campaignRow.status) !== 'active') {
+    return false;
+  }
+
+  const assignments = getCampaignUsers(database, campaignRow.id);
+  if (!assignments.length) {
+    return true;
+  }
+
+  return assignments.some((assignment) => Number(assignment.user_id) === Number(userId));
+}
+
+function campaignDto(database, row) {
+  const baseCounts = queryOne(
+    database,
+    'SELECT COUNT(*) AS count, MAX(updated_at) AS last_updated FROM bases WHERE campaign_id = ?',
+    [row.id]
+  ) || { count: 0, last_updated: null };
+  const totals = queryOne(
+    database,
+    `
+      SELECT
+        COUNT(*) AS total_clients,
+        SUM(CASE WHEN c.status_atendimento = 'novo_na_fila' THEN 1 ELSE 0 END) AS total_pendente,
+        SUM(CASE WHEN c.status_atendimento = 'em_atendimento' THEN 1 ELSE 0 END) AS total_em_atendimento,
+        SUM(CASE WHEN c.status_atendimento = 'aguardando_retorno' THEN 1 ELSE 0 END) AS total_agendados,
+        SUM(CASE WHEN c.status_atendimento = 'finalizado' THEN 1 ELSE 0 END) AS total_finalizados,
+        SUM(CASE WHEN c.status_atendimento = 'convertido' THEN 1 ELSE 0 END) AS total_convertidos,
+        SUM(CASE WHEN c.status_atendimento = 'sem_interesse' THEN 1 ELSE 0 END) AS total_sem_interesse
+      FROM clients c
+      LEFT JOIN bases b ON b.id = c.base_id
+      WHERE COALESCE(c.campaign_id, b.campaign_id) = ?
+    `,
+    [row.id]
+  ) || {
+    total_clients: 0,
+    total_pendente: 0,
+    total_em_atendimento: 0,
+    total_agendados: 0,
+    total_finalizados: 0,
+    total_convertidos: 0,
+    total_sem_interesse: 0,
+  };
+  const users = getCampaignUsers(database, row.id);
+
+  return {
+    id: Number(row.id),
+    name: row.name || DEFAULT_CAMPAIGN_NAME,
+    convenio: row.convenio || '',
+    description: row.description || '',
+    product_focus: row.product_focus || 'outros',
+    status: normalizeCampaignStatus(row.status),
+    internal_notes: row.internal_notes || '',
+    created_by: row.created_by ?? null,
+    created_by_name: row.created_by_name || '',
+    file_name: row.file_name || '',
+    total_clients: Number(totals.total_clients || row.total_clients || 0),
+    total_bases: Number(baseCounts.count || row.total_bases || 0),
+    total_pendente: Number(totals.total_pendente || row.total_pendente || 0),
+    total_em_atendimento: Number(totals.total_em_atendimento || row.total_em_atendimento || 0),
+    total_agendados: Number(totals.total_agendados || row.total_agendados || 0),
+    total_finalizados: Number(totals.total_finalizados || row.total_finalizados || 0),
+    total_convertidos: Number(totals.total_convertidos || row.total_convertidos || 0),
+    total_sem_interesse: Number(totals.total_sem_interesse || row.total_sem_interesse || 0),
+    last_base_imported_at: row.last_base_imported_at || baseCounts.last_updated || null,
+    created_at: row.created_at || '',
+    updated_at: row.updated_at || '',
+    total_users: users.length,
+    users: users.map((user) => ({
+      id: Number(user.user_id),
+      name: user.user_name || '',
+      login: user.user_login || '',
+      role: user.user_role || 'vendedor',
+    })),
+  };
+}
+
+function backfillCampaignAssignments(database) {
+  const defaultCampaignId = ensureDefaultCampaign(database);
+  if (!defaultCampaignId) {
+    return;
+  }
+
+  database
+    .prepare(
+      `
+        UPDATE bases
+        SET campaign_id = COALESCE(campaign_id, ?)
+        WHERE campaign_id IS NULL
+      `
+    )
+    .run(defaultCampaignId);
+
+  database
+    .prepare(
+      `
+        UPDATE clients
+        SET campaign_id = COALESCE(campaign_id, (
+          SELECT b.campaign_id
+          FROM bases b
+          WHERE b.id = clients.base_id
+          LIMIT 1
+        ), ?)
+        WHERE campaign_id IS NULL
+      `
+    )
+    .run(defaultCampaignId);
+
+  database
+    .prepare(
+      `
+        UPDATE interactions
+        SET campaign_id = COALESCE(campaign_id, (
+          SELECT COALESCE(c.campaign_id, b.campaign_id, ?)
+          FROM clients c
+          LEFT JOIN bases b ON b.id = c.base_id
+          WHERE c.id = interactions.client_id
+          LIMIT 1
+        ))
+        WHERE campaign_id IS NULL
+      `
+    )
+    .run(defaultCampaignId);
+
+  database
+    .prepare(
+      `
+        UPDATE scheduled_returns
+        SET campaign_id = COALESCE(campaign_id, (
+          SELECT COALESCE(c.campaign_id, b.campaign_id, ?)
+          FROM clients c
+          LEFT JOIN bases b ON b.id = c.base_id
+          WHERE c.id = scheduled_returns.client_id
+          LIMIT 1
+        ))
+        WHERE campaign_id IS NULL
+      `
+    )
+    .run(defaultCampaignId);
+
+  database
+    .prepare(
+      `
+        UPDATE deals
+        SET campaign_id = COALESCE(campaign_id, (
+          SELECT COALESCE(c.campaign_id, b.campaign_id, ?)
+          FROM clients c
+          LEFT JOIN bases b ON b.id = c.base_id
+          WHERE c.id = deals.client_id
+          LIMIT 1
+        ))
+        WHERE campaign_id IS NULL
+      `
+    )
+    .run(defaultCampaignId);
+
+  const legacyCampaigns = queryAll(
+    database,
+    `
+      SELECT id
+      FROM campaigns
+      WHERE id <> ?
+        AND COALESCE(convenio, '') = ''
+        AND COALESCE(description, '') = ''
+        AND COALESCE(internal_notes, '') = ''
+        AND COALESCE(created_by, 0) = 0
+        AND COALESCE(file_name, '') <> ''
+    `,
+    [defaultCampaignId]
+  );
+
+  for (const row of legacyCampaigns) {
+    database.prepare('UPDATE campaigns SET status = ?, updated_at = ? WHERE id = ?').run('archived', nowIso(), row.id);
+  }
+
+  refreshCampaignTotals(database, defaultCampaignId);
 }
 
 function normalizeLegacyUsers(database) {
@@ -845,6 +1356,11 @@ function normalizeLegacyUsers(database) {
 }
 
 function backfillBasesFromCampaigns(database) {
+  const baseCount = Number((queryOne(database, 'SELECT COUNT(*) AS count FROM bases') || { count: 0 }).count || 0);
+  if (baseCount > 0) {
+    return;
+  }
+
   const existingBaseIds = new Set(queryAll(database, 'SELECT id FROM bases').map((row) => Number(row.id)));
   const campaigns = queryAll(database, 'SELECT * FROM campaigns ORDER BY id ASC');
   const insertBase = database.prepare(`
@@ -1037,17 +1553,19 @@ function seedDefaults(database) {
   const clientCount = Number((queryOne(database, 'SELECT COUNT(*) AS count FROM clients') || { count: 0 }).count || 0);
   if (clientCount === 0) {
     const now = nowIso();
+    const defaultCampaignId = ensureDefaultCampaign(database);
     database
       .prepare(`
         INSERT INTO bases (
-          nome_base, tipo_base, convenio, estado, cidade, arquivo_original,
+          nome_base, tipo_base, campaign_id, convenio, estado, cidade, arquivo_original,
           total_clientes, total_com_margem, total_sem_margem, total_erro,
           observacao, is_active, archived_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         SAMPLE_BASE.nome_base,
         SAMPLE_BASE.tipo_base,
+        defaultCampaignId,
         SAMPLE_BASE.convenio,
         SAMPLE_BASE.estado,
         SAMPLE_BASE.cidade,
@@ -1063,9 +1581,7 @@ function seedDefaults(database) {
         now
       );
     const baseId = Number(queryOne(database, 'SELECT id FROM bases ORDER BY id DESC LIMIT 1').id);
-    database
-      .prepare('INSERT INTO campaigns (id, name, file_name, total_clients, created_at) VALUES (?, ?, ?, ?, ?)')
-      .run(baseId, SAMPLE_BASE.nome_base, SAMPLE_BASE.arquivo_original, SAMPLE_CLIENTS.length, now);
+    database.prepare('UPDATE bases SET campaign_id = ? WHERE id = ?').run(defaultCampaignId, baseId);
     const insertClient = database.prepare(`
       INSERT INTO clients (
         base_id, campaign_id, name, cpf, phone, email, status_atendimento, consulta_status, consulta_mensagem,
@@ -1104,7 +1620,7 @@ function seedDefaults(database) {
 
       insertClient.run(
         baseId,
-        baseId,
+        defaultCampaignId,
         client.name,
         client.cpf,
         normalizePhoneToBrazilInternational(client.phone),
@@ -1140,6 +1656,7 @@ function seedDefaults(database) {
     });
 
     refreshBaseTotals(database, baseId);
+    refreshCampaignTotals(database, defaultCampaignId);
   }
 
   migrateLegacyRows(database);
@@ -1252,6 +1769,7 @@ export async function initDb() {
       initSchema(db);
       rebuildClientsTableForBaseSupport(db);
       backfillBasesFromCampaigns(db);
+      backfillCampaignAssignments(db);
       normalizeLegacyUsers(db);
       db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_login ON users(login)');
       seedDefaults(db);
@@ -1301,7 +1819,11 @@ function getClientBaseQuery() {
   return `
     SELECT
       c.*,
-      COALESCE(b.nome_base, cam.name) AS campaign_name,
+      COALESCE(cam.name, b.nome_base) AS campaign_name,
+      cam.convenio AS campaign_convenio,
+      cam.description AS campaign_description,
+      cam.product_focus AS campaign_product_focus,
+      cam.status AS campaign_status,
       COALESCE(b.arquivo_original, cam.file_name) AS campaign_file_name,
       b.id AS base_join_id,
       b.nome_base AS base_name,
@@ -1346,7 +1868,7 @@ function getClientBaseQuery() {
       ) AS next_return_at
     FROM clients c
     LEFT JOIN bases b ON b.id = COALESCE(c.base_id, c.campaign_id)
-    LEFT JOIN campaigns cam ON cam.id = c.campaign_id
+    LEFT JOIN campaigns cam ON cam.id = COALESCE(c.campaign_id, b.campaign_id)
     LEFT JOIN users u ON u.id = c.assigned_to
   `;
 }
@@ -1649,19 +2171,21 @@ function createBaseAndCampaign(database, baseInput, fileName, totalClients) {
   const convenio = normalizeBaseText(baseInput.convenio || baseName);
   const estado = normalizeBaseText(baseInput.estado || '');
   const cidade = normalizeBaseText(baseInput.cidade || '');
-  const observation = normalizeBaseText(baseInput.observacao || '');
+  const observation = normalizeBaseText(baseInput.notes || baseInput.observacao || baseInput.observation || baseInput.internal_notes || '');
+  const campaignId = resolveCampaignIdForInput(database, baseInput);
 
   database
     .prepare(`
       INSERT INTO bases (
-        nome_base, tipo_base, convenio, estado, cidade, arquivo_original,
+        nome_base, tipo_base, campaign_id, convenio, estado, cidade, arquivo_original,
         total_clientes, total_com_margem, total_sem_margem, total_erro,
         observacao, is_active, archived_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     .run(
       baseName,
       baseType,
+      campaignId,
       convenio,
       estado,
       cidade,
@@ -1673,28 +2197,28 @@ function createBaseAndCampaign(database, baseInput, fileName, totalClients) {
       observation,
       1,
       null,
-      now,
-      now
-    );
+        now,
+        now
+      );
 
   const baseId = Number(queryOne(database, 'SELECT id FROM bases ORDER BY id DESC LIMIT 1').id);
-  database
-    .prepare('INSERT INTO campaigns (id, name, file_name, total_clients, created_at) VALUES (?, ?, ?, ?, ?)')
-    .run(baseId, baseName, fileName, totalClients, now);
+  database.prepare('UPDATE bases SET campaign_id = COALESCE(campaign_id, ?) WHERE id = ?').run(campaignId, baseId);
+  refreshCampaignTotals(database, campaignId);
 
   return {
     id: baseId,
+    campaign_id: campaignId,
     nome_base: baseName,
     tipo_base: baseType,
     convenio,
     estado,
     cidade,
     arquivo_original: fileName,
-    total_clientes: totalClients,
+    total_clients: totalClients,
     total_com_margem: 0,
     total_sem_margem: 0,
     total_erro: 0,
-    observacao,
+    observacao: observation,
     is_active: 1,
     archived_at: null,
     created_at: now,
@@ -1702,7 +2226,7 @@ function createBaseAndCampaign(database, baseInput, fileName, totalClients) {
   };
 }
 
-function saveClientRecord(database, baseId, row, sourceFileName, queuePosition) {
+function saveClientRecord(database, baseId, campaignId, row, sourceFileName, queuePosition) {
   const existing = queryOne(database, 'SELECT * FROM clients WHERE base_id = ? AND cpf = ?', [baseId, row.cpf]);
   const rawDataJson = row.raw_data_json;
   const best = bestMarginFromMargins(Object.values(row.margins));
@@ -1739,7 +2263,7 @@ function saveClientRecord(database, baseId, row, sourceFileName, queuePosition) 
     `)
     .run(
       baseId,
-      baseId,
+      campaignId,
       row.name,
       row.cpf,
       row.phone || '',
@@ -1809,7 +2333,7 @@ export function saveImportedSpreadsheet(buffer, filename, baseInput = {}) {
 
     for (const row of rowsToSave) {
       const existing = queryOne(database, 'SELECT id FROM clients WHERE base_id = ? AND cpf = ?', [baseRecord.id, row.cpf]);
-      saveClientRecord(database, baseRecord.id, row, filename, queuePosition++);
+      saveClientRecord(database, baseRecord.id, baseRecord.campaign_id, row, filename, queuePosition++);
       if (existing) {
         updated += 1;
       } else {
@@ -1822,6 +2346,7 @@ export function saveImportedSpreadsheet(buffer, filename, baseInput = {}) {
 
   const counts = tx(validRows);
   refreshBaseTotals(database, baseRecord.id);
+  refreshCampaignTotals(database, baseRecord.campaign_id);
 
   return {
     base: {
@@ -1875,12 +2400,12 @@ export function listClients(params = {}) {
   }
 
   if (params.campaign_id) {
-    filters.push('COALESCE(c.base_id, c.campaign_id) = ?');
-    values.push(Number(params.campaign_id));
+    filters.push('(c.campaign_id = ? OR b.campaign_id = ?)');
+    values.push(Number(params.campaign_id), Number(params.campaign_id));
   }
 
   if (params.base_id) {
-    filters.push('COALESCE(c.base_id, c.campaign_id) = ?');
+    filters.push('c.base_id = ?');
     values.push(Number(params.base_id));
   }
 
@@ -2015,8 +2540,13 @@ export function getNextClient(params = {}) {
   }
 
   if (params.base_id) {
-    filters.push('COALESCE(c.base_id, c.campaign_id) = ?');
+    filters.push('c.base_id = ?');
     values.push(Number(params.base_id));
+  }
+
+  if (params.campaign_id) {
+    filters.push('(c.campaign_id = ? OR b.campaign_id = ?)');
+    values.push(Number(params.campaign_id), Number(params.campaign_id));
   }
 
   if (params.base_type) {
@@ -2146,17 +2676,42 @@ export function getClientById(id) {
 }
 
 function insertInteraction(database, { clientId, userId, type, note = '', privateNote = '' }) {
+  const client = queryOne(
+    database,
+    `
+      SELECT c.id, COALESCE(c.campaign_id, b.campaign_id) AS campaign_id
+      FROM clients c
+      LEFT JOIN bases b ON b.id = c.base_id
+      WHERE c.id = ?
+      LIMIT 1
+    `,
+    [clientId]
+  );
   database
     .prepare(
-      'INSERT INTO interactions (client_id, user_id, type, note, private_note, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+      'INSERT INTO interactions (client_id, user_id, campaign_id, type, note, private_note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
     )
-    .run(clientId, userId, type, note, privateNote, nowIso());
+    .run(clientId, userId, client?.campaign_id ?? null, type, note, privateNote, nowIso());
 }
 
 function updateClientStatus(database, id, statusAtendimento, assignedTo = null) {
+  const client = queryOne(
+    database,
+    `
+      SELECT c.id, COALESCE(c.campaign_id, b.campaign_id) AS campaign_id
+      FROM clients c
+      LEFT JOIN bases b ON b.id = c.base_id
+      WHERE c.id = ?
+      LIMIT 1
+    `,
+    [id]
+  );
   database
     .prepare('UPDATE clients SET status_atendimento = ?, status = ?, assigned_to = COALESCE(?, assigned_to), updated_at = ? WHERE id = ?')
     .run(statusAtendimento, statusAtendimento, assignedTo, nowIso(), id);
+  if (client?.campaign_id) {
+    refreshCampaignTotals(database, client.campaign_id);
+  }
 }
 
 export function startAttendance(id, userId) {
@@ -2185,15 +2740,26 @@ export function addInteraction(id, { userId, type = 'observacao', note = '', pri
 
 export function scheduleReturn(id, { userId, return_at, note = '', private_note = '' }) {
   const database = getDb();
-  if (!queryOne(database, 'SELECT id FROM clients WHERE id = ?', [id])) {
+  const client = queryOne(
+    database,
+    `
+      SELECT c.id, COALESCE(c.campaign_id, b.campaign_id) AS campaign_id
+      FROM clients c
+      LEFT JOIN bases b ON b.id = c.base_id
+      WHERE c.id = ?
+      LIMIT 1
+    `,
+    [id]
+  );
+  if (!client) {
     return null;
   }
 
   database
     .prepare(
-      'INSERT INTO scheduled_returns (client_id, user_id, return_at, note, status, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+      'INSERT INTO scheduled_returns (client_id, user_id, campaign_id, return_at, note, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
     )
-    .run(id, userId, return_at, note, 'pending', nowIso());
+    .run(id, userId, client.campaign_id ?? null, return_at, note, 'pending', nowIso());
   updateClientStatus(database, id, 'aguardando_retorno', userId);
   insertInteraction(database, { clientId: id, userId, type: 'retorno_agendado', note, privateNote: private_note });
   persistDb();
@@ -2226,15 +2792,26 @@ export function markNoInterest(id, { userId, note = '', private_note = '' }) {
 
 export function convertClient(id, { userId, bank = '', amount = 0, installment = 0, term = 0, note = '', private_note = '' }) {
   const database = getDb();
-  if (!queryOne(database, 'SELECT id FROM clients WHERE id = ?', [id])) {
+  const client = queryOne(
+    database,
+    `
+      SELECT c.id, COALESCE(c.campaign_id, b.campaign_id) AS campaign_id
+      FROM clients c
+      LEFT JOIN bases b ON b.id = c.base_id
+      WHERE c.id = ?
+      LIMIT 1
+    `,
+    [id]
+  );
+  if (!client) {
     return null;
   }
 
   database
     .prepare(
-      'INSERT INTO deals (client_id, user_id, bank, amount, installment, term, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO deals (client_id, user_id, campaign_id, bank, amount, installment, term, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
-    .run(id, userId, bank, amount, installment, term, note, nowIso());
+    .run(id, userId, client.campaign_id ?? null, bank, amount, installment, term, note, nowIso());
 
   updateClientStatus(database, id, 'convertido', userId);
   insertInteraction(database, { clientId: id, userId, type: 'convertido', note, privateNote: private_note });
@@ -2263,8 +2840,13 @@ export function getDashboardData(params = {}) {
   }
 
   if (params.base_id) {
-    filters.push('COALESCE(c.base_id, c.campaign_id) = ?');
+    filters.push('c.base_id = ?');
     values.push(Number(params.base_id));
+  }
+
+  if (params.campaign_id) {
+    filters.push('(c.campaign_id = ? OR b.campaign_id = ?)');
+    values.push(Number(params.campaign_id), Number(params.campaign_id));
   }
 
   if (params.base_type) {
@@ -2364,8 +2946,13 @@ export function getReportsData(params = {}) {
   }
 
   if (params.base_id) {
-    filters.push('COALESCE(c.base_id, c.campaign_id) = ?');
+    filters.push('c.base_id = ?');
     values.push(Number(params.base_id));
+  }
+
+  if (params.campaign_id) {
+    filters.push('(c.campaign_id = ? OR b.campaign_id = ?)');
+    values.push(Number(params.campaign_id), Number(params.campaign_id));
   }
 
   if (params.base_type) {
@@ -2417,8 +3004,8 @@ export function getReportsData(params = {}) {
   }
 
   if (params.campaign_id) {
-    filters.push('COALESCE(c.base_id, c.campaign_id) = ?');
-    values.push(Number(params.campaign_id));
+    filters.push('(c.campaign_id = ? OR b.campaign_id = ?)');
+    values.push(Number(params.campaign_id), Number(params.campaign_id));
   }
   if (params.user_id) {
     filters.push('c.assigned_to = ?');
@@ -2487,7 +3074,7 @@ export function getReportsData(params = {}) {
         ) AS next_return_at
       FROM clients c
       LEFT JOIN bases b ON b.id = COALESCE(c.base_id, c.campaign_id)
-      LEFT JOIN campaigns cam ON cam.id = c.campaign_id
+      LEFT JOIN campaigns cam ON cam.id = COALESCE(c.campaign_id, b.campaign_id)
       LEFT JOIN users u ON u.id = c.assigned_to
       ${whereClause}
       ORDER BY datetime(c.updated_at) DESC, c.id DESC
@@ -2949,41 +3536,267 @@ export function listRibeiraoBatchResults(batchId) {
 
 export function getBases(params = {}) {
   const database = getDb();
+  const filters = [];
+  const values = [];
+
+  if (String(params.include_archived || '') !== '1' && params.include_archived !== true) {
+    filters.push('COALESCE(b.is_active, 1) = 1');
+  }
+
+  if (params.campaign_id) {
+    filters.push('b.campaign_id = ?');
+    values.push(Number(params.campaign_id));
+  }
+
+  if (params.base_type) {
+    filters.push('b.tipo_base = ?');
+    values.push(String(params.base_type));
+  }
+
+  if (params.convenio) {
+    filters.push('b.convenio = ?');
+    values.push(String(params.convenio));
+  }
+
+  if (params.estado) {
+    filters.push('b.estado = ?');
+    values.push(String(params.estado));
+  }
+
+  if (params.cidade) {
+    filters.push('b.cidade = ?');
+    values.push(String(params.cidade));
+  }
+
+  const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
   return queryAll(
     database,
     `
       SELECT
-        id,
-        nome_base,
-        tipo_base,
-        convenio,
-        estado,
-        cidade,
-        arquivo_original,
-        total_clientes,
-        total_com_margem,
-        total_sem_margem,
-        total_erro,
-        observacao,
-        is_active,
-        archived_at,
-        created_at,
-        updated_at
-      FROM bases
-      ${String(params.include_archived || '') !== '1' && params.include_archived !== true ? 'WHERE COALESCE(is_active, 1) = 1' : ''}
-      ORDER BY COALESCE(datetime(updated_at), datetime(created_at)) DESC, id DESC
+        b.*,
+        c.name AS campaign_name,
+        c.convenio AS campaign_convenio,
+        c.description AS campaign_description,
+        c.product_focus AS campaign_product_focus,
+        c.status AS campaign_status
+      FROM bases b
+      LEFT JOIN campaigns c ON c.id = b.campaign_id
+      ${whereClause}
+      ORDER BY COALESCE(datetime(b.updated_at), datetime(b.created_at)) DESC, b.id DESC
     `
-  );
+    ,
+    values
+  ).map((row) => ({
+    ...row,
+    campaign_name: row.campaign_name || '',
+    campaign_convenio: row.campaign_convenio || '',
+    campaign_description: row.campaign_description || '',
+    campaign_product_focus: row.campaign_product_focus || '',
+    campaign_status: row.campaign_status || '',
+  }));
 }
 
 export function getCampaigns(params = {}) {
-  return getBases(params).map((base) => ({
-    id: base.id,
-    name: base.nome_base,
-    file_name: base.arquivo_original,
-    total_clients: base.total_clientes,
-    created_at: base.created_at,
-  }));
+  const database = getDb();
+  const role = String(params.role || '').toLowerCase();
+  const userId = Number(params.user_id || 0);
+  const rows = queryAll(
+    database,
+    `
+      SELECT
+        c.*,
+        u.name AS created_by_name
+      FROM campaigns c
+      LEFT JOIN users u ON u.id = c.created_by
+      ORDER BY
+        CASE c.status
+          WHEN 'active' THEN 0
+          WHEN 'inactive' THEN 1
+          WHEN 'archived' THEN 2
+          ELSE 3
+        END,
+        datetime(c.updated_at) DESC,
+        datetime(c.created_at) DESC,
+        c.id DESC
+    `
+  );
+
+  return rows
+    .map((row) => campaignDto(database, row))
+    .filter((campaign) => {
+      if (String(params.include_archived || '') === '1' || params.include_archived === true) {
+        return true;
+      }
+      return campaign.status !== 'archived';
+    })
+    .filter((campaign) => isCampaignVisibleToUser(database, campaign, userId, role));
+}
+
+export function getCampaignById(id, params = {}) {
+  const database = getDb();
+  const row = queryOne(
+    database,
+    `
+      SELECT
+        c.*,
+        u.name AS created_by_name
+      FROM campaigns c
+      LEFT JOIN users u ON u.id = c.created_by
+      WHERE c.id = ?
+      LIMIT 1
+    `,
+    [id]
+  );
+
+  if (!row) {
+    return null;
+  }
+
+  const campaign = campaignDto(database, row);
+  const role = String(params.role || '').toLowerCase();
+  const userId = Number(params.user_id || 0);
+  if (!isCampaignVisibleToUser(database, campaign, userId, role) && role !== 'gerencial' && role !== 'admin') {
+    return null;
+  }
+
+  return {
+    ...campaign,
+    bases: getBases({ campaign_id: id, include_archived: params.include_archived }),
+    users: getCampaignUsers(database, id).map((user) => ({
+      id: Number(user.user_id),
+      name: user.user_name || '',
+      login: user.user_login || '',
+      role: user.user_role || 'vendedor',
+    })),
+  };
+}
+
+export function createCampaignRecordPublic(payload = {}, createdBy = null) {
+  const database = getDb();
+  const existingName = normalizeBaseText(payload.name || payload.nome || '');
+  if (!existingName) {
+    return null;
+  }
+
+  const normalizedStatus = normalizeCampaignStatus(payload.status || 'active');
+  const activeDuplicate = queryOne(
+    database,
+    `SELECT id FROM campaigns WHERE lower(name) = lower(?) AND status <> 'archived' LIMIT 1`,
+    [existingName]
+  );
+  if (activeDuplicate && Number(activeDuplicate.id) !== Number(payload.id || 0)) {
+    throw new Error('Ja existe uma campanha ativa com este nome.');
+  }
+
+  const campaign = createCampaignRecord(database, payload, createdBy);
+  if (payload.user_ids && Array.isArray(payload.user_ids)) {
+    setCampaignUsers(database, campaign.id, payload.user_ids, payload.role || 'vendedor');
+  }
+  if (normalizedStatus !== 'archived') {
+    refreshCampaignTotals(database, campaign.id);
+  }
+  persistDb();
+  return getCampaignById(campaign.id, { include_archived: true });
+}
+
+export function updateCampaignRecord(id, payload = {}) {
+  const database = getDb();
+  const current = queryOne(database, 'SELECT * FROM campaigns WHERE id = ?', [id]);
+  if (!current) {
+    return null;
+  }
+
+  const nextName = normalizeBaseText(payload.name || payload.nome || current.name);
+  const nextConvenio = normalizeBaseText(payload.convenio || payload.orgao || current.convenio || '');
+  const nextDescription = normalizeBaseText(payload.description || payload.descricao || current.description || '');
+  const nextProductFocus = normalizeCampaignProductFocus(payload.product_focus || payload.productFocus || current.product_focus || 'outros');
+  const nextStatus = normalizeCampaignStatus(payload.status || current.status || 'active');
+  const nextNotes = normalizeBaseText(payload.internal_notes || payload.observacao || current.internal_notes || '');
+  const nextFileName = normalizeBaseText(payload.file_name || payload.arquivo_original || current.file_name || '');
+
+  const duplicate = queryOne(
+    database,
+    `SELECT id FROM campaigns WHERE lower(name) = lower(?) AND id <> ? AND status <> 'archived' LIMIT 1`,
+    [nextName, id]
+  );
+  if (duplicate) {
+    throw new Error('Ja existe uma campanha ativa com este nome.');
+  }
+
+  database
+    .prepare(
+      `
+        UPDATE campaigns
+        SET
+          name = ?,
+          convenio = ?,
+          description = ?,
+          product_focus = ?,
+          status = ?,
+          internal_notes = ?,
+          file_name = COALESCE(NULLIF(?, ''), file_name),
+          created_by = COALESCE(?, created_by),
+          updated_at = ?
+        WHERE id = ?
+      `
+    )
+    .run(
+      nextName,
+      nextConvenio,
+      nextDescription,
+      nextProductFocus,
+      nextStatus,
+      nextNotes,
+      nextFileName,
+      payload.created_by ?? payload.createdBy ?? null,
+      nowIso(),
+      id
+    );
+
+  if (Array.isArray(payload.user_ids)) {
+    setCampaignUsers(database, id, payload.user_ids, payload.role || 'vendedor');
+  }
+
+  refreshCampaignTotals(database, id);
+  persistDb();
+  return getCampaignById(id, { include_archived: true });
+}
+
+export function setCampaignUsers(databaseOrId, campaignIdOrUsers, maybeUserIds, maybeRole = 'vendedor') {
+  const database = typeof databaseOrId === 'object' && databaseOrId.__isAdapter ? databaseOrId : getDb();
+  const campaignId = typeof databaseOrId === 'object' && databaseOrId.__isAdapter ? Number(campaignIdOrUsers) : Number(databaseOrId);
+  const userIds = Array.isArray(typeof databaseOrId === 'object' && databaseOrId.__isAdapter ? maybeUserIds : campaignIdOrUsers)
+    ? (typeof databaseOrId === 'object' && databaseOrId.__isAdapter ? maybeUserIds : campaignIdOrUsers)
+    : [];
+  const role = typeof databaseOrId === 'object' && databaseOrId.__isAdapter ? maybeRole : maybeUserIds || 'vendedor';
+
+  if (!campaignId) {
+    return null;
+  }
+
+  database.prepare('DELETE FROM campaign_users WHERE campaign_id = ?').run(campaignId);
+  const insert = database.prepare('INSERT INTO campaign_users (campaign_id, user_id, role, created_at) VALUES (?, ?, ?, ?)');
+  for (const userId of userIds) {
+    const numericUserId = Number(userId);
+    if (!numericUserId) continue;
+    insert.run(campaignId, numericUserId, role, nowIso());
+  }
+  persistDb();
+  return getCampaignUsers(database, campaignId);
+}
+
+export function archiveCampaignRecord(id, archived = true) {
+  const database = getDb();
+  const current = queryOne(database, 'SELECT * FROM campaigns WHERE id = ?', [id]);
+  if (!current) {
+    return null;
+  }
+
+  database
+    .prepare('UPDATE campaigns SET status = ?, updated_at = ? WHERE id = ?')
+    .run(archived ? 'archived' : 'inactive', nowIso(), id);
+  persistDb();
+  return getCampaignById(id, { include_archived: true });
 }
 
 export function renameBase(id, name) {
@@ -3002,9 +3815,6 @@ export function renameBase(id, name) {
   database
     .prepare('UPDATE bases SET nome_base = ?, updated_at = ? WHERE id = ?')
     .run(baseName, now, id);
-  database
-    .prepare('UPDATE campaigns SET name = ? WHERE id = ?')
-    .run(baseName, id);
   persistDb();
   return queryOne(database, 'SELECT * FROM bases WHERE id = ?', [id]);
 }

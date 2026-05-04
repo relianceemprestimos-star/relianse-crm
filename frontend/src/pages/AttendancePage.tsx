@@ -59,6 +59,7 @@ export default function AttendancePage() {
 
   const baseScope = useMemo(
     () => ({
+      campaign_id: searchParams.get('campaign_id') || undefined,
       base_id: searchParams.get('base_id') || undefined,
     }),
     [searchParams]
@@ -112,13 +113,20 @@ export default function AttendancePage() {
           const nextResponse = await api.getNextClient(baseScope);
           if (!nextResponse.next) {
             if (active) setClient(null);
-            toast('Não há clientes na fila no momento.');
+            toast('NÃ£o hÃ¡ clientes na fila no momento.');
             return;
           }
 
           const started = await api.startClient(nextResponse.next.client.id);
           if (!active) return;
-          setSearchParams({ clientId: String(started.client.id), ...(baseScope.base_id ? { base_id: String(baseScope.base_id) } : {}) }, { replace: true });
+          setSearchParams(
+            {
+              clientId: String(started.client.id),
+              ...(baseScope.campaign_id ? { campaign_id: String(baseScope.campaign_id) } : {}),
+              ...(baseScope.base_id ? { base_id: String(baseScope.base_id) } : {}),
+            },
+            { replace: true }
+          );
           setClient(started.client);
           setTimeline((started.interactions || []).map((item: TimelineItem) => item));
           setQueuePosition({
@@ -160,7 +168,7 @@ export default function AttendancePage() {
 
     const link = openWhatsAppConversation(client, settings.whatsapp_message, settings);
     if (!link) {
-      toast.error('Telefone indisponível para o WhatsApp.');
+      toast.error('Telefone indisponÃ­vel para o WhatsApp.');
       return;
     }
 
@@ -188,7 +196,7 @@ export default function AttendancePage() {
     if (!client) return;
 
     if (!force && !canProceed) {
-      toast.error('Registre uma observação ou escolha uma ação antes de avançar.');
+      toast.error('Registre uma observaÃ§Ã£o ou escolha uma aÃ§Ã£o antes de avanÃ§ar.');
       return;
     }
 
@@ -199,12 +207,19 @@ export default function AttendancePage() {
     }
 
     if (next.next.client.id === client.id) {
-      toast('Ainda não há próximo cliente disponível.');
+      toast('Ainda nÃ£o hÃ¡ prÃ³ximo cliente disponÃ­vel.');
       return;
     }
 
     const started = await api.startClient(next.next.client.id);
-    setSearchParams({ clientId: String(started.client.id), ...(baseScope.base_id ? { base_id: String(baseScope.base_id) } : {}) }, { replace: true });
+    setSearchParams(
+      {
+        clientId: String(started.client.id),
+        ...(baseScope.campaign_id ? { campaign_id: String(baseScope.campaign_id) } : {}),
+        ...(baseScope.base_id ? { base_id: String(baseScope.base_id) } : {}),
+      },
+      { replace: true }
+    );
     setClient(started.client);
     setTimeline((started.interactions || []).map((item: TimelineItem) => item));
     setNote('');
@@ -213,13 +228,13 @@ export default function AttendancePage() {
     setScheduleNote('');
     setScheduleDate('');
     setConvertForm({ bank: '', amount: '', installment: '', term: '', note: '' });
-    toast.success('Próximo cliente carregado.');
+    toast.success('PrÃ³ximo cliente carregado.');
   }
 
   async function handleFinalizar() {
     if (!client) return;
     if (!canProceed) {
-      const confirmed = window.confirm('Você quer finalizar sem observação registrada?');
+      const confirmed = window.confirm('VocÃª quer finalizar sem observaÃ§Ã£o registrada?');
       if (!confirmed) return;
     }
 
@@ -240,7 +255,7 @@ export default function AttendancePage() {
 
   async function handleNoInterest() {
     if (!client) return;
-    const confirmed = window.confirm('Confirmar marcação como sem interesse?');
+    const confirmed = window.confirm('Confirmar marcaÃ§Ã£o como sem interesse?');
     if (!confirmed) return;
 
     try {
@@ -298,7 +313,7 @@ export default function AttendancePage() {
       setConvertOpen(false);
       await goNextClient(true);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Falha ao salvar conversão.');
+      toast.error(error instanceof Error ? error.message : 'Falha ao salvar conversÃ£o.');
     } finally {
       setSavingAction(false);
     }
@@ -306,16 +321,16 @@ export default function AttendancePage() {
 
   async function handleSaveObservationOnly() {
     if (!client || (!note.trim() && !privateNote.trim())) {
-      toast.error('Digite uma observação antes de salvar.');
+      toast.error('Digite uma observaÃ§Ã£o antes de salvar.');
       return;
     }
 
     try {
       setSavingAction(true);
       await saveObservation();
-      toast.success('Observação salva.');
+      toast.success('ObservaÃ§Ã£o salva.');
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Falha ao salvar observação.');
+      toast.error(error instanceof Error ? error.message : 'Falha ao salvar observaÃ§Ã£o.');
     } finally {
       setSavingAction(false);
     }
@@ -347,24 +362,38 @@ export default function AttendancePage() {
                   </div>
                 </div>
                 <div className="flex gap-2">
-                  <Button variant="secondary" onClick={() => navigate(`/fila${baseScope.base_id ? `?base_id=${baseScope.base_id}` : ''}`)}>
+                  <Button
+                    variant="secondary"
+                    onClick={() =>
+                      navigate(
+                        `/fila${
+                          baseScope.campaign_id || baseScope.base_id
+                            ? `?${baseScope.campaign_id ? `campaign_id=${baseScope.campaign_id}` : ''}${
+                                baseScope.campaign_id && baseScope.base_id ? '&' : ''
+                              }${baseScope.base_id ? `base_id=${baseScope.base_id}` : ''}`
+                            : ''
+                        }`
+                      )
+                    }
+                  >
                     <MoveLeft size={16} />
-                    Voltar à fila
+                    Voltar Ã  fila
                   </Button>
                   <Button variant="secondary" onClick={() => void goNextClient()}>
                     <MoveRight size={16} />
-                    Próximo cliente
+                    PrÃ³ximo cliente
                   </Button>
                 </div>
               </div>
 
-              <div className="mt-6 grid gap-3 md:grid-cols-2">
+                            <div className="mt-6 grid gap-3 md:grid-cols-2">
                 <InfoLine label="CPF" value={formatCpfDisplay(client.cpf)} />
                 <InfoLine label="Telefone" value={formatPhoneDisplay(client.phone)} />
                 <InfoLine label="E-mail" value={client.email || '-'} />
+                <InfoLine label="Campanha" value={client.campaign_name || client.base_name || '-'} />
                 <InfoLine label="Origem da lista" value={client.base_name || client.campaign_name || '-'} />
                 <InfoLine label="Tipo da base" value={client.base_type || '-'} />
-                <InfoLine label="Convênio / órgão" value={client.base_convenio || '-'} />
+                <InfoLine label="Conv?nio / ?rg?o" value={client.base_convenio || '-'} />
               </div>
 
               <div className="mt-5 flex flex-wrap gap-3">
@@ -376,13 +405,13 @@ export default function AttendancePage() {
                   <Eye size={16} />
                   Ver dados originais
                 </Button>
-                <Badge tone="neutral">Vendedor: {client.assigned_to_name || user?.name || '—'}</Badge>
+                <Badge tone="neutral">Vendedor: {client.assigned_to_name || user?.name || 'â€”'}</Badge>
               </div>
 
               {client.has_duplicate_in_other_base ? (
                 <div className="mt-4 rounded-2xl border border-accent/20 bg-accent/10 p-4 text-sm text-slate-200">
                   <p className="font-semibold text-white">Cliente encontrado em outras bases</p>
-                  <p className="mt-1 text-slate-300">Este CPF aparece em múltiplas bases importadas.</p>
+                  <p className="mt-1 text-slate-300">Este CPF aparece em mÃºltiplas bases importadas.</p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {(client.duplicate_bases || []).map((base) => (
                       <Badge key={base.id} tone="accent">
@@ -403,7 +432,7 @@ export default function AttendancePage() {
                     <span className="text-slate-500">Tipo:</span> {client.base_type || '-'}
                   </div>
                   <div>
-                    <span className="text-slate-500">Convênio:</span> {client.base_convenio || '-'}
+                    <span className="text-slate-500">ConvÃªnio:</span> {client.base_convenio || '-'}
                   </div>
                   <div>
                     <span className="text-slate-500">Estado/Cidade:</span> {client.base_state || '-'}{client.base_city ? ` / ${client.base_city}` : ''}
@@ -416,7 +445,7 @@ export default function AttendancePage() {
             </Card>
 
             <Card className="p-6">
-              <p className="text-sm text-slate-400">Posição na fila</p>
+              <p className="text-sm text-slate-400">PosiÃ§Ã£o na fila</p>
               <div className="mt-3 rounded-3xl border border-border bg-bg/60 p-5">
                 <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Atual</p>
                 <p className="mt-2 text-3xl font-bold text-white">{client.queue_position || queuePosition.current || '-'}</p>
@@ -433,15 +462,15 @@ export default function AttendancePage() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-sm text-slate-400">Margens por produto</p>
-                <h3 className="text-xl font-bold text-white">Consignação, Crédito e Cartão</h3>
+                <h3 className="text-xl font-bold text-white">ConsignaÃ§Ã£o, CrÃ©dito e CartÃ£o</h3>
               </div>
               <Badge tone="accent">{client.best_product_label || productLabel(client.best_product_type || '')}</Badge>
             </div>
 
             <div className="mt-5 grid gap-4 lg:grid-cols-3">
-              <MarginCard title="Consignação" gross={client.margem_bruta_consignacao} net={client.margem_liquida_consignacao} state={cons} />
-              <MarginCard title="Crédito" gross={client.margem_bruta_credito} net={client.margem_liquida_credito} state={cred} />
-              <MarginCard title="Cartão" gross={client.margem_bruta_cartao} net={client.margem_liquida_cartao} state={card} />
+              <MarginCard title="ConsignaÃ§Ã£o" gross={client.margem_bruta_consignacao} net={client.margem_liquida_consignacao} state={cons} />
+              <MarginCard title="CrÃ©dito" gross={client.margem_bruta_credito} net={client.margem_liquida_credito} state={cred} />
+              <MarginCard title="CartÃ£o" gross={client.margem_bruta_cartao} net={client.margem_liquida_cartao} state={card} />
             </div>
           </Card>
 
@@ -451,7 +480,7 @@ export default function AttendancePage() {
               <Textarea
                 rows={8}
                 className="mt-4"
-                placeholder="Digite aqui suas observações..."
+                placeholder="Digite aqui suas observaÃ§Ãµes..."
                 value={note}
                 onChange={(event) => setNote(event.target.value)}
               />
@@ -459,14 +488,14 @@ export default function AttendancePage() {
                 <span>{charCount} caracteres</span>
                 <label className="flex items-center gap-2">
                   <input type="checkbox" checked={privateMode} onChange={(event) => setPrivateMode(event.target.checked)} />
-                  Adicionar observação privada
+                  Adicionar observaÃ§Ã£o privada
                 </label>
               </div>
               {privateMode ? (
                 <Textarea
                   rows={4}
                   className="mt-3"
-                  placeholder="Observação privada..."
+                  placeholder="ObservaÃ§Ã£o privada..."
                   value={privateNote}
                   onChange={(event) => setPrivateNote(event.target.value)}
                 />
@@ -474,7 +503,7 @@ export default function AttendancePage() {
               <div className="mt-4 flex flex-wrap gap-3">
                 <Button variant="secondary" onClick={() => void handleSaveObservationOnly()} disabled={savingAction}>
                   <Send size={16} />
-                  Salvar observação
+                  Salvar observaÃ§Ã£o
                 </Button>
                 <Button variant="secondary" onClick={() => setScheduleOpen(true)}>
                   <CalendarClock size={16} />
@@ -499,7 +528,7 @@ export default function AttendancePage() {
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <p className="font-semibold text-white">{timelineLabel(item.type)}</p>
-                          <p className="mt-1 text-sm text-slate-400">{item.note || item.private_note || 'Sem observação'}</p>
+                          <p className="mt-1 text-sm text-slate-400">{item.note || item.private_note || 'Sem observaÃ§Ã£o'}</p>
                         </div>
                         <Badge tone="accent">{new Date(item.created_at).toLocaleString('pt-BR')}</Badge>
                       </div>
@@ -535,24 +564,24 @@ export default function AttendancePage() {
               </Button>
               <Button variant="ghost" className="py-4" onClick={() => void goNextClient()} disabled={savingAction}>
                 <ArrowRight size={16} />
-                Próximo cliente
+                PrÃ³ximo cliente
               </Button>
             </div>
           </Card>
         </div>
       ) : (
-        <Card className="p-8 text-sm text-slate-400">Não há clientes disponíveis para atendimento.</Card>
+        <Card className="p-8 text-sm text-slate-400">NÃ£o hÃ¡ clientes disponÃ­veis para atendimento.</Card>
       )}
 
       <Modal
         open={scheduleOpen}
         title="Agendar retorno"
-        description="Defina a data, hora e a observação do próximo contato."
+        description="Defina a data, hora e a observaÃ§Ã£o do prÃ³ximo contato."
         onClose={() => setScheduleOpen(false)}
       >
         <div className="space-y-4">
           <Input type="datetime-local" value={scheduleDate} onChange={(event) => setScheduleDate(event.target.value)} />
-          <Textarea rows={4} placeholder="Observação do retorno..." value={scheduleNote} onChange={(event) => setScheduleNote(event.target.value)} />
+          <Textarea rows={4} placeholder="ObservaÃ§Ã£o do retorno..." value={scheduleNote} onChange={(event) => setScheduleNote(event.target.value)} />
           <div className="flex justify-end gap-3">
             <Button variant="secondary" onClick={() => setScheduleOpen(false)}>
               Cancelar
@@ -580,7 +609,7 @@ export default function AttendancePage() {
           <Textarea
             rows={4}
             className="md:col-span-2"
-            placeholder="Observação da conversão..."
+            placeholder="ObservaÃ§Ã£o da conversÃ£o..."
             value={convertForm.note}
             onChange={(event) => setConvertForm((current) => ({ ...current, note: event.target.value }))}
           />
@@ -591,7 +620,7 @@ export default function AttendancePage() {
           </Button>
           <Button onClick={() => void handleConvert()} disabled={savingAction}>
             <ThumbsUp size={16} />
-            Confirmar conversão
+            Confirmar conversÃ£o
           </Button>
         </div>
       </Modal>
@@ -640,7 +669,7 @@ function MarginCard({
       <div className="mt-4 space-y-2 text-sm">
         <p className="text-slate-400">Margem bruta</p>
         <p className="font-semibold text-white">{formatCurrencyDisplay(gross)}</p>
-        <p className="text-slate-400">Margem líquida</p>
+        <p className="text-slate-400">Margem lÃ­quida</p>
         <p className="font-semibold text-white">{formatCurrencyDisplay(net)}</p>
       </div>
     </div>
@@ -650,7 +679,7 @@ function MarginCard({
 function timelineLabel(type: string) {
   const labels: Record<string, string> = {
     atendimento_iniciado: 'Atendimento iniciado',
-    observacao: 'Observação adicionada',
+    observacao: 'ObservaÃ§Ã£o adicionada',
     retorno_agendado: 'Retorno agendado',
     finalizado: 'Finalizado',
     sem_interesse: 'Sem interesse',

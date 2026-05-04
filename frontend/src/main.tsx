@@ -8,6 +8,9 @@ import { AuthProvider } from './components/AuthProvider';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import './index.css';
 
+const FRONTEND_BUILD_VERSION = 'upload-observacao-fix-2026-05-04-01';
+console.log('[BUILD]', FRONTEND_BUILD_VERSION);
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <BrowserRouter>

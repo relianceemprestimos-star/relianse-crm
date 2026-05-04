@@ -4,6 +4,8 @@ import { Shell } from './components/Shell';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { RoleGuard } from './components/RoleGuard';
 import DashboardPage from './pages/DashboardPage';
+import CampaignsPage from './pages/CampaignsPage';
+import CampaignDetailPage from './pages/CampaignDetailPage';
 import UploadPage from './pages/UploadPage';
 import BasesPage from './pages/BasesPage';
 import QueuePage from './pages/QueuePage';
@@ -24,6 +26,8 @@ export default function App() {
         <Route element={<Shell />}>
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/campanhas" element={<CampaignsPage />} />
+          <Route path="/campanhas/:id" element={<CampaignDetailPage />} />
           <Route path="/fila" element={<QueuePage />} />
           <Route path="/atendimento" element={<AttendancePage />} />
           <Route path="/whatsapp" element={<WhatsAppPage />} />
@@ -43,4 +47,3 @@ export default function App() {
     </Routes>
   );
 }
-

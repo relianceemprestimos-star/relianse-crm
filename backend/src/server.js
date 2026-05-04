@@ -30,8 +30,14 @@ import {
   startAttendance,
   renameBase,
   addInteraction,
+  archiveCampaignRecord,
   updateUserPasswordRecord,
+  createCampaignRecordPublic as createCampaignRecord,
+  getCampaignById,
+  getCampaigns,
   updateUserRecord,
+  setCampaignUsers,
+  updateCampaignRecord,
 } from './db.js';
 import { authMiddleware, loginWithCredentials, roleMiddleware } from './auth.js';
 import { hashPassword, verifyPassword } from './security.js';
@@ -218,7 +224,6 @@ app.post('/api/auth/change-password', (req, res) => {
 });
 app.use('/api/users', roleMiddleware(['gerencial']));
 app.use('/api/bases', roleMiddleware(['gerencial']));
-app.use('/api/campaigns', roleMiddleware(['gerencial']));
 app.use('/api/upload', roleMiddleware(['gerencial']));
 app.use('/api/settings', roleMiddleware(['gerencial']));
 app.use('/api/reports', roleMiddleware(['gerencial']));
@@ -339,8 +344,100 @@ app.post('/api/users/:id/toggle-active', (req, res) => {
   }
 });
 
-app.get('/api/campaigns', (_req, res) => {
-  res.json({ campaigns: getBases(), bases: getBases() });
+app.get('/api/campaigns', (req, res) => {
+  const userId = getAuthenticatedUserId(req);
+  const role = getRequestRole(req);
+  const includeArchived = req.query.include_archived;
+  const campaigns = getCampaigns({
+    user_id: userId,
+    role,
+    include_archived: includeArchived,
+  });
+  return res.json({ campaigns });
+});
+
+app.get('/api/campaigns/:id', (req, res) => {
+  const id = Number(req.params.id);
+  const campaign = getCampaignById(id, {
+    user_id: getAuthenticatedUserId(req),
+    role: getRequestRole(req),
+    include_archived: req.query.include_archived,
+  });
+  if (!campaign) {
+    return res.status(404).json({ message: 'Campanha nao encontrada.' });
+  }
+  return res.json({ campaign });
+});
+
+app.post('/api/campaigns', requirePrivilegedRole, (req, res) => {
+  try {
+    const campaign = createCampaignRecord({
+      name: String(req.body.name || req.body.nome || '').trim(),
+      convenio: String(req.body.convenio || req.body.orgao || '').trim(),
+      description: String(req.body.description || req.body.descricao || '').trim(),
+      product_focus: String(req.body.product_focus || req.body.productFocus || 'outros').trim(),
+      status: String(req.body.status || 'active').trim(),
+      internal_notes: String(req.body.internal_notes || req.body.internalNotes || '').trim(),
+      file_name: String(req.body.file_name || req.body.fileName || '').trim(),
+      user_ids: Array.isArray(req.body.user_ids) ? req.body.user_ids : [],
+      role: String(req.body.role || 'vendedor').trim(),
+    }, getAuthenticatedUserId(req));
+    if (!campaign) {
+      return res.status(400).json({ message: 'Informe o nome da campanha.' });
+    }
+    return res.json({ campaign });
+  } catch (error) {
+    return res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao cadastrar campanha.' });
+  }
+});
+
+app.put('/api/campaigns/:id', requirePrivilegedRole, (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const campaign = updateCampaignRecord(id, {
+      name: String(req.body.name || req.body.nome || '').trim(),
+      convenio: String(req.body.convenio || req.body.orgao || '').trim(),
+      description: String(req.body.description || req.body.descricao || '').trim(),
+      product_focus: String(req.body.product_focus || req.body.productFocus || 'outros').trim(),
+      status: String(req.body.status || 'active').trim(),
+      internal_notes: String(req.body.internal_notes || req.body.internalNotes || '').trim(),
+      file_name: String(req.body.file_name || req.body.fileName || '').trim(),
+      user_ids: Array.isArray(req.body.user_ids) ? req.body.user_ids : undefined,
+      role: String(req.body.role || 'vendedor').trim(),
+    });
+    if (!campaign) {
+      return res.status(404).json({ message: 'Campanha nao encontrada.' });
+    }
+    return res.json({ campaign });
+  } catch (error) {
+    return res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao atualizar campanha.' });
+  }
+});
+
+app.post('/api/campaigns/:id/archive', requirePrivilegedRole, (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const archived = req.body.archived !== false;
+    const campaign = archiveCampaignRecord(id, archived);
+    if (!campaign) {
+      return res.status(404).json({ message: 'Campanha nao encontrada.' });
+    }
+    return res.json({ campaign });
+  } catch (error) {
+    return res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao arquivar campanha.' });
+  }
+});
+
+app.post('/api/campaigns/:id/users', requirePrivilegedRole, (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const userIds = Array.isArray(req.body.user_ids) ? req.body.user_ids : [];
+    const role = String(req.body.role || 'vendedor').trim();
+    const campaignUsers = setCampaignUsers(id, userIds, role);
+    return res.json({ campaignUsers });
+  } catch (error) {
+    return res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao atualizar vendedores da campanha.' });
+  }
 });
 
 app.get('/api/bases', (req, res) => {
@@ -392,7 +489,9 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
       convenio: String(req.body.convenio || req.body.orgao || req.body.convenio_orgao || '').trim(),
       estado: String(req.body.estado || req.body.state || '').trim(),
       cidade: String(req.body.cidade || req.body.city || '').trim(),
-      observacao: String(req.body.observacao || req.body.observation || '').trim(),
+      notes: String(req.body.notes || req.body.observacao || req.body.observation || req.body.internal_notes || '').trim(),
+      campaign_id: req.body.campaign_id || req.body.campaignId || null,
+      campaign_name: String(req.body.campaign_name || '').trim(),
     };
 
     if (mode === 'preview' || mode === 'validate') {
