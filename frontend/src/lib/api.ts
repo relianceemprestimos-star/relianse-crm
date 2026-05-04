@@ -10,6 +10,7 @@ import type {
   RibeiraoBatchResultItem,
   RibeiraoBatchSourceType,
   RibeiraoHistoryItem,
+  RibeiraoConfigStatus,
   RibeiraoQueryResult,
   RibeiraoSession,
   RibeiraoSessionStatus,
@@ -21,6 +22,11 @@ import type {
 import { clearAuthSession, getAccessSession, getAuthToken } from './session';
 
 const API_URL = String(import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+
+export class ApiError extends Error {
+  code?: string;
+  status?: number;
+}
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers || {});
@@ -51,11 +57,17 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
       window.location.assign('/login');
     }
-    throw new Error(data?.message || 'Sessão expirada. Faça login novamente.');
+    const error = new ApiError(data?.message || 'Sessão expirada. Faça login novamente.');
+    error.code = data?.code;
+    error.status = response.status;
+    throw error;
   }
 
   if (!response.ok) {
-    throw new Error(data?.message || 'Erro inesperado na API.');
+    const error = new ApiError(data?.message || 'Erro inesperado na API.');
+    error.code = data?.code;
+    error.status = response.status;
+    throw error;
   }
 
   return data as T;
@@ -88,7 +100,9 @@ async function requestBlob(path: string, init: RequestInit = {}): Promise<Blob> 
     if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
       window.location.assign('/login');
     }
-    throw new Error('Sessão expirada. Faça login novamente.');
+    const error = new ApiError('Sessão expirada. Faça login novamente.');
+    error.status = response.status;
+    throw error;
   }
 
   if (!response.ok) {
@@ -100,7 +114,9 @@ async function requestBlob(path: string, init: RequestInit = {}): Promise<Blob> 
     } catch {
       message = text || message;
     }
-    throw new Error(message);
+    const error = new ApiError(message);
+    error.status = response.status;
+    throw error;
   }
 
   return response.blob();
@@ -158,6 +174,7 @@ export const api = {
   getDashboard: (filters: Record<string, string | number | undefined | null> = {}) =>
     request<DashboardData>(`/api/dashboard${buildQuery(filters)}`),
   getSettings: () => request<{ settings: Settings }>('/api/settings'),
+  getRibeiraoConfig: () => request<{ config: RibeiraoConfigStatus }>('/api/ribeirao/config'),
   getBases: (filters: Record<string, string | number | undefined | null> = {}) =>
     request<{ bases: Base[] }>(`/api/bases${buildQuery(filters)}`),
   renameBase: (id: number, nome_base: string) =>

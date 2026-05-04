@@ -19,8 +19,13 @@ services:
       FRONTEND_URL: ${FRONTEND_URL:-https://${CRM_DOMAIN:-reliancecrm.com.br}}
       BACKEND_URL: ${BACKEND_URL:-https://${CRM_DOMAIN:-reliancecrm.com.br}/api}
       PYTHON_BIN: ${PYTHON_BIN:-/opt/venv/bin/python}
+      RIBEIRAO_AVERBADOR_URL: ${RIBEIRAO_AVERBADOR_URL:-}
+      RIBEIRAO_AVERBADOR_CONSULTA_URL: ${RIBEIRAO_AVERBADOR_CONSULTA_URL:-}
+      RIBEIRAO_AVERBADOR_LOGIN: ${RIBEIRAO_AVERBADOR_LOGIN:-}
+      RIBEIRAO_AVERBADOR_PASSWORD: ${RIBEIRAO_AVERBADOR_PASSWORD:-}
+      RIBEIRAO_AVERBADOR_ORGAO: ${RIBEIRAO_AVERBADOR_ORGAO:-Prefeitura de Ribeirao Preto}
       RIBEIRAO_PROJECT_ROOT: /app/backend/src/services/averbadores/ribeirao/vendor/worker
-      RIBEIRAO_HEADLESS: ${RIBEIRAO_HEADLESS:-false}
+      RIBEIRAO_HEADLESS: ${RIBEIRAO_HEADLESS:-true}
     volumes:
       - ./data:/app/data
       - ./uploads:/app/uploads

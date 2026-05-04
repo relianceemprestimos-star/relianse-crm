@@ -6,7 +6,7 @@ import { useAuth } from '../components/AuthProvider';
 import { UsersManagerPanel } from '../components/UsersManagerPanel';
 import { api } from '../lib/api';
 import { roleLabel } from '../lib/session';
-import type { Settings } from '../types';
+import type { RibeiraoConfigStatus, Settings } from '../types';
 import { Badge, Button, Card, Input, SectionHeader, Textarea } from '../components/ui';
 
 export default function SettingsPage() {
@@ -25,6 +25,7 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [passwordSaving, setPasswordSaving] = useState(false);
+  const [ribeiraoConfig, setRibeiraoConfig] = useState<RibeiraoConfigStatus | null>(null);
   const [passwordForm, setPasswordForm] = useState({
     currentPassword: '',
     newPassword: '',
@@ -39,6 +40,18 @@ export default function SettingsPage() {
         const response = await api.getSettings();
         if (!active) return;
         setSettings((current) => ({ ...current, ...response.settings }));
+        if (user?.role === 'gerencial') {
+          try {
+            const configResponse = await api.getRibeiraoConfig();
+            if (active) {
+              setRibeiraoConfig(configResponse.config);
+            }
+          } catch {
+            if (active) {
+              setRibeiraoConfig(null);
+            }
+          }
+        }
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Falha ao carregar configurações.');
       } finally {
@@ -213,6 +226,27 @@ export default function SettingsPage() {
                   </Button>
                 </div>
               </SectionBlock>
+
+              {user?.role === 'gerencial' ? (
+                <SectionBlock icon={<Users size={18} />} title="Consulta Ribeirão">
+                  <div className="space-y-3">
+                    <div className="rounded-2xl border border-border bg-bg/60 p-4">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <Badge tone={ribeiraoConfig?.configured ? 'success' : 'danger'}>
+                          {ribeiraoConfig?.configured ? 'Configurada' : 'Não configurada'}
+                        </Badge>
+                        <span className="text-sm text-slate-300">{ribeiraoConfig?.message || 'URL do averbador não configurada no servidor.'}</span>
+                      </div>
+                      <div className="mt-3 rounded-xl border border-border bg-panel px-4 py-3 text-sm text-slate-300">
+                        {ribeiraoConfig?.configured ? ribeiraoConfig.value_masked || '-' : 'Configure RIBEIRAO_AVERBADOR_URL no .env da VPS e reinicie os containers.'}
+                      </div>
+                      <p className="mt-3 text-xs text-slate-500">
+                        {ribeiraoConfig?.hint || 'Se a URL estiver vazia, a sessão Ribeirão será bloqueada antes de conectar.'}
+                      </p>
+                    </div>
+                  </div>
+                </SectionBlock>
+              ) : null}
 
               {user?.role === 'gerencial' ? (
                 <SectionBlock icon={<Users size={18} />} title="Usuários do sistema">

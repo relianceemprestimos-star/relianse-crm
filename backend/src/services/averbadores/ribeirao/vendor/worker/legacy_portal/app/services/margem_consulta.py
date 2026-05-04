@@ -37,6 +37,37 @@ class MargemConsultaService:
         self.is_ready = False
 
     @staticmethod
+    def _browser_launch_args() -> list[str]:
+        return [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+        ]
+
+    @staticmethod
+    def _has_graphical_display() -> bool:
+        os_module = __import__("os")
+        return bool(os_module.getenv("DISPLAY") or os_module.getenv("WAYLAND_DISPLAY"))
+
+    def _resolve_headless(self) -> bool:
+        os_module = __import__("os")
+        if str(os_module.getenv("NODE_ENV") or "").strip().lower() == "production":
+            return True
+
+        requested = bool(self.settings.headless)
+        env_raw = os_module.getenv("RIBEIRAO_HEADLESS")
+        if env_raw is not None and str(env_raw).strip():
+            text = str(env_raw).strip().lower()
+            if text in {"1", "true", "yes", "on"}:
+                requested = True
+            elif text in {"0", "false", "no", "off"}:
+                requested = False
+        if not requested and not self._has_graphical_display():
+            return True
+        return requested
+
+    @staticmethod
     def _is_transient_navigation_error(error_text: str) -> bool:
         text = (error_text or "").lower()
         markers = [
@@ -757,7 +788,10 @@ class MargemConsultaService:
     async def start(self) -> None:
         self.logger.info("Iniciando navegador e sessao do portal")
         self.playwright = await async_playwright().start()
-        self.browser = await self.playwright.chromium.launch(headless=self.settings.headless)
+        self.browser = await self.playwright.chromium.launch(
+            headless=self._resolve_headless(),
+            args=self._browser_launch_args(),
+        )
         self.context = await self.browser.new_context()
         self.page = await self.context.new_page()
         self.logger.info("Realizando login no portal")

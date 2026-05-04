@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { BUILD_VERSION } from '../../../build.js';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PYTHON_BIN = process.env.PYTHON_BIN || 'python';
@@ -52,6 +54,7 @@ function buildEnv(extra = {}) {
   if (projectRoot) {
     env.RIBEIRAO_PROJECT_ROOT = projectRoot;
   }
+  env.RIBEIRAO_BUILD_VERSION = BUILD_VERSION;
 
   return env;
 }

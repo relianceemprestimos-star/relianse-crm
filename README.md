@@ -166,6 +166,14 @@ chmod +x scripts/backup.sh
 
 A aba `Consulta Ribeirao` usa automacao com navegador.
 
+URL real encontrada no legado:
+
+```text
+https://saec.consiglog.com.br/Login.aspx
+```
+
+Se `RIBEIRAO_AVERBADOR_URL` estiver vazia na VPS, o backend retorna `MISSING_RIBEIRAO_URL` e a tela de Consulta Ribeirao bloqueia o botao de iniciar sessao com uma mensagem clara.
+
 Pontos importantes:
 
 - nao burla CAPTCHA
@@ -173,6 +181,8 @@ Pontos importantes:
 - a senha do portal nao e exposta no frontend
 - o worker legado do Ribeirao foi vendorizado dentro do backend para facilitar o deploy
 - Playwright e Python sao instalados na imagem do backend
+- em VPS/Docker, use `RIBEIRAO_HEADLESS=true`; `false` so funciona com DISPLAY/Xvfb disponível
+- se o Chromium nao subir, o backend retorna `BROWSER_LAUNCH_ERROR` com mensagem amigavel
 
 Se o portal alterar o layout, apenas o modulo Ribeirao pode precisar de ajuste. O restante do CRM continua funcionando normalmente.
 

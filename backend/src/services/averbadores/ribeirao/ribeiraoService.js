@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { BUILD_VERSION } from '../../../build.js';
 import { getDb, getClientById, addInteraction } from '../../../db.js';
 import { formatDateTime, formatMoney } from '../../../utils.js';
 import {
@@ -129,6 +130,45 @@ function createSessionGateError(code, message) {
   return error;
 }
 
+function clearRibeiraoSessionCache(sessionId = null) {
+  if (sessionId === null || sessionId === undefined || sessionId === '') {
+    ribeiraoSessionCache.clear();
+    return;
+  }
+  ribeiraoSessionCache.delete(Number(sessionId));
+}
+
+function normalizeRibeiraoSessionMessage(status, message) {
+  const normalizedStatus = String(status || '').toLowerCase();
+  const raw = String(message || '').trim();
+
+  if (normalizedStatus === RIBEIRAO_SESSION_STATUSES.CONNECTED) {
+    if (!raw || /browsertype\.launch|missing x server|\$display|playwright|chromium|headed browser/i.test(raw)) {
+      return 'Sessão conectada com sucesso.';
+    }
+    return raw;
+  }
+  if (normalizedStatus === RIBEIRAO_SESSION_STATUSES.WAITING_CAPTCHA || normalizedStatus === 'aguardando_validacao_manual') {
+    return 'O portal solicitou validação manual. Resolva no navegador aberto e clique em Atualizar status.';
+  }
+  if (normalizedStatus === RIBEIRAO_SESSION_STATUSES.LOGIN_ERROR || normalizedStatus === 'erro_login') {
+    return 'O portal recusou o login/senha informados.';
+  }
+  if (normalizedStatus === RIBEIRAO_SESSION_STATUSES.SESSION_EXPIRED || normalizedStatus === 'expired') {
+    return 'A sessão com o portal expirou. Inicie uma nova sessão e clique em Atualizar status.';
+  }
+  if (normalizedStatus === RIBEIRAO_SESSION_STATUSES.ERROR || normalizedStatus === 'browser_launch_error') {
+    return 'Erro ao iniciar navegador de consulta no servidor. Verifique configuração do Playwright em produção.';
+  }
+  if (!raw) {
+    return 'Nenhuma sessão ativa com o portal da Prefeitura. Inicie a sessão antes de consultar.';
+  }
+  if (/browsertype\.launch|missing x server|\$display|headed browser|playwright|chromium|xvfb/i.test(raw)) {
+    return 'Erro ao iniciar navegador de consulta no servidor. Verifique configuração do Playwright em produção.';
+  }
+  return raw;
+}
+
 export function getRibeiraoSessionGate(sessionId) {
   const session = getRibeiraoSessionStatus(sessionId);
   if (!session || !session.id) {
@@ -191,7 +231,65 @@ export function getRibeiraoSessionGate(sessionId) {
 
 function isPlaceholderUrl(value) {
   const normalized = String(value || '').trim().toLowerCase();
-  return !normalized || normalized.includes('exemplo.local') || normalized.includes('example.local');
+  return (
+    !normalized ||
+    normalized.includes('exemplo.local') ||
+    normalized.includes('example.local') ||
+    normalized === 'url_real_aqui' ||
+    normalized.includes('coloque_a_url_real')
+  );
+}
+
+function resolveRibeiraoHeadless() {
+  if (String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production') {
+    return true;
+  }
+
+  const raw = String(process.env.RIBEIRAO_HEADLESS || '').trim().toLowerCase();
+  if (!raw) {
+    return true;
+  }
+  if (['1', 'true', 'yes', 'on'].includes(raw)) {
+    return true;
+  }
+  if (['0', 'false', 'no', 'off'].includes(raw)) {
+    return false;
+  }
+  return true;
+}
+
+function maskRibeiraoUrl(value) {
+  const text = String(value || '').trim();
+  if (!text) {
+    return '';
+  }
+
+  try {
+    const parsed = new URL(text);
+    const host = parsed.hostname;
+    const maskedHost = host.length > 10 ? `${host.slice(0, 4)}...${host.slice(-6)}` : host;
+    const pathname = parsed.pathname && parsed.pathname !== '/' ? parsed.pathname : '';
+    return `${parsed.protocol}//${maskedHost}${pathname}`;
+  } catch {
+    return text.length > 16 ? `${text.slice(0, 12)}...${text.slice(-6)}` : text;
+  }
+}
+
+export function getRibeiraoConfigStatus() {
+  const configuredUrl = String(process.env.RIBEIRAO_AVERBADOR_URL || process.env.RIBEIRAO_AVERBADOR_CONSULTA_URL || '').trim();
+  const configured = !isPlaceholderUrl(configuredUrl) && configuredUrl.startsWith('http');
+
+  return {
+    configured,
+    env_key: 'RIBEIRAO_AVERBADOR_URL',
+    value_masked: configured ? maskRibeiraoUrl(configuredUrl) : '',
+    message: configured
+      ? 'URL do averbador configurada no servidor.'
+      : 'URL do averbador não configurada no servidor.',
+    hint: configured
+      ? 'A consulta Ribeirão está pronta para usar essa URL.'
+      : 'Configure RIBEIRAO_AVERBADOR_URL no .env da VPS e reinicie os containers.',
+  };
 }
 
 export function findClientsByCpf(cpf) {
@@ -286,7 +384,10 @@ function _repoRoot() {
 export function getRibeiraoSessionStatus(sessionId) {
   const cached = ribeiraoSessionCache.get(Number(sessionId));
   if (cached) {
-    return cached;
+    return {
+      ...cached,
+      message: normalizeRibeiraoSessionMessage(cached.status, cached.message),
+    };
   }
 
   const database = getDb();
@@ -306,7 +407,7 @@ export function getRibeiraoSessionStatus(sessionId) {
   }
 
   const status = normalizeSessionStatus(fileStatus?.status || row.status);
-  const message = fileStatus?.message || row.error_message || '';
+  const message = normalizeRibeiraoSessionMessage(status, fileStatus?.message || row.error_message || '');
 
   run(
     database,
@@ -314,7 +415,7 @@ export function getRibeiraoSessionStatus(sessionId) {
     [status, message || null, nowIso(), sessionId]
   );
 
-  return {
+  const session = {
     id: Number(row.id),
     user_id: Number(row.user_id),
     status,
@@ -325,9 +426,12 @@ export function getRibeiraoSessionStatus(sessionId) {
     updated_at: nowIso(),
     raw: fileStatus || null,
   };
+  ribeiraoSessionCache.set(Number(sessionId), session);
+  return session;
 }
 
 export async function startRibeiraoSession({ userId, login, password, timeoutSeconds = 900, slowMo = 0, userName = '', role = 'gerencial' }) {
+  clearRibeiraoSessionCache();
   const database = getDb();
   const sessionAt = nowIso();
   const insertResult = run(
@@ -347,15 +451,22 @@ export async function startRibeiraoSession({ userId, login, password, timeoutSec
   );
 
   const configuredUrl = process.env.RIBEIRAO_AVERBADOR_URL || process.env.RIBEIRAO_AVERBADOR_CONSULTA_URL || '';
-  if (isPlaceholderUrl(configuredUrl)) {
-    const message = 'Configure RIBEIRAO_AVERBADOR_URL com a URL real do averbador de Ribeirao antes de iniciar a sessao.';
+  if (isPlaceholderUrl(configuredUrl) || !String(configuredUrl || '').startsWith('http')) {
+    const message = 'URL do averbador de Ribeirao nao configurada. Configure RIBEIRAO_AVERBADOR_URL no .env da VPS e reinicie os containers.';
     run(
       database,
       'UPDATE ribeirao_query_sessions SET status = ?, error_message = ?, updated_at = ? WHERE id = ?',
       [RIBEIRAO_SESSION_STATUSES.LOGIN_ERROR, message, nowIso(), sessionId]
     );
-    return getRibeiraoSessionStatus(sessionId);
+    const error = new Error(message);
+    error.code = 'MISSING_RIBEIRAO_URL';
+    throw error;
   }
+
+  console.log('[RIBEIRAO] NODE_ENV:', process.env.NODE_ENV || '');
+  console.log('[RIBEIRAO] RIBEIRAO_HEADLESS:', process.env.RIBEIRAO_HEADLESS || '');
+  console.log('[RIBEIRAO] headless efetivo:', resolveRibeiraoHeadless());
+  console.log('[RIBEIRAO] BUILD:', BUILD_VERSION);
 
   const payload = {
     action: 'start_session',
@@ -364,7 +475,7 @@ export async function startRibeiraoSession({ userId, login, password, timeoutSec
     password,
     timeout_seconds: timeoutSeconds,
     slow_mo: slowMo,
-    headless: false,
+    headless: resolveRibeiraoHeadless(),
     user_id: userId,
     user_name: userName,
     role,
@@ -390,6 +501,13 @@ export async function startRibeiraoSession({ userId, login, password, timeoutSec
         database,
         'UPDATE ribeirao_query_sessions SET status = ?, error_message = ?, updated_at = ? WHERE id = ?',
         [RIBEIRAO_SESSION_STATUSES.LOGIN_ERROR, result?.message || null, nowIso(), sessionId]
+      );
+    } else if (status === 'browser_launch_error' || String(result?.code || '').toUpperCase() === 'BROWSER_LAUNCH_ERROR') {
+      const message = result?.message || 'Erro ao iniciar navegador de consulta no servidor. Verifique configuracao do Playwright/Chromium em producao.';
+      run(
+        database,
+        'UPDATE ribeirao_query_sessions SET status = ?, error_message = ?, updated_at = ? WHERE id = ?',
+        [RIBEIRAO_SESSION_STATUSES.ERROR, message, nowIso(), sessionId]
       );
     } else if (status === RIBEIRAO_SESSION_STATUSES.SESSION_EXPIRED || status === 'expired') {
       run(
@@ -436,6 +554,10 @@ export async function queryRibeiraoCpf({ userId, sessionId, cpf, login, password
   }
 
   const clientMatches = findClientsByCpf(cpf).filter(Boolean);
+  console.log('[RIBEIRAO] BUILD:', BUILD_VERSION);
+  console.log('[RIBEIRAO] NODE_ENV:', process.env.NODE_ENV || '');
+  console.log('[RIBEIRAO] RIBEIRAO_HEADLESS:', process.env.RIBEIRAO_HEADLESS || '');
+  console.log('[RIBEIRAO] headless efetivo:', resolveRibeiraoHeadless());
   const payload = await runRibeiraoCommand(
     {
       action: 'query',
@@ -445,7 +567,7 @@ export async function queryRibeiraoCpf({ userId, sessionId, cpf, login, password
       cpf,
       client_id: clientId,
       base_id: baseId,
-      headless: true,
+      headless: resolveRibeiraoHeadless(),
     },
     { timeoutMs: 180000 }
   );
@@ -510,6 +632,10 @@ export async function queryRibeiraoCpf({ userId, sessionId, cpf, login, password
     client_matches: clientMatches,
     standardized: normalized,
   };
+}
+
+export function resetRibeiraoSessionCache(sessionId = null) {
+  clearRibeiraoSessionCache(sessionId);
 }
 
 export function listRibeiraoHistory(filters = {}) {

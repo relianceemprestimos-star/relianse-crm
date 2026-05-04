@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import express from 'express';
 import multer from 'multer';
 
+import { BUILD_VERSION } from './build.js';
 import {
   archiveBase,
   analyzeSpreadsheet,
@@ -37,9 +38,11 @@ import { hashPassword, verifyPassword } from './security.js';
 import {
   applyRibeiraoResultToClient,
   getRibeiraoHistoryById,
+  getRibeiraoConfigStatus,
   getRibeiraoSessionGate,
   getRibeiraoSessionStatus,
   listRibeiraoHistory,
+  resetRibeiraoSessionCache,
   queryRibeiraoCpf,
   startRibeiraoSession,
 } from './services/averbadores/ribeirao/ribeiraoService.js';
@@ -150,6 +153,7 @@ app.get('/api/health', (_req, res) => {
     status: 'ok',
     app: process.env.APP_NAME || 'Relianse CRM',
     service: 'relianse-crm-backend',
+    build: BUILD_VERSION,
     db: getDb().name,
   });
 });
@@ -371,6 +375,10 @@ app.post('/api/settings', (req, res) => {
   res.json({ settings });
 });
 
+app.get('/api/ribeirao/config', requirePrivilegedRole, (_req, res) => {
+  return res.json({ config: getRibeiraoConfigStatus() });
+});
+
 app.post('/api/upload', upload.single('file'), (req, res) => {
   try {
     if (!req.file) {
@@ -569,6 +577,7 @@ app.post('/api/ribeirao/session/start', requirePrivilegedRole, async (req, res) 
   const role = getRequestRole(req);
 
   try {
+    resetRibeiraoSessionCache();
     const session = await startRibeiraoSession({
       userId,
       login,
@@ -578,9 +587,30 @@ app.post('/api/ribeirao/session/start', requirePrivilegedRole, async (req, res) 
       role,
     });
 
+    const sessionStatus = String(session?.status || '').toLowerCase();
+    const isConnected = sessionStatus === 'conectado';
+    const isPendingManual = sessionStatus === 'conectando' || sessionStatus === 'aguardando_captcha_manual';
+    const isError = sessionStatus === 'erro' || sessionStatus === 'erro_login' || sessionStatus === 'sessao_expirada' || sessionStatus === 'browser_launch_error';
+
+    if (isError) {
+      return res.status(400).json({
+        success: false,
+        code: String(sessionStatus || 'ERROR').toUpperCase(),
+        message:
+          session?.message ||
+          session?.error_message ||
+          'Erro ao iniciar navegador de consulta no servidor. Verifique configuracao do Playwright/Chromium em producao.',
+        session,
+      });
+    }
+
     return res.json({
       session,
-      message: session?.status === 'conectado' ? 'Sessao Ribeirao conectada.' : 'Sessao Ribeirao iniciada.',
+      message: isConnected
+        ? 'Sessao Ribeirao conectada.'
+        : isPendingManual
+          ? 'Sessao Ribeirao iniciada. Aguardando autenticacao manual no navegador aberto.'
+          : 'Sessao Ribeirao iniciada.',
     });
   } catch (error) {
     return res.status(400).json({
@@ -912,6 +942,7 @@ app.use((_req, res) => {
 
 app.listen(port, () => {
   const dbPath = getDb().name;
+  console.log(`[BUILD] ${BUILD_VERSION}`);
   console.log(`Relianse CRM backend running on port ${port}`);
   console.log(`SQLite database: ${dbPath}`);
 });

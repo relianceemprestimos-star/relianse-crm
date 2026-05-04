@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
-import { api } from '../lib/api';
+import { ApiError, api } from '../lib/api';
 import { formatCurrencyDisplay } from '../lib/margins';
 import { getAccessSession } from '../lib/session';
 import type {
@@ -24,6 +24,7 @@ import type {
   RibeiraoBatchRecord,
   RibeiraoBatchResultItem,
   RibeiraoHistoryItem,
+  RibeiraoConfigStatus,
   RibeiraoSession,
   RibeiraoSessionStatus,
 } from '../types';
@@ -58,6 +59,7 @@ export default function RibeiraoPage() {
   const [login, setLogin] = useState('');
   const [password, setPassword] = useState('');
   const [session, setSession] = useState<RibeiraoSession | null>(null);
+  const [ribeiraoConfig, setRibeiraoConfig] = useState<RibeiraoConfigStatus | null>(null);
   const [sessionLoading, setSessionLoading] = useState(false);
   const [sessionRefreshing, setSessionRefreshing] = useState(false);
   const [cpf, setCpf] = useState('');
@@ -90,6 +92,7 @@ export default function RibeiraoPage() {
     if (savedBatch) {
       void refreshBatchStatus(savedBatch);
     }
+    void loadRibeiraoConfig();
     void loadHistory(historyFilters);
     void loadBatchHistory();
     void loadBases();
@@ -139,6 +142,7 @@ export default function RibeiraoPage() {
   }, [currentBatch?.id, currentBatch?.status]);
 
   const visibleHistory = useMemo(() => history, [history]);
+  const ribeiraoUrlReady = Boolean(ribeiraoConfig?.configured);
   const stats = useMemo(() => {
     const total = history.length;
     const withMargin = history.filter((item) => item.consulta_status === 'com_marg').length;
@@ -164,6 +168,16 @@ export default function RibeiraoPage() {
       setBases(response.bases || []);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Falha ao carregar bases.');
+    }
+  }
+
+  async function loadRibeiraoConfig() {
+    try {
+      const response = await api.getRibeiraoConfig();
+      setRibeiraoConfig(response.config);
+    } catch (error) {
+      setRibeiraoConfig(null);
+      toast.error(error instanceof Error ? error.message : 'Falha ao carregar configuração do averbador.');
     }
   }
 
@@ -198,11 +212,17 @@ export default function RibeiraoPage() {
     try {
       setSessionRefreshing(true);
       const response = await api.getRibeiraoSessionStatus(sessionId);
-      setSession(response.session);
+      const nextSession = response.session;
+      if (shouldPersistSession(nextSession)) {
+        setSession(nextSession);
+      } else {
+        setSession(null);
+        window.localStorage.removeItem(ROLE_SESSION_KEY);
+      }
     } catch (error) {
       setSession(null);
       window.localStorage.removeItem(ROLE_SESSION_KEY);
-      toast.error(error instanceof Error ? error.message : 'Falha ao atualizar status da sessão.');
+      toast.error(getFriendlyRibeiraoError(error, 'Falha ao atualizar status da sessão.'));
     } finally {
       setSessionRefreshing(false);
     }
@@ -238,6 +258,11 @@ export default function RibeiraoPage() {
   }
 
   async function handleStartSession() {
+    if (!ribeiraoConfig?.configured) {
+      toast.error(ribeiraoConfig?.hint || 'Configure a URL do averbador no servidor antes de iniciar a sessão.');
+      return;
+    }
+
     if (!login.trim() || !password.trim()) {
       toast.error('Informe login e senha.');
       return;
@@ -251,28 +276,34 @@ export default function RibeiraoPage() {
         timeout_seconds: 900,
         slow_mo: 0,
       });
-      setSession(response.session || null);
-      if (response.session?.id) {
-        window.localStorage.setItem(ROLE_SESSION_KEY, String(response.session.id));
+      const nextSession = response.session || null;
+      if (shouldPersistSession(nextSession)) {
+        setSession(nextSession);
+        window.localStorage.setItem(ROLE_SESSION_KEY, String(nextSession?.id || ''));
+      } else {
+        setSession(null);
+        window.localStorage.removeItem(ROLE_SESSION_KEY);
       }
-      if (response.session?.status === 'conectado') {
+      if (nextSession?.status === 'conectado') {
         toast.success(response.message || 'Sessão conectada.');
       } else if (
-        response.session?.status === 'aguardando_captcha_manual' ||
-        response.session?.status === 'aguardando_validacao_manual' ||
-        response.session?.status === 'conectando'
+        nextSession?.status === 'aguardando_captcha_manual' ||
+        nextSession?.status === 'aguardando_validacao_manual' ||
+        nextSession?.status === 'conectando'
       ) {
         toast(response.message || 'Aguardando autenticação manual no navegador aberto.');
-      } else if (response.session?.status === 'erro_login' || response.session?.status === 'login_error') {
-        toast.error('Login ou senha do averbador inválidos.');
-      } else if (response.session?.status === 'sessao_expirada' || response.session?.status === 'expired') {
+      } else if (nextSession?.status === 'erro_login' || nextSession?.status === 'login_error') {
+        toast.error('O portal recusou o login/senha informados.');
+      } else if (nextSession?.status === 'sessao_expirada' || nextSession?.status === 'expired') {
         toast.error('A sessão expirou. Inicie novamente.');
       } else {
         toast.success(response.message || 'Sessão iniciada.');
       }
       await loadHistory();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Falha ao iniciar sessão.');
+      setSession(null);
+      window.localStorage.removeItem(ROLE_SESSION_KEY);
+      toast.error(getFriendlyRibeiraoError(error, 'Falha ao iniciar sessão.'));
     } finally {
       setSessionLoading(false);
     }
@@ -309,7 +340,7 @@ export default function RibeiraoPage() {
         await refreshSessionStatus(sessionId);
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Falha ao consultar CPF.');
+      toast.error(getFriendlyRibeiraoError(error, 'Falha ao consultar CPF.'));
     } finally {
       setQueryLoading(false);
     }
@@ -327,7 +358,7 @@ export default function RibeiraoPage() {
       });
       toast.success(`Margens atualizadas para ${response.client?.name || 'o cliente'}.`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Falha ao aplicar o resultado.');
+      toast.error(getFriendlyRibeiraoError(error, 'Falha ao aplicar o resultado.'));
     }
   }
 
@@ -344,7 +375,7 @@ export default function RibeiraoPage() {
       toast.success(`Prévia carregada: ${response.preview.valid_rows} CPFs válidos.`);
     } catch (error) {
       setBatchPreview(null);
-      toast.error(error instanceof Error ? error.message : 'Falha ao analisar a planilha.');
+      toast.error(getFriendlyRibeiraoError(error, 'Falha ao analisar a planilha.'));
     }
   }
 
@@ -395,7 +426,7 @@ export default function RibeiraoPage() {
       toast.success(response.message || 'Lote iniciado.');
       await loadBatchHistory();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Falha ao iniciar o lote.');
+      toast.error(getFriendlyRibeiraoError(error, 'Falha ao iniciar o lote.'));
     } finally {
       setBatchStartLoading(false);
     }
@@ -408,7 +439,7 @@ export default function RibeiraoPage() {
       setCurrentBatch(response.batch);
       await loadBatchHistory();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Falha ao pausar o lote.');
+      toast.error(getFriendlyRibeiraoError(error, 'Falha ao pausar o lote.'));
     }
   }
 
@@ -419,7 +450,7 @@ export default function RibeiraoPage() {
       setCurrentBatch(response.batch);
       await loadBatchHistory();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Falha ao continuar o lote.');
+      toast.error(getFriendlyRibeiraoError(error, 'Falha ao continuar o lote.'));
     }
   }
 
@@ -434,7 +465,7 @@ export default function RibeiraoPage() {
       setCurrentBatch(response.batch);
       await loadBatchHistory();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Falha ao cancelar o lote.');
+      toast.error(getFriendlyRibeiraoError(error, 'Falha ao cancelar o lote.'));
     }
   }
 
@@ -448,7 +479,7 @@ export default function RibeiraoPage() {
       anchor.click();
       window.URL.revokeObjectURL(url);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Falha ao exportar o lote.');
+      toast.error(getFriendlyRibeiraoError(error, 'Falha ao exportar o lote.'));
     }
   }
 
@@ -532,16 +563,23 @@ export default function RibeiraoPage() {
 
               <div className="rounded-2xl border border-border bg-bg/60 p-4 text-sm text-slate-300">
                 <p className="font-semibold text-white">Status da sessão</p>
-                <p className="mt-2 text-slate-400">
-                  {session?.message || 'Não conectado. Inicie a sessão e conclua a autenticação no navegador aberto.'}
-                </p>
+                <p className="mt-2 text-slate-400">{getSessionDisplayMessage(session)}</p>
                 {session?.id ? <p className="mt-2 text-xs text-slate-500">Sessão #{session.id}</p> : null}
               </div>
 
+              {!ribeiraoUrlReady ? (
+                <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">
+                  <p className="font-semibold text-white">URL do averbador não configurada no servidor.</p>
+                  <p className="mt-1 text-amber-100/90">
+                    {ribeiraoConfig?.hint || 'Configure RIBEIRAO_AVERBADOR_URL no .env da VPS e reinicie os containers.'}
+                  </p>
+                </div>
+              ) : null}
+
               <div className="flex flex-wrap gap-3">
-                <Button className="py-4" onClick={() => void handleStartSession()} disabled={sessionLoading}>
+                <Button className="py-4" onClick={() => void handleStartSession()} disabled={sessionLoading || !ribeiraoUrlReady}>
                   <UserRoundSearch size={16} />
-                  {sessionLoading ? 'Iniciando...' : 'Iniciar sessão'}
+                  {sessionLoading ? 'Iniciando...' : ribeiraoUrlReady ? 'Iniciar sessão' : 'Configure a URL do averbador'}
                 </Button>
                 <Button variant="secondary" className="py-4" onClick={() => void refreshSessionStatus()} disabled={sessionRefreshing || !session?.id}>
                   <RefreshCcw size={16} />
@@ -578,9 +616,15 @@ export default function RibeiraoPage() {
                 />
               </label>
 
-              <Button className="w-full py-4 text-base" onClick={() => void handleQueryCpf()} disabled={queryLoading || !sessionReady}>
+              <Button className="w-full py-4 text-base" onClick={() => void handleQueryCpf()} disabled={queryLoading || !sessionReady || !ribeiraoUrlReady}>
                 <Search size={16} />
-                {queryLoading ? 'Consultando margem no averbador...' : sessionReady ? 'Consultar margem' : 'Conecte a sessão para consultar'}
+                {queryLoading
+                  ? 'Consultando margem no averbador...'
+                  : !ribeiraoUrlReady
+                    ? 'Configure a URL do averbador'
+                    : sessionReady
+                      ? 'Consultar margem'
+                      : 'Conecte a sessão para consultar'}
               </Button>
 
               <div className="rounded-2xl border border-border bg-bg/60 p-4 text-sm text-slate-300">
@@ -872,9 +916,15 @@ export default function RibeiraoPage() {
                 </label>
               </div>
 
-              <Button className="mt-5 w-full py-4 text-base" onClick={() => void handleStartBatch()} disabled={batchStartLoading || !sessionReady}>
+              <Button className="mt-5 w-full py-4 text-base" onClick={() => void handleStartBatch()} disabled={batchStartLoading || !sessionReady || !ribeiraoUrlReady}>
                 <Search size={16} />
-                {batchStartLoading ? 'Iniciando lote...' : sessionReady ? 'Iniciar consulta em lote' : 'Conecte a sessão para consultar em lote'}
+                {batchStartLoading
+                  ? 'Iniciando lote...'
+                  : !ribeiraoUrlReady
+                    ? 'Configure a URL do averbador'
+                    : sessionReady
+                      ? 'Iniciar consulta em lote'
+                      : 'Conecte a sessão para consultar em lote'}
               </Button>
             </Card>
 
@@ -1372,6 +1422,82 @@ function getSessionBlockingMessage(session?: RibeiraoSession | null) {
     return 'Não foi possível acessar o portal da Prefeitura no momento.';
   }
   return 'Você precisa iniciar e validar a sessão com o portal antes de consultar CPF.';
+}
+
+function getSessionDisplayMessage(session?: RibeiraoSession | null) {
+  if (!session?.id) {
+    return 'Não conectado. Inicie a sessão e conclua a autenticação no navegador aberto.';
+  }
+
+  const status = String(session.status || '').toLowerCase();
+  const message = String(session.message || '').trim();
+
+  if (status === 'conectado') {
+    return !isTechnicalBrowserMessage(message) && message ? message : 'Sessão conectada com sucesso.';
+  }
+  if (status === 'conectando') {
+    return 'Conectando ao portal. Aguarde a autenticação manual e clique em Atualizar status.';
+  }
+  if (status === 'aguardando_captcha_manual' || status === 'aguardando_validacao_manual' || status === 'captcha_required') {
+    return 'O portal solicitou validação manual. Resolva no navegador aberto e clique em Atualizar status.';
+  }
+  if (status === 'erro_login' || status === 'login_error') {
+    return 'O portal recusou o login/senha informados.';
+  }
+  if (status === 'sessao_expirada' || status === 'expired') {
+    return 'A sessão expirou. Inicie uma nova sessão para continuar.';
+  }
+  if (status === 'erro' || status === 'portal_unavailable' || status === 'browser_launch_error' || status === 'error') {
+    return 'Erro ao iniciar navegador de consulta no servidor. Verifique configuração do Playwright em produção.';
+  }
+  return !isTechnicalBrowserMessage(message) && message ? message : getSessionBlockingMessage(session);
+}
+
+function shouldPersistSession(session?: RibeiraoSession | null) {
+  if (!session?.id) {
+    return false;
+  }
+  const status = String(session.status || '').toLowerCase();
+  return ['conectado', 'conectando', 'aguardando_captcha_manual', 'aguardando_validacao_manual', 'captcha_required'].includes(status);
+}
+
+function isTechnicalBrowserMessage(value?: string | null) {
+  const text = String(value || '').toLowerCase();
+  return (
+    text.includes('browsertype.launch') ||
+    text.includes('target page, context or browser has been closed') ||
+    text.includes('missing x server') ||
+    text.includes('$display') ||
+    text.includes('headed browser') ||
+    text.includes('playwright') ||
+    text.includes('chromium') ||
+    text.includes('xvfb')
+  );
+}
+
+function getFriendlyRibeiraoError(error: unknown, fallback: string) {
+  const code = error instanceof ApiError ? String(error.code || '').toUpperCase() : '';
+  if (code === 'BROWSER_LAUNCH_ERROR') {
+    return 'Erro ao iniciar navegador de consulta no servidor. Verifique configuração do Playwright em produção.';
+  }
+  if (code === 'LOGIN_ERROR') {
+    return 'O portal recusou o login/senha informados.';
+  }
+  if (code === 'CAPTCHA_REQUIRED' || code === 'MANUAL_AUTH_REQUIRED') {
+    return 'O portal solicitou validação manual.';
+  }
+  if (code === 'NO_ACTIVE_SESSION') {
+    return 'Nenhuma sessão ativa com o portal da Prefeitura. Inicie a sessão antes de consultar.';
+  }
+  if (code === 'MISSING_RIBEIRAO_URL') {
+    return 'URL do averbador não configurada no servidor. Configure o .env da VPS e reinicie os containers.';
+  }
+
+  const message = error instanceof Error ? error.message : '';
+  if (isTechnicalBrowserMessage(message)) {
+    return 'Erro ao iniciar navegador de consulta no servidor. Verifique configuração do Playwright em produção.';
+  }
+  return message || fallback;
 }
 
 function batchStatusTone(status?: string) {

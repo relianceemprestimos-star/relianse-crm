@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import asyncio
+import os
 import re
 import unicodedata
 from datetime import datetime
@@ -58,6 +59,35 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
         if "ConsultaMargem.aspx" in portal:
             return portal
         return "https://saec.consiglog.com.br/Margem/ConsultaMargem.aspx"
+
+    @staticmethod
+    def _browser_launch_args() -> list[str]:
+        return [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+        ]
+
+    @staticmethod
+    def _has_graphical_display() -> bool:
+        return bool(os.getenv("DISPLAY") or os.getenv("WAYLAND_DISPLAY"))
+
+    def _resolve_headless(self) -> bool:
+        if str(os.getenv("NODE_ENV") or "").strip().lower() == "production":
+            return True
+
+        requested = bool(self.settings.headless)
+        env_raw = os.getenv("RIBEIRAO_HEADLESS")
+        if env_raw is not None and str(env_raw).strip():
+            text = str(env_raw).strip().lower()
+            if text in {"1", "true", "yes", "on"}:
+                requested = True
+            elif text in {"0", "false", "no", "off"}:
+                requested = False
+        if not requested and not self._has_graphical_display():
+            return True
+        return requested
 
     @staticmethod
     def _normalize_text(value: str) -> str:
@@ -827,7 +857,10 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
     async def start(self) -> None:
         self.logger.info("Iniciando sessao do conector Portal Secundario")
         self.playwright = await async_playwright().start()
-        self.browser = await self.playwright.chromium.launch(headless=self.settings.headless)
+        self.browser = await self.playwright.chromium.launch(
+            headless=self._resolve_headless(),
+            args=self._browser_launch_args(),
+        )
         if self.session_state_path and self.session_state_path.exists():
             self.context = await self.browser.new_context(storage_state=str(self.session_state_path))
         else:

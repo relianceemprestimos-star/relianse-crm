@@ -142,6 +142,14 @@ export interface Settings {
   expected_columns?: string;
 }
 
+export interface RibeiraoConfigStatus {
+  configured: boolean;
+  env_key: string;
+  value_masked: string;
+  message: string;
+  hint: string;
+}
+
 export interface UserRecord {
   id: number;
   name: string;

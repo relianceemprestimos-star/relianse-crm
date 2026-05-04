@@ -169,7 +169,15 @@ class ManualAuthManager:
 
         connector = PortalSecundarioLegacyConnector(lote_id=0, credencial=credencial_payload)
         connector.playwright = await async_playwright().start()
-        connector.browser = await connector.playwright.chromium.launch(headless=True)
+        connector.browser = await connector.playwright.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+            ],
+        )
         connector.context = await connector.browser.new_context()
         connector.page = await connector.context.new_page()
 

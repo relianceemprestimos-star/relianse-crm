@@ -39,6 +39,63 @@ def _is_placeholder_url(url: str) -> bool:
     return not normalized or "exemplo.local" in normalized or "example.local" in normalized
 
 
+def _parse_bool(value: object, default: bool = True) -> bool:
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _has_graphical_display() -> bool:
+    return bool(os.getenv("DISPLAY") or os.getenv("WAYLAND_DISPLAY"))
+
+
+def _chromium_launch_args() -> list[str]:
+    return [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+    ]
+
+
+def _resolve_headless(payload: dict | None = None) -> bool:
+    if str(os.getenv("NODE_ENV") or "").strip().lower() == "production":
+        return True
+
+    env_raw = os.getenv("RIBEIRAO_HEADLESS")
+    if env_raw is not None and str(env_raw).strip():
+        requested = _parse_bool(env_raw, True)
+    else:
+        requested = _parse_bool((payload or {}).get("headless"), True)
+
+    if not requested and not _has_graphical_display():
+        return True
+    return requested
+
+
+def _browser_launch_error_message(exc: Exception) -> tuple[str, str] | None:
+    message = str(exc)
+    lowered = message.lower()
+    if (
+        "missing x server" in lowered
+        or "$display" in lowered
+        or "headed browser" in lowered
+        or "xvfb" in lowered
+        or "browser.launch" in lowered
+        or "browsertype.launch" in lowered
+    ):
+        return (
+            "BROWSER_LAUNCH_ERROR",
+            "Erro ao iniciar navegador de consulta no servidor. Verifique configuracao do Playwright/Chromium em producao.",
+        )
+    return None
+
+
 def _candidate_worker_roots() -> list[Path]:
     env_root = os.getenv("RIBEIRAO_PROJECT_ROOT", "").strip()
     candidates: list[Path] = []
@@ -101,7 +158,7 @@ def _write_status(session_id: str, status: str, message: str = "", extra: dict |
 
 def _make_settings(payload: dict):
     settings = get_settings()
-    settings.headless = bool(payload.get("headless", False))
+    settings.headless = _resolve_headless(payload)
     settings.timeout_ms = int(payload.get("timeout_ms") or settings.timeout_ms)
     settings.retry_attempts = int(payload.get("retry_attempts") or settings.retry_attempts)
     settings.intervalo_entre_consultas_ms = int(payload.get("intervalo_entre_consultas_ms") or settings.intervalo_entre_consultas_ms)
@@ -243,15 +300,30 @@ async def start_session(payload: dict) -> dict:
 
     connector = _build_connector(payload, settings)
     connector.playwright = await async_playwright().start()
-    connector.browser = await connector.playwright.chromium.launch(
-        headless=False,
-        slow_mo=int(payload.get("slow_mo") or 0),
-    )
-    if connector.session_state_path and connector.session_state_path.exists():
-        connector.context = await connector.browser.new_context(storage_state=str(connector.session_state_path))
-    else:
-        connector.context = await connector.browser.new_context(viewport={"width": 1440, "height": 1100})
-    connector.page = await connector.context.new_page()
+    browser_launch_kwargs = {
+        "headless": settings.headless,
+        "slow_mo": int(payload.get("slow_mo") or 0),
+        "args": _chromium_launch_args(),
+    }
+
+    print(f"[RIBEIRAO] BUILD: {os.getenv('RIBEIRAO_BUILD_VERSION', '')}", file=sys.stderr, flush=True)
+    print(f"[RIBEIRAO] NODE_ENV: {os.getenv('NODE_ENV', '')}", file=sys.stderr, flush=True)
+    print(f"[RIBEIRAO] RIBEIRAO_HEADLESS: {os.getenv('RIBEIRAO_HEADLESS', '')}", file=sys.stderr, flush=True)
+    print(f"[RIBEIRAO] headless efetivo: {settings.headless}", file=sys.stderr, flush=True)
+
+    try:
+        connector.browser = await connector.playwright.chromium.launch(**browser_launch_kwargs)
+        if connector.session_state_path and connector.session_state_path.exists():
+            connector.context = await connector.browser.new_context(storage_state=str(connector.session_state_path))
+        else:
+            connector.context = await connector.browser.new_context(viewport={"width": 1440, "height": 1100})
+        connector.page = await connector.context.new_page()
+    except Exception as exc:
+        code_message = _browser_launch_error_message(exc)
+        code = code_message[0] if code_message else "ERRO"
+        message = code_message[1] if code_message else str(exc)
+        _write_status(session_id, "browser_launch_error", message)
+        return {"status": "browser_launch_error", "code": code, "session_id": session_id, "message": message}
 
     _write_status(session_id, "conectando", "Iniciando navegador e abrindo portal.")
 
@@ -300,10 +372,15 @@ async def query_cpf(payload: dict) -> dict:
         return {"status": "failed", "message": "CPF invalido", "cpf": ""}
 
     try:
+        print(f"[RIBEIRAO] BUILD: {os.getenv('RIBEIRAO_BUILD_VERSION', '')}", file=sys.stderr, flush=True)
+        print(f"[RIBEIRAO] NODE_ENV: {os.getenv('NODE_ENV', '')}", file=sys.stderr, flush=True)
+        print(f"[RIBEIRAO] RIBEIRAO_HEADLESS: {os.getenv('RIBEIRAO_HEADLESS', '')}", file=sys.stderr, flush=True)
+        print(f"[RIBEIRAO] headless efetivo: {settings.headless}", file=sys.stderr, flush=True)
         connector.playwright = await async_playwright().start()
         connector.browser = await connector.playwright.chromium.launch(
-            headless=bool(payload.get("headless", True)),
+            headless=settings.headless,
             slow_mo=int(payload.get("slow_mo") or 0),
+            args=_chromium_launch_args(),
         )
         connector.context = await connector.browser.new_context(viewport={"width": 1440, "height": 1100})
         connector.page = await connector.context.new_page()
@@ -329,6 +406,9 @@ async def query_cpf(payload: dict) -> dict:
             status = "session_expired"
         elif "login" in message.lower():
             status = "login_error"
+        elif "browser" in message.lower() or "x server" in message.lower() or "$display" in message.lower():
+            status = "browser_launch_error"
+            message = "Erro ao iniciar navegador de consulta no servidor. Verifique configuracao do Playwright/Chromium em producao."
 
         _write_status(session_id, status, message)
         return {
@@ -336,6 +416,7 @@ async def query_cpf(payload: dict) -> dict:
             "cpf": cpf,
             "session_id": session_id,
             "status": status,
+            "code": "BROWSER_LAUNCH_ERROR" if status == "browser_launch_error" else None,
             "message": message,
         }
     finally:
@@ -376,12 +457,17 @@ async def main_async() -> None:
     except Exception as exc:
         session_id = str(payload.get("session_id") or payload.get("sessionId") or "1")
         message = str(exc)
+        code = None
         if action == "start_session":
             status = "erro_login"
         elif "captcha" in message.lower():
             status = "captcha_required"
         elif "login" in message.lower():
             status = "login_error"
+        elif "browser" in message.lower() or "x server" in message.lower() or "$display" in message.lower() or "headed browser" in message.lower():
+            status = "browser_launch_error"
+            code = "BROWSER_LAUNCH_ERROR"
+            message = "Erro ao iniciar navegador de consulta no servidor. Verifique configuracao do Playwright/Chromium em producao."
         else:
             status = "erro"
         try:
@@ -392,6 +478,7 @@ async def main_async() -> None:
             "ok": False,
             "session_id": session_id,
             "status": status,
+            "code": code,
             "message": message,
         }
 
