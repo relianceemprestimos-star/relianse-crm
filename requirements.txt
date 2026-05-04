@@ -1,0 +1,8 @@
+streamlit>=1.36
+pandas>=2.2
+requests>=2.32
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-dotenv>=1.0
+openpyxl>=3.1
+

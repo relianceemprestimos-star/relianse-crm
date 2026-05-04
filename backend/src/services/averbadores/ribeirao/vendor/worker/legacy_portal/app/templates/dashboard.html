@@ -1,0 +1,625 @@
+﻿<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{ app_name }}</title>
+    <style>
+      :root { --bg:#f4f7fb; --card:#fff; --bd:#d7e1ef; --tx:#10233d; --mut:#5e718f; --blue:#0d63ce; --green:#1d8f6b; --orange:#b45309; }
+      * { box-sizing:border-box; } body { margin:0; font-family:"Segoe UI",Tahoma,sans-serif; background:var(--bg); color:var(--tx); }
+      .layout { display:grid; grid-template-columns:240px 1fr; min-height:100vh; }
+      .sidebar { background:linear-gradient(180deg,#0d2a52 0%,#12335f 100%); color:#f7fbff; padding:18px; }
+      .logo { font-weight:700; margin-bottom:12px; } .nav { display:grid; gap:8px; }
+      .nav button { border:1px solid rgba(255,255,255,.25); border-radius:10px; background:transparent; color:#eaf2ff; padding:10px; text-align:left; cursor:pointer; }
+      .nav .active { background:rgba(255,255,255,.18); }
+      .content { padding:18px; } .page { display:none; } .page.active { display:block; }
+      .card { background:var(--card); border:1px solid var(--bd); border-radius:12px; padding:14px; margin-bottom:12px; }
+      .row { display:grid; gap:10px; grid-template-columns:repeat(4,1fr); }
+      label { display:grid; gap:4px; font-size:.88rem; color:var(--mut); } input,select,button { width:100%; border-radius:8px; border:1px solid var(--bd); padding:8px 10px; }
+      button { border:0; color:#fff; font-weight:600; background:var(--blue); cursor:pointer; } .secondary { background:var(--green); } .warn { background:var(--orange); }
+      button[disabled]{opacity:.55;cursor:not-allowed;}
+      .table-wrap { overflow:auto; } table { width:100%; border-collapse:collapse; } th,td { border-bottom:1px solid #e7eef8; padding:8px; text-align:left; font-size:.9rem; }
+      .actions { display:flex; gap:6px; flex-wrap:wrap; } .actions button { width:auto; font-size:.78rem; padding:6px 10px; }
+      .status-msg { margin-top:8px; font-weight:600; color:#244569; }
+      .tracker-top { display:grid; grid-template-columns:1.4fr 1fr; gap:12px; }
+      .progress-text { margin:6px 0; font-size:1.25rem; font-weight:700; }
+      .progress-shell { background:#e6eefb; border-radius:999px; height:16px; overflow:hidden; } .progress-fill { height:100%; width:0%; background:linear-gradient(90deg,#0d63ce,#1d8f6b); transition:width .3s ease; }
+      .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:10px; } .stat { border:1px solid var(--bd); border-radius:10px; padding:8px; background:#f9fbff; }
+      .stat .k { font-size:.8rem; color:var(--mut); } .stat .v { font-size:1.05rem; font-weight:700; margin-top:3px; }
+      .badge { display:inline-block; padding:6px 10px; border-radius:999px; font-weight:700; font-size:.84rem; }
+      .b-em_andamento { background:#dbeafe; color:#1d4ed8; } .b-concluido { background:#dcfce7; color:#166534; }
+      .b-erro { background:#fee2e2; color:#b91c1c; } .b-falha_parcial { background:#ffedd5; color:#9a3412; }
+      .final-message { margin-top:8px; font-weight:700; } .tracker-actions { display:grid; gap:8px; margin-top:10px; }
+      .integration-frame { width:100%; min-height:780px; border:1px solid var(--bd); border-radius:12px; background:#fff; }
+      @media (max-width:1000px){ .layout{grid-template-columns:1fr;} .row{grid-template-columns:1fr;} .tracker-top{grid-template-columns:1fr;} .stats{grid-template-columns:1fr 1fr;} }
+    </style>
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar">
+        <div class="logo">Consulta de Margens</div>
+        <div class="nav">
+          <button class="nav-btn active" data-page="page-averbadoras">Averbadoras</button>
+          <button class="nav-btn" data-page="page-mailings">Mailings</button>
+          <button class="nav-btn" data-page="page-credenciais">Credenciais</button>
+          <button class="nav-btn" data-page="page-integracao">Portal SP Integrado</button>
+        </div>
+      </aside>
+
+      <main class="content">
+        <section id="page-averbadoras" class="page active">
+          <div class="card">
+            <h3>Averbadoras</h3>
+            <p>Escolha a averbadora cadastrada, envie o arquivo e processe.</p>
+            <div class="row" style="grid-template-columns:1.2fr 1.3fr 1fr 1fr 1fr;">
+              <label>Averbadora<select id="abSelecionada"></select></label>
+              <label>Upload planilha<input id="abArquivo" type="file" accept=".xlsx,.xlsm,.csv,.txt" /></label>
+              <div style="display:flex;align-items:end;"><button id="btnEnviarBase">Enviar base</button></div>
+              <div style="display:flex;align-items:end;"><button id="btnProcessarBase" class="secondary">Processar consulta</button></div>
+              <div style="display:flex;align-items:end;"><button id="btnBaixarBase" class="warn">Baixar resultado</button></div>
+            </div>
+            <div id="abSelecionadaInfo" class="status-msg"></div>
+          </div>
+
+          <div class="card">
+            <h3>Consulta unitaria (CPF/matricula)</h3>
+            <p>Mesmo modelo do lote: consulta 1 registro por vez e retorna os campos da margem.</p>
+            <div class="row" style="grid-template-columns:1fr 1fr 1fr;">
+              <label>CPF<input id="unitCpf" type="text" placeholder="Somente numeros" /></label>
+              <label>Matricula (opcional)<input id="unitMatricula" type="text" /></label>
+              <div style="display:flex;align-items:end;"><button id="btnConsultaUnitaria" class="secondary">Consultar unitario</button></div>
+            </div>
+            <div id="statusUnitario" class="status-msg"></div>
+            <div id="unitResultWrap" style="display:none;margin-top:10px;">
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Nome</th>
+                      <th>CPF</th>
+                      <th>Status</th>
+                      <th>Facultativa (consignavel)</th>
+                      <th>Facultativa (disponivel)</th>
+                      <th>Cartao (consignavel/disponivel)</th>
+                      <th>Beneficio (consignavel/disponivel)</th>
+                      <th>Mensagem</th>
+                    </tr>
+                  </thead>
+                  <tbody id="unitResultRows"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Averbadoras cadastradas</h3>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Nome</th><th>CÃ³digo</th><th>Link</th><th>Credenciais</th><th>Ãšltimo mailing</th></tr></thead>
+                <tbody id="averbadorasRows"></tbody>
+              </table>
+            </div>
+          </div>
+          <div id="statusAverbadoras" class="status-msg"></div>
+        </section>
+
+        <section id="page-mailings" class="page">
+          <div class="card">
+            <h3>Acompanhamento em tempo real</h3>
+            <div class="tracker-top">
+              <div>
+                <label>Lote<select id="trackerMailingSelect"></select></label>
+                <div id="trackerProgressText" class="progress-text">0/0</div>
+                <div class="progress-shell"><div id="trackerProgressFill" class="progress-fill"></div></div>
+                <div class="stats">
+                  <div class="stat"><div class="k">Total enviado</div><div class="v" id="tEnviado">0</div></div>
+                  <div class="stat"><div class="k">Total processado</div><div class="v" id="tProcessado">0</div></div>
+                  <div class="stat"><div class="k">Total pendente</div><div class="v" id="tPendente">0</div></div>
+                  <div class="stat"><div class="k">Total com sucesso</div><div class="v" id="tSucesso">0</div></div>
+                  <div class="stat"><div class="k">Total com erro</div><div class="v" id="tErro">0</div></div>
+                  <div class="stat"><div class="k">Progresso</div><div class="v" id="tPercent">0%</div></div>
+                </div>
+              </div>
+              <div>
+                <span id="trackerBadge" class="badge b-em_andamento">Em andamento</span>
+                <div id="trackerFinalMsg" class="final-message">Aguardando processamento.</div>
+                <div class="tracker-actions">
+                  <button id="btnTrackerDownloadResultado" class="secondary" disabled>Baixar resultado</button>
+                  <button id="btnTrackerDownloadErros" class="warn" disabled>Baixar apenas erros</button>
+                  <button id="btnTrackerAtualizar">Atualizar agora</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
+              <button id="btnAtualizarMailings" class="secondary" style="width:auto;">Atualizar lista</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>ID</th><th>Averbadora</th><th>Arquivo</th><th>Progresso</th><th>Status</th><th>Expira em</th><th>AÃ§Ãµes</th></tr></thead>
+                <tbody id="mailingsRows"></tbody>
+              </table>
+            </div>
+          </div>
+          <div id="statusMailings" class="status-msg"></div>
+        </section>
+
+        <section id="page-credenciais" class="page">
+          <div class="card">
+            <h3>Credenciais</h3>
+            <p>Preencha usuÃ¡rio/senha e o link da averbadora.</p>
+            <div class="row" style="grid-template-columns:1fr 1fr 1fr 1.2fr;">
+              <label>Nome credencial<input id="credNome" type="text" /></label>
+              <label>UsuÃ¡rio<input id="credUsuario" type="text" /></label>
+              <label>Senha<input id="credSenha" type="password" /></label>
+              <label>Link da averbadora<input id="credAverbadoraLink" type="text" placeholder="https://site.com" /></label>
+            </div>
+            <div class="row" style="margin-top:8px;grid-template-columns:1fr 1fr 1fr 1fr;">
+              <label>Nome da averbadora (opcional)<input id="credAverbadoraNome" type="text" /></label>
+              <label>Status<select id="credAtiva"><option value="true">Ativo</option><option value="false">Inativo</option></select></label>
+              <label>Limite<input id="credLimite" type="number" min="1" value="450" /></label>
+              <div style="display:flex;align-items:end;"><button id="btnSalvarCredencial">Salvar credencial</button></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Login manual assistido (CAPTCHA manual)</h3>
+            <p>Voce preenche o CAPTCHA manualmente e o robo usa a sessao temporaria para processar o lote.</p>
+            <div class="row" style="grid-template-columns:1.6fr 1fr;">
+              <label>Credencial do Portal Secundario<select id="manualCredencialSelect"></select></label>
+              <div style="display:flex;align-items:end;"><button id="btnManualStart" class="secondary">Iniciar login manual</button></div>
+            </div>
+            <div id="manualStatus" class="status-msg"></div>
+            <div id="manualCaptchaWrap" style="display:none;margin-top:12px;">
+              <img id="manualCaptchaImage" alt="captcha" style="max-width:100%;border:1px solid var(--bd);border-radius:8px;" />
+              <div class="row" style="grid-template-columns:1.2fr 1fr 1fr;margin-top:8px;">
+                <label>Digite o CAPTCHA<input id="manualCaptchaInput" type="text" autocomplete="off" /></label>
+                <div style="display:flex;align-items:end;"><button id="btnManualConfirm">Confirmar CAPTCHA</button></div>
+                <div style="display:flex;align-items:end;"><button id="btnManualCancel" class="warn">Cancelar</button></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>ID</th><th>Nome</th><th>UsuÃ¡rio</th><th>Averbadora</th><th>Link</th><th>Status</th><th>Ativa</th><th>AÃ§Ãµes</th></tr></thead>
+                <tbody id="credenciaisRows"></tbody>
+              </table>
+            </div>
+          </div>
+          <div id="statusCredenciais" class="status-msg"></div>
+        </section>
+
+        <section id="page-integracao" class="page">
+          <div class="card">
+            <h3>Integracao dos 2 sistemas</h3>
+            <p>Use o mesmo painel para acessar o modulo do Portal SP sem sair da plataforma principal.</p>
+            <div class="row" style="grid-template-columns:1fr 1fr;">
+              <label>URL modulo SP<input id="spUrlInput" type="text" readonly /></label>
+              <div style="display:flex;align-items:end;gap:8px;">
+                <button id="btnAbrirSP" class="secondary">Abrir modulo SP</button>
+                <button id="btnRecarregarSP" class="warn">Recarregar visualizacao</button>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <iframe id="spIntegrationFrame" class="integration-frame" title="Modulo Portal SP"></iframe>
+          </div>
+          <div id="statusIntegracao" class="status-msg"></div>
+        </section>
+      </main>
+    </div>
+
+    <script>
+      const spIntegrationUrl = {{ sp_streamlit_url|tojson }};
+      const pages = document.querySelectorAll('.page');
+      const navButtons = document.querySelectorAll('.nav-btn');
+      const averbadorasRows = document.getElementById('averbadorasRows');
+      const mailingsRows = document.getElementById('mailingsRows');
+      const credenciaisRows = document.getElementById('credenciaisRows');
+      const abSelecionada = document.getElementById('abSelecionada');
+      const abArquivo = document.getElementById('abArquivo');
+      const abSelecionadaInfo = document.getElementById('abSelecionadaInfo');
+      const unitCpf = document.getElementById('unitCpf');
+      const unitMatricula = document.getElementById('unitMatricula');
+      const btnConsultaUnitaria = document.getElementById('btnConsultaUnitaria');
+      const unitResultWrap = document.getElementById('unitResultWrap');
+      const unitResultRows = document.getElementById('unitResultRows');
+      const trackerMailingSelect = document.getElementById('trackerMailingSelect');
+      const manualCredencialSelect = document.getElementById('manualCredencialSelect');
+      const manualCaptchaWrap = document.getElementById('manualCaptchaWrap');
+      const manualCaptchaImage = document.getElementById('manualCaptchaImage');
+      const manualCaptchaInput = document.getElementById('manualCaptchaInput');
+      const btnManualStart = document.getElementById('btnManualStart');
+      const btnManualConfirm = document.getElementById('btnManualConfirm');
+      const btnManualCancel = document.getElementById('btnManualCancel');
+      const spUrlInput = document.getElementById('spUrlInput');
+      const spIntegrationFrame = document.getElementById('spIntegrationFrame');
+      const btnAbrirSP = document.getElementById('btnAbrirSP');
+      const btnRecarregarSP = document.getElementById('btnRecarregarSP');
+
+      let cacheAverbadoras = [];
+      let cacheMailings = [];
+      let cacheCredenciais = [];
+      let manualSessionId = '';
+      let manualStartInFlight = false;
+      let manualConfirmInFlight = false;
+
+      function showStatus(id, msg) { const el = document.getElementById(id); if (el) el.textContent = msg || ''; }
+      async function api(url, options = {}) {
+        const res = await fetch(url, options);
+        let data = {}; let text = '';
+        const ct = (res.headers.get('content-type') || '').toLowerCase();
+        if (ct.includes('application/json')) data = await res.json().catch(() => ({}));
+        else text = (await res.text().catch(() => '')).trim();
+        if (!res.ok) throw new Error(data.detail || text || `Falha na operacao (HTTP ${res.status})`);
+        return data;
+      }
+
+      function statusMeta(item) {
+        const s = (item?.status_tipo || item?.status || '').toLowerCase();
+        if (s === 'concluido') return { tipo: 'concluido', label: 'ConcluÃ­do', msg: 'Processamento concluÃ­do com sucesso.' };
+        if (s === 'falha_parcial') return { tipo: 'falha_parcial', label: 'Falha parcial', msg: 'Processamento concluÃ­do com falhas parciais.' };
+        if (s === 'erro') return { tipo: 'erro', label: 'Erro', msg: item?.detalhe_erro || 'Processamento finalizado com erro.' };
+        return { tipo: 'em_andamento', label: 'Em andamento', msg: 'Processamento em andamento.' };
+      }
+
+      function hideManualCaptcha() {
+        manualSessionId = '';
+        manualCaptchaWrap.style.display = 'none';
+        manualCaptchaImage.removeAttribute('src');
+        manualCaptchaInput.value = '';
+      }
+
+      function renderManualCredenciaisSelect() {
+        const portalCreds = cacheCredenciais.filter((item) => item.averbadora_codigo === 'portal_secundario_legacy' && item.ativa);
+        const previous = manualCredencialSelect.value;
+        manualCredencialSelect.innerHTML = '';
+        if (!portalCreds.length) {
+          const opt = document.createElement('option');
+          opt.value = '';
+          opt.textContent = 'Cadastre uma credencial ativa do Portal Secundario';
+          manualCredencialSelect.appendChild(opt);
+          manualCredencialSelect.disabled = true;
+          btnManualStart.disabled = true;
+          return;
+        }
+        portalCreds.forEach((item) => {
+          const opt = document.createElement('option');
+          opt.value = String(item.id);
+          const nome = item.nome_credencial ? `${item.nome_credencial} - ` : '';
+          opt.textContent = `#${item.id} ${nome}${item.usuario || ''}`;
+          manualCredencialSelect.appendChild(opt);
+        });
+        if (previous && portalCreds.some((item) => String(item.id) === previous)) {
+          manualCredencialSelect.value = previous;
+        }
+        manualCredencialSelect.disabled = false;
+        btnManualStart.disabled = false;
+      }
+
+      function switchPage(pageId) {
+        pages.forEach((page) => page.classList.toggle('active', page.id === pageId));
+        navButtons.forEach((btn) => btn.classList.toggle('active', btn.dataset.page === pageId));
+        if (pageId === 'page-integracao') {
+          renderIntegration();
+        }
+      }
+      navButtons.forEach((btn) => btn.addEventListener('click', () => switchPage(btn.dataset.page)));
+
+      function renderIntegration(force = false) {
+        if (!spIntegrationUrl) {
+          showStatus('statusIntegracao', 'URL do modulo SP nao configurada no servidor.');
+          return;
+        }
+        spUrlInput.value = spIntegrationUrl;
+        if (force || !spIntegrationFrame.getAttribute('src')) {
+          spIntegrationFrame.setAttribute('src', spIntegrationUrl);
+        }
+        showStatus('statusIntegracao', `Modulo SP integrado em: ${spIntegrationUrl}`);
+      }
+
+      function selectedAverbadora() { return cacheAverbadoras.find((item) => item.codigo === abSelecionada.value) || null; }
+      function selectedMailingId() { return Number(selectedAverbadora()?.ultimo_mailing?.id || 0); }
+
+      function renderAverbadorasTable() {
+        averbadorasRows.innerHTML = cacheAverbadoras.map((item) => `
+          <tr><td>${item.nome}</td><td>${item.codigo}</td><td>${item.url_base || '-'}</td><td>${item.credenciais_vinculadas || 0}</td><td>${item.ultimo_mailing?.status || 'sem envio'}</td></tr>
+        `).join('');
+      }
+      function updateAverbadoraInfo() {
+        const item = selectedAverbadora();
+        if (!item) { abSelecionadaInfo.textContent = 'Cadastre uma credencial com link da averbadora para iniciar.'; return; }
+        abSelecionadaInfo.textContent = `Link: ${item.url_base || '-'} | Ãšltimo mailing: ${item.ultimo_mailing?.status || 'sem envio'}`;
+      }
+      function renderUnitResult(row) {
+        if (!row) {
+          unitResultWrap.style.display = 'none';
+          unitResultRows.innerHTML = '';
+          return;
+        }
+        unitResultWrap.style.display = 'block';
+        unitResultRows.innerHTML = `
+          <tr>
+            <td>${row.nome || '-'}</td>
+            <td>${row.cpf || '-'}</td>
+            <td>${row.status_consulta || '-'}</td>
+            <td>${row.margem_facultativa_consignavel || '-'}</td>
+            <td>${row.margem_facultativa_disponivel || '-'}</td>
+            <td>${(row.margem_cartao_consignavel || '-') + ' / ' + (row.margem_cartao_disponivel || '-')}</td>
+            <td>${(row.margem_cartao_beneficio_consignavel || '-') + ' / ' + (row.margem_cartao_beneficio_disponivel || '-')}</td>
+            <td>${row.mensagem || '-'}</td>
+          </tr>
+        `;
+      }
+      async function loadAverbadoras() {
+        const data = await api('/averbadoras');
+        cacheAverbadoras = data.itens || [];
+        const before = abSelecionada.value; abSelecionada.innerHTML = '';
+        cacheAverbadoras.forEach((item) => { const o = document.createElement('option'); o.value = item.codigo; o.textContent = `${item.nome} (${item.codigo})`; abSelecionada.appendChild(o); });
+        if (before && cacheAverbadoras.some((x) => x.codigo === before)) abSelecionada.value = before;
+        renderAverbadorasTable(); updateAverbadoraInfo();
+      }
+
+      function renderTracker() {
+        const pText = document.getElementById('trackerProgressText');
+        const pFill = document.getElementById('trackerProgressFill');
+        const tEnviado = document.getElementById('tEnviado');
+        const tProcessado = document.getElementById('tProcessado');
+        const tPendente = document.getElementById('tPendente');
+        const tSucesso = document.getElementById('tSucesso');
+        const tErro = document.getElementById('tErro');
+        const tPercent = document.getElementById('tPercent');
+        const badge = document.getElementById('trackerBadge');
+        const finalMsg = document.getElementById('trackerFinalMsg');
+        const btnResult = document.getElementById('btnTrackerDownloadResultado');
+        const btnErrors = document.getElementById('btnTrackerDownloadErros');
+
+        if (!cacheMailings.length) {
+          trackerMailingSelect.innerHTML = '';
+          pText.textContent = '0/0'; pFill.style.width = '0%'; tPercent.textContent = '0%';
+          tEnviado.textContent = '0'; tProcessado.textContent = '0'; tPendente.textContent = '0'; tSucesso.textContent = '0'; tErro.textContent = '0';
+          badge.className = 'badge b-em_andamento'; badge.textContent = 'Em andamento';
+          finalMsg.textContent = 'Aguardando envio de mailing.';
+          btnResult.disabled = true; btnErrors.disabled = true;
+          return;
+        }
+
+        const previous = trackerMailingSelect.value; trackerMailingSelect.innerHTML = '';
+        cacheMailings.forEach((m) => { const o = document.createElement('option'); o.value = String(m.id); o.textContent = `#${m.id} - ${m.arquivo || 'arquivo'} (${m.status_exibicao || m.status})`; trackerMailingSelect.appendChild(o); });
+        if (previous && cacheMailings.some((m) => String(m.id) === previous)) trackerMailingSelect.value = previous;
+
+        const selected = cacheMailings.find((m) => m.id === Number(trackerMailingSelect.value || cacheMailings[0].id)) || cacheMailings[0];
+        const total = Math.max(0, Number(selected.total_registros || 0));
+        const processados = Math.max(0, Number(selected.processados || 0));
+        const pendentes = Math.max(0, Number(selected.pendentes || total - processados));
+        const sucessos = Math.max(0, Number(selected.sucessos || 0));
+        const erros = Math.max(0, Number(selected.erros || 0));
+        const divisor = total > 0 ? total : (processados > 0 ? processados : 1);
+        const percent = Math.max(0, Math.min(100, Math.round((processados / divisor) * 100)));
+        const meta = statusMeta(selected);
+
+        pText.textContent = `${processados}/${total || processados || 0}`;
+        pFill.style.width = `${percent}%`; tPercent.textContent = `${percent}%`;
+        tEnviado.textContent = String(total); tProcessado.textContent = String(processados); tPendente.textContent = String(pendentes); tSucesso.textContent = String(sucessos); tErro.textContent = String(erros);
+        badge.className = `badge b-${meta.tipo}`; badge.textContent = meta.label;
+        finalMsg.textContent = selected.mensagem_final || meta.msg;
+        btnResult.disabled = !selected.resultado_disponivel;
+        btnErrors.disabled = !selected.resultado_erros_disponivel;
+      }
+
+      function renderMailings() {
+        const names = Object.fromEntries(cacheAverbadoras.map((a) => [a.codigo, a.nome]));
+        mailingsRows.innerHTML = cacheMailings.map((m) => {
+          const meta = statusMeta(m); const total = Number(m.total_registros || 0); const proc = Number(m.processados || 0);
+          return `<tr data-id=\"${m.id}\"><td>${m.id}</td><td>${names[m.averbadora_codigo] || m.averbadora_codigo}</td><td>${m.arquivo || ''}</td><td>${proc}/${total || proc || 0}</td><td><span class=\"badge b-${meta.tipo}\">${meta.label}</span></td><td>${m.expira_em || ''}</td><td><div class=\"actions\"><button class=\"secondary btn-process\" data-id=\"${m.id}\">Processar</button><button class=\"secondary btn-download\" data-id=\"${m.id}\" ${m.resultado_disponivel ? '' : 'disabled'}>Baixar resultado</button><button class=\"warn btn-download-errors\" data-id=\"${m.id}\" ${m.resultado_erros_disponivel ? '' : 'disabled'}>Apenas erros</button></div></td></tr>`;
+        }).join('');
+      }
+      async function loadMailings() { const data = await api('/mailings'); cacheMailings = data.itens || []; renderMailings(); renderTracker(); }
+
+      async function loadCredenciais() {
+        const data = await api('/credenciais');
+        const items = data.itens || [];
+        cacheCredenciais = items;
+        credenciaisRows.innerHTML = items.map((c) => `<tr><td>${c.id}</td><td>${c.nome_credencial || ''}</td><td>${c.usuario || ''}</td><td>${c.averbadora_nome || c.averbadora_codigo || ''}</td><td>${c.averbadora_url || '-'}</td><td>${c.status || ''}</td><td>${c.ativa ? 'Sim' : 'NÃ£o'}</td><td><div class=\"actions\"><button class=\"secondary btn-cred-status\" data-id=\"${c.id}\" data-status=\"disponivel\">DisponÃ­vel</button><button class=\"warn btn-cred-status\" data-id=\"${c.id}\" data-status=\"indisponivel\">Inativo</button><button class=\"warn btn-cred-delete\" data-id=\"${c.id}\">Excluir</button></div></td></tr>`).join('');
+        renderManualCredenciaisSelect();
+      }
+
+      document.getElementById('btnEnviarBase').addEventListener('click', async () => {
+        try {
+          const codigo = abSelecionada.value; if (!codigo) throw new Error('Selecione uma averbadora.');
+          const file = abArquivo.files?.[0]; if (!file) throw new Error('Selecione um arquivo.');
+          const fd = new FormData(); fd.append('file', file); fd.append('averbadora_codigo', codigo);
+          const res = await fetch('/mailings/upload', { method: 'POST', body: fd });
+          const data = await res.json().catch(() => ({})); if (!res.ok) throw new Error(data.detail || 'Falha no upload');
+          showStatus('statusAverbadoras', `Arquivo enviado. Mailing #${data.id}.`); abArquivo.value = '';
+          await Promise.all([loadAverbadoras(), loadMailings()]);
+        } catch (err) { showStatus('statusAverbadoras', err.message); }
+      });
+
+      document.getElementById('btnProcessarBase').addEventListener('click', async () => {
+        try {
+          const id = selectedMailingId(); if (!id) throw new Error('Nenhum mailing para processar.');
+          await api(`/mailings/${id}/processar`, { method: 'POST' }); showStatus('statusAverbadoras', `Processamento iniciado para #${id}.`);
+          await Promise.all([loadAverbadoras(), loadMailings()]);
+        } catch (err) { showStatus('statusAverbadoras', err.message); }
+      });
+
+      document.getElementById('btnBaixarBase').addEventListener('click', () => {
+        const id = selectedMailingId(); if (!id) { showStatus('statusAverbadoras', 'Nenhum mailing para download.'); return; }
+        window.open(`/mailings/${id}/download`, '_blank');
+      });
+
+      btnConsultaUnitaria.addEventListener('click', async () => {
+        try {
+          const codigo = abSelecionada.value;
+          if (!codigo) throw new Error('Selecione uma averbadora.');
+          const cpf = (unitCpf.value || '').trim();
+          const matricula = (unitMatricula.value || '').trim();
+          if (!cpf && !matricula) throw new Error('Informe CPF ou matricula.');
+          showStatus('statusUnitario', 'Consultando...');
+          const data = await api('/mailings/consulta-unitaria', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              averbadora_codigo: codigo,
+              cpf,
+              matricula,
+            }),
+          });
+          renderUnitResult(data.resultado || null);
+          if (data.ok) showStatus('statusUnitario', 'Consulta unitaria concluida com sucesso.');
+          else showStatus('statusUnitario', (data.resultado && data.resultado.mensagem) || 'Consulta unitaria concluida com erro.');
+        } catch (err) {
+          renderUnitResult(null);
+          showStatus('statusUnitario', err.message);
+        }
+      });
+
+      document.getElementById('btnAtualizarMailings').addEventListener('click', () => Promise.all([loadMailings(), loadAverbadoras()]).catch((err) => showStatus('statusMailings', err.message)));
+      document.getElementById('btnTrackerAtualizar').addEventListener('click', () => Promise.all([loadMailings(), loadAverbadoras()]).catch((err) => showStatus('statusMailings', err.message)));
+      trackerMailingSelect.addEventListener('change', renderTracker);
+
+      document.getElementById('btnTrackerDownloadResultado').addEventListener('click', () => { const id = Number(trackerMailingSelect.value || '0'); if (id) window.open(`/mailings/${id}/download`, '_blank'); });
+      document.getElementById('btnTrackerDownloadErros').addEventListener('click', () => { const id = Number(trackerMailingSelect.value || '0'); if (id) window.open(`/mailings/${id}/download-erros`, '_blank'); });
+
+      mailingsRows.addEventListener('click', async (event) => {
+        const row = event.target.closest('tr[data-id]');
+        if (row) { trackerMailingSelect.value = row.dataset.id; renderTracker(); }
+        try {
+          const p = event.target.closest('.btn-process'); if (p) { const id = Number(p.dataset.id || '0'); await api(`/mailings/${id}/processar`, { method: 'POST' }); showStatus('statusMailings', `Mailing #${id} em processamento.`); await Promise.all([loadMailings(), loadAverbadoras()]); }
+          const d = event.target.closest('.btn-download'); if (d) window.open(`/mailings/${Number(d.dataset.id || '0')}/download`, '_blank');
+          const e = event.target.closest('.btn-download-errors'); if (e) window.open(`/mailings/${Number(e.dataset.id || '0')}/download-erros`, '_blank');
+        } catch (err) { showStatus('statusMailings', err.message); }
+      });
+
+      abSelecionada.addEventListener('change', () => {
+        updateAverbadoraInfo();
+        renderUnitResult(null);
+        showStatus('statusUnitario', '');
+      });
+      document.getElementById('btnSalvarCredencial').addEventListener('click', async () => {
+        try {
+          await api('/credenciais', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+            averbadora_link: document.getElementById('credAverbadoraLink').value.trim(),
+            averbadora_nome: document.getElementById('credAverbadoraNome').value.trim() || null,
+            nome_credencial: document.getElementById('credNome').value.trim(),
+            usuario: document.getElementById('credUsuario').value.trim(),
+            senha: document.getElementById('credSenha').value,
+            limite_consultas: Number(document.getElementById('credLimite').value || '450'),
+            ativa: document.getElementById('credAtiva').value === 'true',
+          })});
+          document.getElementById('credNome').value = ''; document.getElementById('credUsuario').value = ''; document.getElementById('credSenha').value = '';
+          document.getElementById('credAverbadoraLink').value = ''; document.getElementById('credAverbadoraNome').value = ''; document.getElementById('credLimite').value = '450';
+          showStatus('statusCredenciais', 'Credencial cadastrada com sucesso.'); await Promise.all([loadCredenciais(), loadAverbadoras()]);
+        } catch (err) { showStatus('statusCredenciais', err.message); }
+      });
+
+      credenciaisRows.addEventListener('click', async (event) => {
+        try {
+          const s = event.target.closest('.btn-cred-status'); if (s) { await api(`/credenciais/${Number(s.dataset.id || '0')}/status`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: s.dataset.status }) }); await loadCredenciais(); }
+          const d = event.target.closest('.btn-cred-delete'); if (d) { await api(`/credenciais/${Number(d.dataset.id || '0')}`, { method: 'DELETE' }); await loadCredenciais(); }
+        } catch (err) { showStatus('statusCredenciais', err.message); }
+      });
+
+      btnManualStart.addEventListener('click', async () => {
+        if (manualStartInFlight) return;
+        manualStartInFlight = true;
+        btnManualStart.disabled = true;
+        try {
+          showStatus('manualStatus', '');
+          hideManualCaptcha();
+          const credencialId = Number(manualCredencialSelect.value || '0');
+          if (!credencialId) throw new Error('Selecione uma credencial ativa do Portal Secundario.');
+          const data = await api('/manual-auth/portal/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ credencial_id: credencialId }),
+          });
+          if (data.captcha_required) {
+            manualSessionId = data.session_id || '';
+            manualCaptchaImage.src = `data:image/png;base64,${data.captcha_image_base64 || ''}`;
+            manualCaptchaWrap.style.display = 'block';
+            showStatus('manualStatus', data.mensagem || 'Digite o CAPTCHA e confirme.');
+            manualCaptchaInput.focus();
+          } else {
+            hideManualCaptcha();
+            showStatus('manualStatus', data.mensagem || 'Sessao autenticada com sucesso.');
+          }
+          await loadCredenciais();
+        } catch (err) {
+          showStatus('manualStatus', err.message);
+        } finally {
+          manualStartInFlight = false;
+          btnManualStart.disabled = false;
+        }
+      });
+
+      btnManualConfirm.addEventListener('click', async () => {
+        if (manualConfirmInFlight) return;
+        manualConfirmInFlight = true;
+        btnManualConfirm.disabled = true;
+        try {
+          const captcha = (manualCaptchaInput.value || '').trim();
+          if (!manualSessionId) throw new Error('Sessao manual expirada. Inicie novamente.');
+          if (!captcha) throw new Error('Digite o CAPTCHA para concluir.');
+          const credencialId = Number(manualCredencialSelect.value || '0');
+          const data = await api('/manual-auth/portal/confirm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: manualSessionId, captcha_value: captcha, credencial_id: credencialId || null }),
+          });
+          if (data && data.captcha_required && data.status === 'aguardando_captcha') {
+            manualSessionId = data.session_id || '';
+            manualCaptchaImage.src = `data:image/png;base64,${data.captcha_image_base64 || ''}`;
+            manualCaptchaWrap.style.display = 'block';
+            manualCaptchaInput.value = '';
+            showStatus('manualStatus', data.mensagem || 'Sessao renovada. Digite o novo CAPTCHA.');
+          } else {
+            hideManualCaptcha();
+            showStatus('manualStatus', data.mensagem || 'Login manual concluido com sucesso.');
+            await loadCredenciais();
+          }
+        } catch (err) {
+          showStatus('manualStatus', err.message);
+        } finally {
+          manualConfirmInFlight = false;
+          btnManualConfirm.disabled = false;
+        }
+      });
+
+      btnManualCancel.addEventListener('click', async () => {
+        try {
+          if (manualSessionId) {
+            await api('/manual-auth/portal/cancel', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ session_id: manualSessionId }),
+            });
+          }
+          hideManualCaptcha();
+          showStatus('manualStatus', 'Login manual cancelado.');
+        } catch (err) {
+          showStatus('manualStatus', err.message);
+        }
+      });
+
+      btnAbrirSP.addEventListener('click', () => {
+        if (!spIntegrationUrl) {
+          showStatus('statusIntegracao', 'URL do modulo SP nao configurada.');
+          return;
+        }
+        window.open(spIntegrationUrl, '_blank');
+      });
+      btnRecarregarSP.addEventListener('click', () => renderIntegration(true));
+
+      async function bootstrap() { await Promise.all([loadAverbadoras(), loadMailings(), loadCredenciais()]); }
+      bootstrap().catch((err) => { showStatus('statusAverbadoras', err.message); showStatus('statusMailings', err.message); showStatus('statusCredenciais', err.message); });
+      setInterval(() => { loadMailings().catch(() => {}); }, 3000);
+    </script>
+  </body>
+</html>
+

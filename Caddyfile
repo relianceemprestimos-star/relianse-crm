@@ -1,0 +1,15 @@
+{$CRM_WWW_DOMAIN} {
+  redir https://{$CRM_DOMAIN}{uri} permanent
+}
+
+{$CRM_DOMAIN} {
+  encode gzip zstd
+
+  handle /api/* {
+    reverse_proxy backend:4000
+  }
+
+  handle {
+    reverse_proxy frontend:80
+  }
+}

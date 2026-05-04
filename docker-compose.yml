@@ -1,0 +1,71 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: ${BACKEND_PORT:-4000}
+      APP_NAME: ${APP_NAME:-Relianse CRM}
+      SQLITE_PATH: ${SQLITE_PATH:-/app/data/relianse-crm.sqlite}
+      DATABASE_PATH: ${DATABASE_PATH:-/app/data/relianse-crm.sqlite}
+      UPLOAD_DIR: ${UPLOAD_DIR:-/app/uploads}
+      LOG_DIR: ${LOG_DIR:-/app/logs}
+      MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-25}
+      CORS_ORIGIN: ${CORS_ORIGIN:-https://${CRM_DOMAIN:-reliancecrm.com.br}}
+      APP_URL: ${APP_URL:-https://${CRM_DOMAIN:-reliancecrm.com.br}}
+      FRONTEND_URL: ${FRONTEND_URL:-https://${CRM_DOMAIN:-reliancecrm.com.br}}
+      BACKEND_URL: ${BACKEND_URL:-https://${CRM_DOMAIN:-reliancecrm.com.br}/api}
+      PYTHON_BIN: ${PYTHON_BIN:-/opt/venv/bin/python}
+      RIBEIRAO_PROJECT_ROOT: /app/backend/src/services/averbadores/ribeirao/vendor/worker
+      RIBEIRAO_HEADLESS: ${RIBEIRAO_HEADLESS:-false}
+    volumes:
+      - ./data:/app/data
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+    expose:
+      - "4000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:4000/api/health').then((res) => res.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-}
+    expose:
+      - "80"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  caddy:
+    image: caddy:2.8-alpine
+    depends_on:
+      - backend
+      - frontend
+    environment:
+      CRM_DOMAIN: ${CRM_DOMAIN:-reliancecrm.com.br}
+      CRM_WWW_DOMAIN: ${CRM_WWW_DOMAIN:-www.reliancecrm.com.br}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
