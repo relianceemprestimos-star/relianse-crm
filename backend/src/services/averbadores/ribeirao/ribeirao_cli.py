@@ -838,6 +838,278 @@ async def _click_login_initial_button(connector: PortalSecundarioLegacyConnector
     return False, '', {**debug, "attempts": attempts, "chosenButton": '', "chosenSelector": '', "chosenMethod": ''}
 
 
+async def _capture_login_modal_state(connector: PortalSecundarioLegacyConnector) -> dict:
+    try:
+        return await connector.page.evaluate(
+            """() => {
+                const normalize = (v) => String(v || "").normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").replace(/\\s+/g, " ").trim().toLowerCase();
+                const isVisible = (el) => {
+                    if (!el) return false;
+                    const style = window.getComputedStyle(el);
+                    if (!style) return false;
+                    const rect = el.getBoundingClientRect();
+                    return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
+                };
+                const textOf = (el) => String(el?.textContent || el?.value || "").replace(/\\s+/g, " ").trim();
+                const selectors = [
+                    "#ucAjaxModalPopup1_btnConfirmarPopup",
+                    "#ucAjaxModalPopup1_lblMensagem",
+                    "#mensagemLabel",
+                    "span#mensagemLabel",
+                    "#lblMsgRH",
+                    "#messageLabel",
+                    "[id*='Popup']",
+                    "[class*='Popup']",
+                    "[id*='popup']",
+                    "[class*='popup']",
+                ];
+                const elements = [];
+                for (const selector of selectors) {
+                    try {
+                        for (const el of document.querySelectorAll(selector)) {
+                            if (isVisible(el)) {
+                                elements.push(el);
+                            }
+                        }
+                    } catch (_) {}
+                }
+                const popupOk = Array.from(document.querySelectorAll("button,input[type='submit'],input[type='button'],a")).find((el) => {
+                    if (!isVisible(el)) return false;
+                    const text = normalize(textOf(el));
+                    return text === "ok" || text.includes("ok");
+                }) || null;
+                const messageLabel = Array.from(document.querySelectorAll("#mensagemLabel, span#mensagemLabel, #lblMsgRH, #messageLabel")).find((el) => isVisible(el)) || null;
+                const popupText = elements.map(textOf).filter(Boolean).join(" | ");
+                const popupElements = elements.slice(0, 20).map((el) => ({
+                    tag: String(el.tagName || "").toLowerCase(),
+                    id: String(el.id || ""),
+                    name: String(el.name || ""),
+                    type: String(el.type || ""),
+                    value: String(el.value || ""),
+                    textContent: textOf(el),
+                    className: String(el.className || ""),
+                    onclick: String(el.getAttribute("onclick") || ""),
+                }));
+                return {
+                    popupFound: Boolean(elements.length || popupOk || messageLabel),
+                    popupOkFound: Boolean(popupOk),
+                    popupOkSelector: popupOk ? "#ucAjaxModalPopup1_btnConfirmarPopup" : "",
+                    popupText: popupText.slice(0, 500),
+                    messageLabelText: textOf(messageLabel),
+                    hasDoPostBack: typeof __doPostBack === "function",
+                    popupElements,
+                };
+            }""",
+        )
+    except Exception:
+        return {
+            "popupFound": False,
+            "popupOkFound": False,
+            "popupOkSelector": "",
+            "popupText": "",
+            "messageLabelText": "",
+            "hasDoPostBack": False,
+            "popupElements": [],
+        }
+
+
+async def _retry_login_post_click(
+    connector: PortalSecundarioLegacyConnector,
+    login: str,
+    password: str,
+    timeout_ms: int,
+    snapshot: dict,
+    button_debug: dict,
+) -> tuple[dict, dict, str, bool]:
+    methods = [
+        ("locator_click", "click"),
+        ("page_click_force", "page_click_force"),
+        ("js_click", "js_click"),
+        ("form_submit", "form_submit"),
+        ("do_postback", "do_postback"),
+        ("enter", "enter"),
+    ]
+    preferred_info = dict((button_debug or {}).get("chosenButtonInfo") or {})
+    preferred_selector = str((button_debug or {}).get("chosenSelector") or (button_debug or {}).get("chosenButton") or "").strip()
+    if not preferred_selector or ":has-text(" in preferred_selector.lower() or preferred_selector.lower().startswith("text="):
+        button_id = str(preferred_info.get("id") or "").strip()
+        button_name = str(preferred_info.get("name") or "").strip()
+        button_value = str(preferred_info.get("value") or "").strip()
+        if button_id:
+            preferred_selector = f"#{button_id}"
+        elif button_name:
+            preferred_selector = f"input[name='{button_name}']"
+        elif button_value:
+            preferred_selector = f"input[value='{button_value}']"
+        else:
+            preferred_selector = "#Entrar"
+    button_label = json.dumps(preferred_info, ensure_ascii=False)
+
+    async def _click_selector(scope, selector: str, *, force: bool = False, js: bool = False) -> bool:
+        try:
+            if js:
+                return bool(
+                    await scope.evaluate(
+                        """(selector) => {
+                            try {
+                                const el = document.querySelector(selector);
+                                if (!el) return false;
+                                el.click();
+                                return true;
+                            } catch (_) {
+                                return false;
+                            }
+                        }""",
+                        selector,
+                    )
+                )
+            await scope.click(selector, force=force, timeout=timeout_ms)
+            return True
+        except Exception:
+            return False
+
+    async def _press_enter(scope) -> bool:
+        try:
+            login_locator = scope.locator("#txtLogin").first
+            await login_locator.press("Enter", timeout=timeout_ms)
+            return True
+        except Exception:
+            return False
+
+    async def _submit_form(scope) -> bool:
+        try:
+            return bool(
+                await scope.evaluate(
+                    """() => {
+                        const form = document.querySelector('form');
+                        if (form) {
+                            form.submit();
+                            return true;
+                        }
+                        return false;
+                    }"""
+                )
+            )
+        except Exception:
+            return False
+
+    async def _do_postback(scope) -> bool:
+        try:
+            return bool(
+                await scope.evaluate(
+                    """() => {
+                        if (typeof __doPostBack === 'function') {
+                            __doPostBack('Entrar', '');
+                            return true;
+                        }
+                        return false;
+                    }"""
+                )
+            )
+        except Exception:
+            return False
+
+    async def _click_ok_popup() -> bool:
+        for scope in _login_scopes(connector):
+            try:
+                await scope.locator("#ucAjaxModalPopup1_btnConfirmarPopup").first.click(timeout=2000)
+                return True
+            except Exception:
+                continue
+        try:
+            await connector.page.click("#ucAjaxModalPopup1_btnConfirmarPopup", timeout=2000)
+            return True
+        except Exception:
+            return False
+
+    async def _run_method(method_name: str) -> bool:
+        if method_name == "locator_click":
+            for scope in _login_scopes(connector):
+                if await _click_selector(scope, preferred_selector):
+                    return True
+            return False
+        if method_name == "page_click_force":
+            for scope in _login_scopes(connector):
+                if await _click_selector(scope, preferred_selector, force=True):
+                    return True
+            return False
+        if method_name == "js_click":
+            for scope in _login_scopes(connector):
+                if await _click_selector(scope, preferred_selector, js=True):
+                    return True
+            return False
+        if method_name == "form_submit":
+            for scope in _login_scopes(connector):
+                if await _submit_form(scope):
+                    return True
+            return False
+        if method_name == "do_postback":
+            for scope in _login_scopes(connector):
+                if await _do_postback(scope):
+                    return True
+            return False
+        if method_name == "enter":
+            for scope in _login_scopes(connector):
+                if await _press_enter(scope):
+                    return True
+            return False
+        return False
+
+    last_snapshot = snapshot
+    last_modal = await _capture_login_modal_state(connector)
+    for method_name, label in methods:
+        before_snapshot = await _capture_login_snapshot(connector)
+        before_modal = await _capture_login_modal_state(connector)
+        print(f"[LOGIN_FLOW] tentativa metodo: {label}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] url antes: {before_snapshot.get('url') or ''}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] body_text_sample antes: {before_snapshot.get('bodySnippet') or ''}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] __doPostBack existe: {bool(before_modal.get('hasDoPostBack'))}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] popup/modal encontrado: {bool(before_modal.get('popupFound'))}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] popup OK encontrado: {bool(before_modal.get('popupOkFound'))}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] mensagemLabel textContent: {before_modal.get('messageLabelText') or ''}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] popup text: {before_modal.get('popupText') or ''}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] botao escolhido: {json.dumps((button_debug or {}).get('chosenButtonInfo') or {}, ensure_ascii=False)}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] tentativa de seletor: {preferred_selector}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] botao escolhido detalhado: {button_label}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] tentou click normal: {str(label in {'locator_click', 'page_click_force'}).lower()}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] tentou click JS: {str(label == 'js_click').lower()}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] tentou Enter: {str(label == 'enter').lower()}", file=sys.stderr, flush=True)
+
+        action_ok = await _run_method(method_name)
+        print(f"[LOGIN_FLOW] clique executado metodo={label}: {str(action_ok).lower()}", file=sys.stderr, flush=True)
+        await connector.page.wait_for_timeout(2500)
+        last_snapshot = await _capture_login_snapshot(connector)
+        last_modal = await _capture_login_modal_state(connector)
+        print(f"[LOGIN_FLOW] url depois: {last_snapshot.get('url') or ''}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] body_text_sample depois: {last_snapshot.get('bodySnippet') or ''}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] senha encontrada depois: {bool(last_snapshot.get('passwordFound'))}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] certificado encontrado depois: {bool(last_snapshot.get('certificateFound'))}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] popup/modal encontrado depois: {bool(last_modal.get('popupFound'))}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] popup OK encontrado depois: {bool(last_modal.get('popupOkFound'))}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] mensagemLabel textContent depois: {last_modal.get('messageLabelText') or ''}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] popup text depois: {last_modal.get('popupText') or ''}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] mensagens do portal depois do clique: {last_snapshot.get('errorText') or ''}", file=sys.stderr, flush=True)
+
+        popup_text = str(last_modal.get('popupText') or last_modal.get('messageLabelText') or '').lower()
+        if last_modal.get("popupFound"):
+            if any(term in popup_text for term in ["certificado digital", "certificadodigital", "login-identific"]):
+                raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticacao manual/certificado digital.", stage="certificado_digital")
+            if any(term in popup_text for term in ["login invalido", "usuario invalido", "acesso negado", "usuário inválido", "usuário nao encontrado", "login inválido", "informe usuario", "informe usuário"]):
+                raise _typed_login_error("LOGIN_REJECTED", "O portal recusou o login/senha informados.", stage="popup_login")
+            if last_modal.get("popupOkFound") and any(term in popup_text for term in ["ok", "confirm", "confirmar", "aviso", "mensagem", "informacao", "informação"]):
+                print(f"[LOGIN_FLOW] popup OK button found: {last_modal.get('popupOkSelector') or '#ucAjaxModalPopup1_btnConfirmarPopup'}", file=sys.stderr, flush=True)
+                await _click_ok_popup()
+                await connector.page.wait_for_timeout(1200)
+                last_snapshot = await _capture_login_snapshot(connector)
+                last_modal = await _capture_login_modal_state(connector)
+                print(f"[LOGIN_FLOW] popup/modal encontrado apos OK: {bool(last_modal.get('popupFound'))}", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] popup text apos OK: {last_modal.get('popupText') or ''}", file=sys.stderr, flush=True)
+        if last_snapshot.get("successFound") or last_snapshot.get("operacionalFound") or last_snapshot.get("consultaMargemFound") or last_snapshot.get("passwordFound") or last_snapshot.get("captchaFound"):
+            return last_snapshot, last_modal, label, action_ok
+
+    return last_snapshot, last_modal, "", False
+
+
 def _log_login_snapshot(snapshot: dict, login: str, password: str, stage: str) -> None:
     print(f"[RIBEIRAO_LOGIN] stage: {stage}", file=sys.stderr, flush=True)
     print(f"[RIBEIRAO_LOGIN] URL aberta: {snapshot.get('host') or ''}", file=sys.stderr, flush=True)
@@ -1437,7 +1709,106 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
                     raise _typed_login_error(code, typed_message, stage="erro_texto_portal")
             if snapshot.get("host") and "login-identific" in str(snapshot.get("host") or '').lower():
                 raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticacao manual por certificado digital.", stage="certificado")
-            raise _typed_login_error("LOGIN_STILL_ON_SAME_PAGE", "O portal nao avancou apos informar o login. Pode ser validacao por JavaScript, certificado digital ou bloqueio do portal.", stage="mesma_tela")
+            retry_snapshot, retry_modal, retry_label, retry_ok = await _retry_login_post_click(
+                connector,
+                login,
+                password,
+                timeout_ms,
+                snapshot,
+                click_debug or button_debug,
+            )
+            if retry_label or retry_ok:
+                snapshot = retry_snapshot or snapshot
+                last_modal = retry_modal or last_modal
+                print(f"[LOGIN_FLOW] retry metodo final: {retry_label or ''}", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] retry popup/modal encontrado: {bool(last_modal.get('popupFound'))}", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] retry popup OK encontrado: {bool(last_modal.get('popupOkFound'))}", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] retry mensagemLabel textContent: {last_modal.get('messageLabelText') or ''}", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] retry popup text: {last_modal.get('popupText') or ''}", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] retry current_url: {snapshot.get('url') or ''}", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] retry body_text_sample: {snapshot.get('bodySnippet') or ''}", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] retry senha encontrada: {bool(snapshot.get('passwordFound'))}", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] retry certificado encontrado: {bool(snapshot.get('certificateFound'))}", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] retry mensagens do portal: {snapshot.get('errorText') or ''}", file=sys.stderr, flush=True)
+
+            if snapshot.get("successFound") or snapshot.get("operacionalFound") or snapshot.get("consultaMargemFound"):
+                pass
+            elif snapshot.get("passwordFound"):
+                if not password:
+                    raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "O portal exibiu senha, mas a senha nao foi informada.", stage="senha_ausente")
+                try:
+                    filled_password = await connector._fill_login_password(password)
+                except Exception as exc:
+                    raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "Nao consegui preencher a senha.", stage="fill_password") from exc
+                if not filled_password:
+                    try:
+                        await connector.page.locator("#txtSenha").fill(password, timeout=3000)
+                    except Exception as exc:
+                        raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "Nao consegui preencher a senha.", stage="fill_password") from exc
+
+                snapshot = await _capture_login_snapshot(connector)
+                _log_login_snapshot(snapshot, login, password, "senha-preenchida-apos-retry")
+                _log_login_flow(snapshot, "senha-preenchida-apos-retry", login, password, final_code="PENDING")
+
+                try:
+                    clicked_password, clicked_selector, click_debug = await _click_login_initial_button(connector)
+                except Exception as exc:
+                    raise _typed_login_error("LOGIN_BUTTON_NOT_FOUND", "Nao consegui acionar o botao de login.", stage="button_password") from exc
+                if not clicked_password:
+                    raise _typed_login_error(
+                        "LOGIN_BUTTON_NOT_FOUND",
+                        "O sistema nao encontrou o botao de login do portal.",
+                        stage="button_password",
+                    )
+
+                print(f"[LOGIN_FLOW] clique de login executado: {clicked_selector or 'Enter'}", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] botao escolhido: {json.dumps((click_debug or {}).get('chosenButtonInfo') or {}, ensure_ascii=False)}", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] tentou click normal: {str((click_debug or {}).get('chosenMethod') in {'click', 'click-fallback'}).lower()}", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] tentou click JS: {str((click_debug or {}).get('chosenMethod') == 'js').lower()}", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] tentou Enter: {str((click_debug or {}).get('chosenMethod') == 'enter').lower()}", file=sys.stderr, flush=True)
+                await connector.page.wait_for_timeout(2500)
+                snapshot = await _capture_login_snapshot(connector)
+                _log_login_snapshot(snapshot, login, password, "apos-segundo-clique-pos-retry")
+                _log_login_flow(snapshot, "apos-segundo-clique-pos-retry", login, password, click_executed=True, final_code="PENDING", certificate_alert=bool(dialog_messages))
+                print(f"[LOGIN_FLOW] current_url depois: {snapshot.get('url') or ''}", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] body_text_sample depois: {snapshot.get('bodySnippet') or ''}", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] senha encontrada depois: {bool(snapshot.get('passwordFound'))}", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] certificado encontrado depois: {bool(snapshot.get('certificateFound'))}", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] mensagens do portal depois do clique: {snapshot.get('errorText') or ''}", file=sys.stderr, flush=True)
+
+                if snapshot.get("successFound") or snapshot.get("operacionalFound") or snapshot.get("consultaMargemFound"):
+                    pass
+                elif snapshot.get("loginPageVisible") or snapshot.get("loginFound"):
+                    retry_message = "O portal nao avancou apos informar o login. Pode ser validacao por JavaScript, certificado digital ou bloqueio do portal."
+                    retry_popup_text = str(last_modal.get("popupText") or last_modal.get("messageLabelText") or "").strip()
+                    retry_method_label = str(click_debug.get("chosenMethod") or "").strip()
+                    if retry_popup_text:
+                        retry_message = f"{retry_message} Detalhes do portal: {retry_popup_text[:250]}"
+                    if retry_method_label:
+                        retry_message = f"{retry_message} Metodo tentado: {retry_method_label}."
+                    raise _typed_login_error("LOGIN_STILL_ON_SAME_PAGE", retry_message, stage="mesma_tela")
+                else:
+                    if snapshot.get("host") and ("login-identific" in str(snapshot.get("host") or "").lower() or "certificadodigital" in str(snapshot.get("url") or "").lower()):
+                        raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticacao manual/certificado digital.", stage="certificado_digital")
+                    print(f"[LOGIN_FLOW] quantidade de frames: {button_debug.get('frameCount') or 0}", file=sys.stderr, flush=True)
+                    print(f"[LOGIN_FLOW] buttons encontrados: {json.dumps(button_debug.get('buttons') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
+                    print(f"[LOGIN_FLOW] inputs submit/button encontrados: {json.dumps(button_debug.get('inputs') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
+                    print(f"[LOGIN_FLOW] links encontrados pr?ximos ao form, se houver: {json.dumps(button_debug.get('links') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
+                    print(f"[LOGIN_FLOW] botao escolhido: {json.dumps((click_debug or {}).get('chosenButtonInfo') or {}, ensure_ascii=False)}", file=sys.stderr, flush=True)
+                    print(f"[LOGIN_FLOW] tentou click normal: {str((click_debug or {}).get('chosenMethod') in {'click', 'click-fallback'}).lower()}", file=sys.stderr, flush=True)
+                    print(f"[LOGIN_FLOW] tentou click JS: {str((click_debug or {}).get('chosenMethod') == 'js').lower()}", file=sys.stderr, flush=True)
+                    print(f"[LOGIN_FLOW] tentou Enter: {str((click_debug or {}).get('chosenMethod') == 'enter').lower()}", file=sys.stderr, flush=True)
+                    print(f"[LOGIN_FLOW] current_url antes: {snapshot.get('url') or ''}", file=sys.stderr, flush=True)
+                    raise _typed_login_error("SELECTOR_ERROR", "O portal nao avancou apos informar o login. Pode ser validacao por JavaScript, certificado digital ou bloqueio do portal.", stage="selector_check")
+            else:
+                retry_popup_text = str(last_modal.get("popupText") or last_modal.get("messageLabelText") or "").strip()
+                retry_method_label = str(retry_label or click_debug.get("chosenMethod") or "").strip()
+                detailed_message = "O portal nao avancou apos informar o login. Pode ser validacao por JavaScript, certificado digital ou bloqueio do portal."
+                if retry_popup_text:
+                    detailed_message = f"{detailed_message} Detalhes do portal: {retry_popup_text[:250]}"
+                if retry_method_label:
+                    detailed_message = f"{detailed_message} Metodo tentado: {retry_method_label}."
+                raise _typed_login_error("LOGIN_STILL_ON_SAME_PAGE", detailed_message, stage="mesma_tela")
         else:
             if snapshot.get("host") and ("login-identific" in str(snapshot.get("host") or "").lower() or "certificadodigital" in str(snapshot.get("url") or "").lower()):
                 raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticacao manual/certificado digital.", stage="certificado_digital")
