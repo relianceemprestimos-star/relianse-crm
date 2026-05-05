@@ -157,6 +157,7 @@ LOGIN_ERROR_CODES = {
     "SELECTOR_ERROR",
     "DNS_RESOLUTION_FAILED",
     "CHROMIUM_DNS_FAILED",
+    "WORKER_INTERNAL_ERROR",
 }
 
 
@@ -1514,6 +1515,8 @@ def _classify_login_issue(code: str | None, message: str, snapshot: dict | None 
             return 'DNS_RESOLUTION_FAILED', raw_message or 'N?o foi poss?vel resolver o endere?o do portal no servidor. Verifique DNS da VPS/container.'
         if code_upper == 'CHROMIUM_DNS_FAILED':
             return 'CHROMIUM_DNS_FAILED', raw_message or 'O navegador interno do servidor n?o conseguiu resolver o portal, mesmo com DNS do container funcionando.'
+        if code_upper == 'WORKER_INTERNAL_ERROR':
+            return 'WORKER_INTERNAL_ERROR', raw_message or 'Erro interno no worker de login.'
         if code_upper == 'LOGIN_FIELDS_NOT_FOUND':
             return 'LOGIN_FIELDS_NOT_FOUND', raw_message or 'O sistema n?o encontrou os campos de login do portal. O layout pode ter mudado.'
         if code_upper == 'LOGIN_BUTTON_NOT_FOUND':
@@ -1844,7 +1847,7 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
             ]
             password_selector_used = ""
             password_filled = False
-            for scope_index, scope in _login_scopes(connector):
+            for scope_index, scope in enumerate(_login_scopes(connector)):
                 for selector in [item for item in password_selectors if item]:
                     try:
                         locator = scope.locator(selector).first
@@ -1865,7 +1868,7 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
 
             password_value_length = 0
             password_value_confirmed = False
-            for scope_index, scope in _login_scopes(connector):
+            for scope_index, scope in enumerate(_login_scopes(connector)):
                 for selector in [item for item in [password_selector_used, "#txtSenha", "input[name='txtSenha']", "input[type='password']"] if item]:
                     try:
                         locator = scope.locator(selector).first
@@ -2301,7 +2304,10 @@ async def start_session(payload: dict) -> dict:
             clean_message = "Erro ao iniciar navegador de consulta no servidor. Verifique configuracao do Playwright/Chromium em producao."
             code = code or "BROWSER_LAUNCH_ERROR"
         elif not code:
-            status = "erro"
+            status = "erro_login"
+            clean_message = "Erro interno no worker de login."
+            code = "WORKER_INTERNAL_ERROR"
+            stage = stage or "worker_internal"
 
         _write_status(session_id, status, clean_message or message, extra)
         return {
@@ -2404,7 +2410,7 @@ async def query_cpf(payload: dict) -> dict:
             status = "login_error"
         elif code == "LOGIN_OK_NAVIGATION_FAILED":
             status = "login_error"
-        elif code == "LOGIN_FIELDS_NOT_FOUND" or code == "LOGIN_BUTTON_NOT_FOUND" or code == "LOGIN_PASSWORD_FIELD_NOT_FOUND" or code == "LOGIN_TIMEOUT" or code == "LOGIN_STILL_ON_SAME_PAGE" or code == "PORTAL_CHANGED" or code == "UNKNOWN_LOGIN_ERROR" or code == "PORTAL_UNREACHABLE" or code == "DNS_RESOLUTION_FAILED" or code == "CHROMIUM_DNS_FAILED":
+        elif code == "LOGIN_FIELDS_NOT_FOUND" or code == "LOGIN_BUTTON_NOT_FOUND" or code == "LOGIN_PASSWORD_FIELD_NOT_FOUND" or code == "LOGIN_TIMEOUT" or code == "LOGIN_STILL_ON_SAME_PAGE" or code == "PORTAL_CHANGED" or code == "UNKNOWN_LOGIN_ERROR" or code == "PORTAL_UNREACHABLE" or code == "DNS_RESOLUTION_FAILED" or code == "CHROMIUM_DNS_FAILED" or code == "WORKER_INTERNAL_ERROR":
             status = "login_error"
         elif "sessao" in message.lower() and "expir" in message.lower():
             status = "session_expired"
