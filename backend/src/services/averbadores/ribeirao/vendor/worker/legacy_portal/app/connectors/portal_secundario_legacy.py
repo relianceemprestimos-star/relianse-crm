@@ -68,6 +68,8 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
             "--disable-setuid-sandbox",
             "--disable-dev-shm-usage",
             "--disable-gpu",
+            "--disable-features=UseDnsHttpsSvcb,AsyncDns,UseChromeOSDirectVideoDecoder",
+            "--disable-quic",
         ]
 
     @staticmethod

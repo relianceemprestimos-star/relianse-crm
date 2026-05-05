@@ -164,7 +164,7 @@ function normalizeRibeiraoSessionMessage(status, message, errorCode = null) {
   if (
     normalizedStatus === RIBEIRAO_SESSION_STATUSES.LOGIN_ERROR ||
     normalizedStatus === 'erro_login' ||
-    ['LOGIN_REJECTED', 'LOGIN_FIELDS_NOT_FOUND', 'LOGIN_BUTTON_NOT_FOUND', 'LOGIN_TIMEOUT', 'LOGIN_STILL_ON_SAME_PAGE', 'PORTAL_CHANGED', 'UNKNOWN_LOGIN_ERROR', 'LOGIN_OK_NAVIGATION_FAILED'].includes(normalizedErrorCode)
+    ['LOGIN_REJECTED', 'LOGIN_FIELDS_NOT_FOUND', 'LOGIN_BUTTON_NOT_FOUND', 'LOGIN_TIMEOUT', 'LOGIN_STILL_ON_SAME_PAGE', 'PORTAL_CHANGED', 'UNKNOWN_LOGIN_ERROR', 'LOGIN_OK_NAVIGATION_FAILED', 'DNS_RESOLUTION_FAILED'].includes(normalizedErrorCode)
   ) {
     if (normalizedErrorCode === 'LOGIN_FIELDS_NOT_FOUND') {
       return 'O sistema n?o encontrou os campos de login do portal. O layout pode ter mudado.';
@@ -184,12 +184,18 @@ function normalizeRibeiraoSessionMessage(status, message, errorCode = null) {
     if (normalizedErrorCode === 'LOGIN_OK_NAVIGATION_FAILED') {
       return 'Login aceito, mas n?o foi poss?vel abrir Consulta de Margem.';
     }
+    if (normalizedErrorCode === 'DNS_RESOLUTION_FAILED') {
+      return 'NÃ£o foi possÃ­vel resolver o endereÃ§o do portal no servidor. Verifique DNS da VPS/container.';
+    }
     return 'O portal recusou o login/senha informados.';
   }
   if (normalizedStatus === RIBEIRAO_SESSION_STATUSES.SESSION_EXPIRED || normalizedStatus === 'expired') {
     return 'A sess?o com o portal expirou. Inicie uma nova sess?o e clique em Atualizar status.';
   }
   if (normalizedStatus === RIBEIRAO_SESSION_STATUSES.ERROR || normalizedStatus === 'browser_launch_error') {
+    if (normalizedErrorCode === 'DNS_RESOLUTION_FAILED') {
+      return 'Não foi possível resolver o endereço do portal no servidor. Verifique DNS da VPS/container.';
+    }
     if (normalizedErrorCode === 'PORTAL_UNREACHABLE') {
       return 'Não foi possível acessar o portal da Prefeitura no momento.';
     }

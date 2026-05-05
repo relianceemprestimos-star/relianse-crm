@@ -1463,9 +1463,12 @@ function getSessionBlockingMessage(session?: RibeiraoSession | null) {
       ? 'O portal não respondeu após tentar login.'
       : 'O portal permaneceu na tela de login sem confirmar autenticação.';
   }
-  if (['PORTAL_CHANGED', 'LOGIN_OK_NAVIGATION_FAILED', 'LOGIN_REJECTED', 'UNKNOWN_LOGIN_ERROR'].includes(errorCode) || session.status === 'erro_login' || session.status === 'login_error') {
+  if (['PORTAL_CHANGED', 'LOGIN_OK_NAVIGATION_FAILED', 'LOGIN_REJECTED', 'UNKNOWN_LOGIN_ERROR', 'DNS_RESOLUTION_FAILED'].includes(errorCode) || session.status === 'erro_login' || session.status === 'login_error') {
     if (errorCode === 'LOGIN_OK_NAVIGATION_FAILED') {
       return 'Login aceito, mas não foi possível abrir Consulta de Margem.';
+    }
+    if (errorCode === 'DNS_RESOLUTION_FAILED') {
+      return 'Não foi possível resolver o endereço do portal no servidor. Verifique DNS da VPS/container.';
     }
     if (errorCode === 'PORTAL_CHANGED') {
       return 'O layout do portal mudou e o fluxo de login não foi reconhecido.';
@@ -1519,6 +1522,9 @@ function getSessionDisplayMessage(session?: RibeiraoSession | null) {
   }
   if (errorCode === 'LOGIN_OK_NAVIGATION_FAILED') {
     return 'Login aceito, mas não foi possível abrir Consulta de Margem.';
+  }
+  if (errorCode === 'DNS_RESOLUTION_FAILED') {
+    return 'Não foi possível resolver o endereço do portal no servidor. Verifique DNS da VPS/container.';
   }
   if (errorCode === 'PORTAL_CHANGED') {
     return 'O layout do portal mudou e o fluxo de login não foi reconhecido.';
@@ -1576,6 +1582,9 @@ function getFriendlyRibeiraoError(error: unknown, fallback: string) {
   }
   if (code === 'PORTAL_UNREACHABLE') {
     return 'Não foi possível acessar o portal da Prefeitura no momento.';
+  }
+  if (code === 'DNS_RESOLUTION_FAILED') {
+    return 'Não foi possível resolver o endereço do portal no servidor. Verifique DNS da VPS/container.';
   }
   if (code === 'LOGIN_FIELDS_NOT_FOUND') {
     return 'O sistema não encontrou os campos de login do portal. O layout pode ter mudado.';

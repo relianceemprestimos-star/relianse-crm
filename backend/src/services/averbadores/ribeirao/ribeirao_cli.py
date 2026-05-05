@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import re
+import socket
 import sys
 import traceback
 from dataclasses import asdict, is_dataclass
@@ -87,6 +88,8 @@ def _chromium_launch_args() -> list[str]:
         "--disable-setuid-sandbox",
         "--disable-dev-shm-usage",
         "--disable-gpu",
+        "--disable-features=UseDnsHttpsSvcb,AsyncDns,UseChromeOSDirectVideoDecoder",
+        "--disable-quic",
     ]
 
 
@@ -145,6 +148,7 @@ LOGIN_ERROR_CODES = {
     "UNKNOWN_LOGIN_ERROR",
     "LOGIN_OK_NAVIGATION_FAILED",
     "MANUAL_AUTH_REQUIRED",
+    "DNS_RESOLUTION_FAILED",
 }
 
 
@@ -323,6 +327,35 @@ def _log_login_flow(
     print(f"[LOGIN_FLOW] senha informada: {bool(password)}", file=sys.stderr, flush=True)
 
 
+def _resolve_dns_host(host: str) -> tuple[bool, list[str], str]:
+    dns_ok = False
+    resolved_ips: list[str] = []
+    dns_error = ""
+    print(f"[LOGIN_FLOW] dns_resolve_host: {host}", file=sys.stderr, flush=True)
+    if not host:
+        dns_error = "Host vazio."
+        print("[LOGIN_FLOW] dns_resolve_ok: False", file=sys.stderr, flush=True)
+        print("[LOGIN_FLOW] dns_resolved_ips: []", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] dns_error: {dns_error}", file=sys.stderr, flush=True)
+        return False, resolved_ips, dns_error
+
+    try:
+        infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+        resolved_ips = sorted({
+            str(info[4][0])
+            for info in infos
+            if info and len(info) > 4 and info[4] and info[4][0]
+        })
+        dns_ok = bool(resolved_ips)
+    except Exception as exc:
+        dns_error = str(exc)
+
+    print(f"[LOGIN_FLOW] dns_resolve_ok: {dns_ok}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] dns_resolved_ips: {resolved_ips}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] dns_error: {dns_error}", file=sys.stderr, flush=True)
+    return dns_ok, resolved_ips, dns_error
+
+
 async def _capture_login_fallback_snapshot(connector: PortalSecundarioLegacyConnector) -> dict:
     try:
         title = await connector.page.title()
@@ -390,10 +423,16 @@ async def _goto_login_with_fallback(
     *,
     stage_label: str,
     timeout_ms: int,
-) -> tuple[dict, object | None, bool]:
+) -> tuple[dict, object | None, bool, bool, list[str], str]:
     print(f"[LOGIN_FLOW] {stage_label} goto iniciando", file=sys.stderr, flush=True)
+    host = _safe_host(target_url)
+    dns_ok, dns_ips, dns_error = _resolve_dns_host(host)
+    if host and not dns_ok:
+        return await _capture_login_fallback_snapshot(connector), None, False, dns_ok, dns_ips, dns_error
+
     response = None
     last_exc: Exception | None = None
+    chromium_dns_failure = False
     for wait_until, timeout in (
         ("domcontentloaded", timeout_ms),
         ("commit", max(timeout_ms, 60000)),
@@ -412,6 +451,8 @@ async def _goto_login_with_fallback(
         except Exception as exc:
             last_exc = exc
             print(f"[LOGIN_FLOW] {stage_label} goto falhou no wait_until={wait_until}: {exc}", file=sys.stderr, flush=True)
+            if "err_name_not_resolved" in str(exc).lower():
+                chromium_dns_failure = True
         try:
             await connector.page.wait_for_timeout(1200)
         except Exception:
@@ -434,13 +475,15 @@ async def _goto_login_with_fallback(
     print(f"[LOGIN_FLOW] title: {snapshot.get('title') or ''}", file=sys.stderr, flush=True)
     print(f"[LOGIN_FLOW] body_text_sample: {snapshot.get('bodySnippet') or ''}", file=sys.stderr, flush=True)
     print(f"[LOGIN_FLOW] txtLogin encontrado: {bool(snapshot.get('loginFound'))}", file=sys.stderr, flush=True)
+    if chromium_dns_failure:
+        print("[LOGIN_FLOW] DNS ok no sistema, falha no Chromium", file=sys.stderr, flush=True)
     if snapshot.get("loginFound"):
         print(f"[LOGIN_FLOW] {stage_label} goto concluído", file=sys.stderr, flush=True)
-        return snapshot, response, True
+        return snapshot, response, True, dns_ok, dns_ips, dns_error
 
     if last_exc is not None:
         print(f"[LOGIN_FLOW] {stage_label} goto excecao final: {last_exc}", file=sys.stderr, flush=True)
-    return snapshot, response, False
+    return snapshot, response, False, dns_ok, dns_ips, dns_error if dns_error else ("DNS ok no sistema, falha no Chromium" if chromium_dns_failure else "")
 
 
 def _classify_login_issue(code: str | None, message: str, snapshot: dict | None = None) -> tuple[str, str]:
@@ -461,6 +504,8 @@ def _classify_login_issue(code: str | None, message: str, snapshot: dict | None 
             return 'CAPTCHA_REQUIRED', raw_message or 'O portal solicitou valida??o manual.'
         if code_upper == 'LOGIN_OK_NAVIGATION_FAILED':
             return 'LOGIN_OK_NAVIGATION_FAILED', raw_message or 'Login aceito, mas n?o foi poss?vel abrir Consulta de Margem.'
+        if code_upper == 'DNS_RESOLUTION_FAILED':
+            return 'DNS_RESOLUTION_FAILED', raw_message or 'N?o foi poss?vel resolver o endere?o do portal no servidor. Verifique DNS da VPS/container.'
         if code_upper == 'LOGIN_FIELDS_NOT_FOUND':
             return 'LOGIN_FIELDS_NOT_FOUND', raw_message or 'O sistema n?o encontrou os campos de login do portal. O layout pode ter mudado.'
         if code_upper == 'LOGIN_BUTTON_NOT_FOUND':
@@ -612,7 +657,7 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
         except Exception:
             pass
     timeout_ms = max(60000, connector.settings.timeout_ms)
-    snapshot, response, login_found = await _goto_login_with_fallback(
+    snapshot, response, login_found, dns_ok, dns_ips, dns_error = await _goto_login_with_fallback(
         connector,
         connector.settings.pdc_portal_url,
         stage_label="goto",
@@ -621,6 +666,13 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
     if login_found:
         _log_login_snapshot(snapshot, login, password, "goto")
         _log_login_flow(snapshot, "goto", login, password, final_code="PENDING")
+    elif not dns_ok or "DNS ok no sistema, falha no Chromium" in str(dns_error or ""):
+        print("[LOGIN_FLOW] error_code final: DNS_RESOLUTION_FAILED", file=sys.stderr, flush=True)
+        raise _typed_login_error(
+            "DNS_RESOLUTION_FAILED",
+            "Não foi possível resolver o endereço do portal no servidor. Verifique DNS da VPS/container.",
+            stage="goto",
+        )
     elif not snapshot.get("bodySnippet") and not snapshot.get("inputCount"):
         print("[LOGIN_FLOW] error_code final: PORTAL_UNREACHABLE", file=sys.stderr, flush=True)
         raise _typed_login_error("PORTAL_UNREACHABLE", "Nao foi possivel abrir o portal da Prefeitura.", stage="goto")
@@ -785,11 +837,18 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
             await connector.page.goto(
                 consulta_url,
                 wait_until="domcontentloaded",
-                timeout=max(45000, connector.settings.timeout_ms),
+                timeout=max(60000, connector.settings.timeout_ms),
             )
         except PlaywrightTimeoutError as exc:
             raise _typed_login_error("LOGIN_TIMEOUT", "O portal nao respondeu ao abrir Consulta de Margem.", stage="goto_consulta") from exc
         except Exception as exc:
+            if "err_name_not_resolved" in str(exc).lower():
+                print("[LOGIN_FLOW] DNS ok no sistema, falha no Chromium", file=sys.stderr, flush=True)
+                raise _typed_login_error(
+                    "DNS_RESOLUTION_FAILED",
+                    "Não foi possível resolver o endereço do portal no servidor. Verifique DNS da VPS/container.",
+                    stage="goto_consulta",
+                ) from exc
             raise _typed_login_error("LOGIN_OK_NAVIGATION_FAILED", "Nao foi possivel abrir Consulta de Margem.", stage="goto_consulta") from exc
         print("[LOGIN_FLOW] consulta_margem goto concluído", file=sys.stderr, flush=True)
         await connector.page.wait_for_timeout(1200)
@@ -914,7 +973,7 @@ async def start_session(payload: dict) -> dict:
             status = "erro_login"
         elif code == "LOGIN_REJECTED":
             status = "erro_login"
-        elif code in {"LOGIN_FIELDS_NOT_FOUND", "LOGIN_BUTTON_NOT_FOUND", "LOGIN_TIMEOUT", "LOGIN_STILL_ON_SAME_PAGE", "PORTAL_CHANGED", "UNKNOWN_LOGIN_ERROR", "PORTAL_UNREACHABLE"}:
+        elif code in {"LOGIN_FIELDS_NOT_FOUND", "LOGIN_BUTTON_NOT_FOUND", "LOGIN_TIMEOUT", "LOGIN_STILL_ON_SAME_PAGE", "PORTAL_CHANGED", "UNKNOWN_LOGIN_ERROR", "PORTAL_UNREACHABLE", "DNS_RESOLUTION_FAILED"}:
             status = "erro_login"
         elif not code and not stage and ("browser" in message.lower() or "x server" in message.lower() or "$display" in message.lower()):
             status = "browser_launch_error"
@@ -1011,7 +1070,7 @@ async def query_cpf(payload: dict) -> dict:
             status = "login_error"
         elif code == "LOGIN_OK_NAVIGATION_FAILED":
             status = "login_error"
-        elif code == "LOGIN_FIELDS_NOT_FOUND" or code == "LOGIN_BUTTON_NOT_FOUND" or code == "LOGIN_TIMEOUT" or code == "LOGIN_STILL_ON_SAME_PAGE" or code == "PORTAL_CHANGED" or code == "UNKNOWN_LOGIN_ERROR" or code == "PORTAL_UNREACHABLE":
+        elif code == "LOGIN_FIELDS_NOT_FOUND" or code == "LOGIN_BUTTON_NOT_FOUND" or code == "LOGIN_TIMEOUT" or code == "LOGIN_STILL_ON_SAME_PAGE" or code == "PORTAL_CHANGED" or code == "UNKNOWN_LOGIN_ERROR" or code == "PORTAL_UNREACHABLE" or code == "DNS_RESOLUTION_FAILED":
             status = "login_error"
         elif "sessao" in message.lower() and "expir" in message.lower():
             status = "session_expired"

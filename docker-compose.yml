@@ -28,6 +28,9 @@ services:
       - ./data:/app/data
       - ./uploads:/app/uploads
       - ./logs:/app/logs
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     expose:
       - "4000"
     restart: unless-stopped
@@ -43,6 +46,9 @@ services:
       dockerfile: frontend/Dockerfile
       args:
         VITE_API_URL: ${VITE_API_URL:-}
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     expose:
       - "80"
     restart: unless-stopped
@@ -63,6 +69,9 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

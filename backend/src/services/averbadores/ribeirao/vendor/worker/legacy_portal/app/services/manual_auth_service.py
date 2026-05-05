@@ -178,6 +178,8 @@ class ManualAuthManager:
                 "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
+                "--disable-features=UseDnsHttpsSvcb,AsyncDns,UseChromeOSDirectVideoDecoder",
+                "--disable-quic",
             ],
         )
         print("[PLAYWRIGHT] chromium launch ok true", file=sys.stderr, flush=True)
