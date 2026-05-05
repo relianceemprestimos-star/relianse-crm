@@ -3,6 +3,7 @@
 import asyncio
 import os
 import re
+import sys
 import unicodedata
 from datetime import datetime
 from pathlib import Path
@@ -143,11 +144,30 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
                       return headerMap;
                     };
 
+                    const captureRow = (cells) => {
+                      const normalizedCells = cells.map(normalize);
+                      const service = cells.find((cell) => normalize(cell).includes("MARGEM")) || cells[0] || "";
+                      const normalizedService = normalize(service);
+                      if (!normalizedService.includes("MARGEM")) return false;
+
+                      const moneyValues = cells.map(money).filter(Boolean);
+                      const total = money(cells[1] || moneyValues[0] || "");
+                      const reserved = money(cells[2] || moneyValues[1] || "");
+                      const available = money(cells[3] || moneyValues[2] || moneyValues[moneyValues.length - 1] || "");
+
+                      rows.push({
+                        service,
+                        total,
+                        reserved,
+                        available,
+                        raw_cells: cells,
+                        raw_normalized_cells: normalizedCells,
+                      });
+                      return true;
+                    };
+
                     for (const table of tables) {
                       const tableText = normalize(table.innerText || table.textContent || "");
-                      if (!tableText.includes("DETALHES DA MARGEM")) continue;
-                      tableFound = true;
-
                       const tableRows = Array.from(table.querySelectorAll("tr"))
                         .map((row) =>
                           Array.from(row.querySelectorAll("th,td"))
@@ -159,6 +179,16 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
                       if (!tableRows.length) {
                         continue;
                       }
+
+                      const hasDetailsTitle = tableText.includes("DETALHES DA MARGEM");
+                      const hasMarginRow = tableRows.some((cells) =>
+                        cells.some((cell) => normalize(cell).includes("MARGEM"))
+                      );
+                      if (!hasDetailsTitle && !hasMarginRow) {
+                        continue;
+                      }
+
+                      tableFound = true;
 
                       let headerIndex = tableRows.findIndex((cells) => {
                         const normalizedCells = cells.map(normalize);
@@ -176,19 +206,9 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
                       const headerMap = mapHeader(tableRows[headerIndex] || []);
                       for (let index = headerIndex + 1; index < tableRows.length; index += 1) {
                         const cells = tableRows[index];
-                        const normalizedCells = cells.map(normalize);
-                        const service = cells[headerMap.service] || cells[0] || "";
-                        const normalizedService = normalize(service);
-                        if (!normalizedService.includes("MARGEM")) continue;
-
-                        rows.push({
-                          service,
-                          total: money(cells[headerMap.total] || cells[1] || ""),
-                          reserved: money(cells[headerMap.reserved] || cells[2] || ""),
-                          available: money(cells[headerMap.available] || cells[3] || cells[cells.length - 1] || ""),
-                          raw_cells: cells,
-                          raw_normalized_cells: normalizedCells,
-                        });
+                        if (captureRow(cells)) {
+                          continue;
+                        }
                       }
 
                       if (rows.length) {
@@ -196,7 +216,39 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
                       }
                     }
 
-                    return { notFound, tableFound, rows, bodyText };
+                    if (!rows.length) {
+                      const bodyLines = bodyText
+                        .split(/\\n+/)
+                        .map((line) => clean(line))
+                        .filter(Boolean);
+                      const bodyJoined = bodyLines.join(" | ");
+                      const extractSection = (servicePattern) => {
+                        const idx = bodyJoined.indexOf(servicePattern);
+                        if (idx < 0) return null;
+                        const section = bodyJoined.slice(idx, idx + 260);
+                        const values = section.match(/-?\\d{1,3}(?:\\.\\d{3})*,\\d{2}|-?\\d+,\\d{2}/g) || [];
+                        if (!values.length) return null;
+                        return {
+                          service: servicePattern,
+                          total: values[0] || "",
+                          reserved: values[1] || "",
+                          available: values[2] || values[1] || values[0] || "",
+                        };
+                      };
+                      const emprestimo = extractSection("MARGEM EMPRESTIMO") || extractSection("MARGEM CONSIGNACAO");
+                      const cartao = extractSection("MARGEM CARTAO");
+                      if (emprestimo) {
+                        rows.push({ ...emprestimo, raw_cells: [], raw_normalized_cells: [] });
+                      }
+                      if (cartao) {
+                        rows.push({ ...cartao, raw_cells: [], raw_normalized_cells: [] });
+                      }
+                      if (rows.length) {
+                        tableFound = true;
+                      }
+                    }
+
+                    return { notFound, tableFound, rows, bodyText, tableCount: tables.length };
                 }"""
             )
             return data if isinstance(data, dict) else {"notFound": False, "tableFound": False, "rows": [], "bodyText": ""}
@@ -1004,12 +1056,52 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
         await self.page.wait_for_timeout(self.settings.intervalo_entre_consultas_ms)
         await self._wait_any(self.settings.pdc_selector_result_ready, max(7000, self.settings.timeout_ms // 2))
 
+        try:
+            page_url = self.page.url or ""
+            page_title = await self.page.title()
+        except Exception:
+            page_url = ""
+            page_title = ""
+        print(f"[RIBEIRAO_BATCH] CPF mascarado: {mask_cpf(cpf)}", file=sys.stderr, flush=True)
+        print(f"[RIBEIRAO_BATCH] pagina atual depois de pesquisar: {page_url}", file=sys.stderr, flush=True)
+        print(f"[RIBEIRAO_BATCH] titulo da pagina: {page_title}", file=sys.stderr, flush=True)
+
         extracted_table = await self._extract_margin_table()
+        print(
+            f"[RIBEIRAO_BATCH] texto DETALHES DA MARGEM encontrado: {bool(extracted_table.get('tableFound'))}",
+            file=sys.stderr,
+            flush=True,
+        )
+        print(
+            f"[RIBEIRAO_BATCH] quantidade de tabelas encontradas: {int(extracted_table.get('tableCount') or 0)}",
+            file=sys.stderr,
+            flush=True,
+        )
         if extracted_table.get("notFound"):
             raise RuntimeError("CPF_NOT_FOUND: CPF/Matricula nao encontrado.")
 
         table_rows = extracted_table.get("rows") or []
         table_found = bool(extracted_table.get("tableFound"))
+        print(
+            f"[RIBEIRAO_BATCH] quantidade de linhas encontradas: {len(table_rows)}",
+            file=sys.stderr,
+            flush=True,
+        )
+        summary_text = " || ".join(
+            " / ".join(
+                [
+                    str(row.get("service") or "").strip(),
+                    str(row.get("total") or "").strip(),
+                    str(row.get("available") or "").strip(),
+                ]
+            )
+            for row in table_rows[:4]
+        )
+        print(
+            f"[RIBEIRAO_BATCH] html/texto resumido da area de margem: {summary_text}",
+            file=sys.stderr,
+            flush=True,
+        )
 
         emprestimo_total = ""
         emprestimo_disponivel = ""
@@ -1080,7 +1172,59 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
 
         # Se a tabela veio preenchida, mesmo com zeros, isso é sucesso com/s sem margem.
         if not has_any_value:
+            fallback_values = await self._extract_margens_from_text()
+            fallback_emprestimo_total = fallback_values.get("bruta_facultativa") or fallback_values.get("margem_emprestimo_total") or ""
+            fallback_emprestimo_disponivel = fallback_values.get("disp_facultativa") or fallback_values.get("margem_emprestimo_disponivel") or ""
+            fallback_cartao_total = fallback_values.get("bruta_cartao") or fallback_values.get("bruta_cartao_beneficio") or fallback_values.get("margem_cartao_total") or ""
+            fallback_cartao_disponivel = fallback_values.get("disp_cartao") or fallback_values.get("disp_cartao_beneficio") or fallback_values.get("margem_cartao_disponivel") or ""
+            if fallback_emprestimo_total or fallback_emprestimo_disponivel or fallback_cartao_total or fallback_cartao_disponivel:
+                emprestimo_total = emprestimo_total or fallback_emprestimo_total
+                emprestimo_disponivel = emprestimo_disponivel or fallback_emprestimo_disponivel
+                cartao_total = cartao_total or fallback_cartao_total
+                cartao_disponivel = cartao_disponivel or fallback_cartao_disponivel
+                margem_rows = [
+                    {
+                        "service": "MARGEM EMPRESTIMO",
+                        "total": emprestimo_total,
+                        "reserved": "",
+                        "available": emprestimo_disponivel,
+                    },
+                    {
+                        "service": "MARGEM CARTAO",
+                        "total": cartao_total,
+                        "reserved": "",
+                        "available": cartao_disponivel,
+                    },
+                ]
+                has_any_value = any(
+                    bool(item.get("total")) or bool(item.get("available")) for item in margem_rows
+                )
+                has_positive_margin = any(
+                    any(
+                        (value := item.get(key)) and re.search(r"\d", str(value))
+                        and (number := float(str(value).replace("R$", "").replace(".", "").replace(",", ".").replace(" ", ""))) > 0
+                        for key in ("total", "available")
+                    )
+                    for item in margem_rows
+                )
+
+        if not has_any_value:
             raise RuntimeError("PARSE_MARGIN_ERROR: Encontrei a tabela, mas nao consegui extrair os valores de margem.")
+
+        print(
+            "[RIBEIRAO_BATCH] resultado parseado: "
+            f"emprestimo_total={emprestimo_total or ''} | "
+            f"emprestimo_disponivel={emprestimo_disponivel or ''} | "
+            f"cartao_total={cartao_total or ''} | "
+            f"cartao_disponivel={cartao_disponivel or ''}",
+            file=sys.stderr,
+            flush=True,
+        )
+        print(
+            f"[RIBEIRAO_BATCH] status final do CPF: {'sucesso' if has_positive_margin else 'sem_marg'}",
+            file=sys.stderr,
+            flush=True,
+        )
 
         evidencia_png = None
         if self.settings.capture_screenshot_on_success:

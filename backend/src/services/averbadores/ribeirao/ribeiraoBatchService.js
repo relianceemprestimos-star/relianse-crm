@@ -16,6 +16,7 @@ import {
   normalizeHeaderKey,
   readSpreadsheetRows,
 } from '../../../utils.js';
+import * as XLSX from 'xlsx';
 import {
   applyRibeiraoResultToClient,
   findClientsByCpf,
@@ -40,6 +41,14 @@ function randomDelay(minSeconds = 3, maxSeconds = 8) {
   const max = Math.max(min, Number(maxSeconds || min));
   const seconds = min === max ? min : min + Math.random() * (max - min);
   return Math.max(0, Math.round(seconds * 1000));
+}
+
+function maskBatchCpfLog(cpf) {
+  const digits = cleanDigits(String(cpf || ''));
+  if (digits.length >= 3) {
+    return `***${digits.slice(-3)}`;
+  }
+  return '***';
 }
 
 function getBatchControl(batchId) {
@@ -281,6 +290,7 @@ async function processBatch(batchId, {
       if (!cpf) {
         continue;
       }
+      console.log(`[RIBEIRAO_BATCH] iniciando CPF mascarado: ${maskBatchCpfLog(cpf)}`);
 
       const sessionGate = getRibeiraoSessionGate(sessionId);
       if (!sessionGate.success) {
@@ -393,6 +403,16 @@ async function processBatch(batchId, {
 
       const standardized = queryResult.standardized;
       const query = queryResult.query;
+      console.log(
+        `[RIBEIRAO_BATCH] resultado parseado: ${JSON.stringify({
+          cpf: query?.cpf_masked || maskBatchCpfLog(cpf),
+          status: standardized.consultaStatus,
+          margem_emprestimo_total: standardized.margem_emprestimo_total ?? null,
+          margem_emprestimo_disponivel: standardized.margem_emprestimo_disponivel ?? null,
+          margem_cartao_total: standardized.margem_cartao_total ?? null,
+          margem_cartao_disponivel: standardized.margem_cartao_disponivel ?? null,
+        })}`
+      );
       if (query?.id) {
         const database = getDb();
         database
@@ -422,6 +442,7 @@ async function processBatch(batchId, {
         control.paused = true;
         control.waitingCaptcha = true;
         updateRibeiraoBatchRecord(batchId, { status: 'aguardando_captcha' });
+        console.log(`[RIBEIRAO_BATCH] status final do CPF: ${status}`);
         const canContinueAfterCaptcha = await waitUntilResumed(batchId);
         control.waitingCaptcha = false;
         if (!canContinueAfterCaptcha) {
@@ -439,6 +460,7 @@ async function processBatch(batchId, {
           status: 'erro',
           finished_at: nowIso(),
         });
+        console.log(`[RIBEIRAO_BATCH] status final do CPF: ${status}`);
         return getRibeiraoBatchById(batchId);
       }
 
@@ -451,6 +473,7 @@ async function processBatch(batchId, {
       } else {
         updateBatchCounts(batchId, { processed_count: 1, error_count: 1 }, 'em_andamento');
       }
+      console.log(`[RIBEIRAO_BATCH] status final do CPF: ${status}`);
 
       if (index < cpfs.length - 1) {
         await sleep(randomDelay(delaySecondsMin, delaySecondsMax));
@@ -561,22 +584,43 @@ export function getRibeiraoBatchResults(batchId) {
   return listRibeiraoBatchResults(batchId).map((row) => mapBatchRow(row));
 }
 
-export function exportRibeiraoBatchResultsCsv(batchId) {
+function buildRibeiraoBatchExportRows(batchId) {
   const rows = getRibeiraoBatchResults(batchId);
   const marginByProduct = (row, productType) => row.margins?.find((margin) => margin.product_type === productType) || null;
+  return rows.map((row) => ({
+    cpf: row.cpf_masked || row.cpf || '',
+    nome: row.nome || '',
+    matricula: row.matricula || '',
+    orgao: row.orgao || '',
+    base: row.base_name || '',
+    client_id: row.client_id || '',
+    status: row.consulta_status_label || row.consulta_status || '',
+    mensagem: row.mensagem || '',
+    margem_emprestimo_total: formatMoney(row.margem_emprestimo_total ?? marginByProduct(row, 'credito')?.gross_margin ?? row.margem_consignavel_bruta),
+    margem_emprestimo_disponivel: formatMoney(row.margem_emprestimo_disponivel ?? marginByProduct(row, 'credito')?.net_margin ?? row.margem_consignavel_liquida),
+    margem_cartao_total: formatMoney(row.margem_cartao_total ?? marginByProduct(row, 'cartao')?.gross_margin ?? row.margem_cartao_bruta),
+    margem_cartao_disponivel: formatMoney(row.margem_cartao_disponivel ?? marginByProduct(row, 'cartao')?.net_margin ?? row.margem_cartao_liquida),
+    melhor_produto: row.best_product_type || '',
+    melhor_margem_liquida: formatMoney(row.best_net_margin),
+    data_hora: row.created_at_formatted || row.created_at || '',
+  }));
+}
+
+export function exportRibeiraoBatchResultsCsv(batchId) {
+  const rows = buildRibeiraoBatchExportRows(batchId);
   const header = [
     'CPF',
-    'Status',
-    'Mensagem',
     'Nome',
     'Matricula',
+    'Orgao',
+    'Base',
+    'Cliente ID',
+    'Status',
+    'Mensagem',
     'Margem Emprestimo Total',
     'Margem Emprestimo Disponivel',
     'Margem Cartao Total',
     'Margem Cartao Disponivel',
-    'Orgao',
-    'Base',
-    'Cliente ID',
     'Melhor produto',
     'Melhor margem liquida',
     'Data/hora',
@@ -584,36 +628,77 @@ export function exportRibeiraoBatchResultsCsv(batchId) {
 
   const escapeCsv = (value) => {
     const text = String(value ?? '');
-    if (/[",\n;]/.test(text)) {
+    if (/[;\n"]/g.test(text)) {
       return `"${text.replace(/"/g, '""')}"`;
     }
     return text;
   };
 
   const lines = [
-    header.map(escapeCsv).join(','),
+    '\ufeff' + header.map(escapeCsv).join(';'),
     ...rows.map((row) =>
       [
-        row.cpf_masked || row.cpf || '',
-        row.consulta_status_label || row.consulta_status || '',
-        row.mensagem || '',
-        row.nome || '',
-        row.matricula || '',
-        formatMoney(row.margem_emprestimo_total ?? marginByProduct(row, 'credito')?.gross_margin ?? row.margem_consignavel_bruta),
-        formatMoney(row.margem_emprestimo_disponivel ?? marginByProduct(row, 'credito')?.net_margin ?? row.margem_consignavel_liquida),
-        formatMoney(row.margem_cartao_total ?? marginByProduct(row, 'cartao')?.gross_margin ?? row.margem_cartao_bruta),
-        formatMoney(row.margem_cartao_disponivel ?? marginByProduct(row, 'cartao')?.net_margin ?? row.margem_cartao_liquida),
-        row.orgao || '',
-        row.base_name || '',
-        row.client_id || '',
-        row.best_product_type || '',
-        formatMoney(row.best_net_margin),
-        row.created_at_formatted || row.created_at || '',
+        row.cpf,
+        row.nome,
+        row.matricula,
+        row.orgao,
+        row.base,
+        row.client_id,
+        row.status,
+        row.mensagem,
+        row.margem_emprestimo_total,
+        row.margem_emprestimo_disponivel,
+        row.margem_cartao_total,
+        row.margem_cartao_disponivel,
+        row.melhor_produto,
+        row.melhor_margem_liquida,
+        row.data_hora,
       ]
         .map(escapeCsv)
-        .join(',')
+        .join(';')
     ),
   ];
 
   return lines.join('\n');
+}
+
+export function exportRibeiraoBatchResultsXlsx(batchId) {
+  const rows = buildRibeiraoBatchExportRows(batchId);
+  const header = [
+    'CPF',
+    'Nome',
+    'Matricula',
+    'Orgao',
+    'Base',
+    'Cliente ID',
+    'Status',
+    'Mensagem',
+    'Margem Emprestimo Total',
+    'Margem Emprestimo Disponivel',
+    'Margem Cartao Total',
+    'Margem Cartao Disponivel',
+    'Melhor produto',
+    'Melhor margem liquida',
+    'Data/hora',
+  ];
+  const worksheet = XLSX.utils.aoa_to_sheet([header, ...rows.map((row) => [
+    row.cpf,
+    row.nome,
+    row.matricula,
+    row.orgao,
+    row.base,
+    row.client_id,
+    row.status,
+    row.mensagem,
+    row.margem_emprestimo_total,
+    row.margem_emprestimo_disponivel,
+    row.margem_cartao_total,
+    row.margem_cartao_disponivel,
+    row.melhor_produto,
+    row.melhor_margem_liquida,
+    row.data_hora,
+  ])]);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Resultados');
+  return XLSX.write(workbook, { bookType: 'xlsx', type: 'buffer' });
 }

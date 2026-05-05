@@ -476,7 +476,7 @@ export default function RibeiraoPage() {
       const url = window.URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = url;
-      anchor.download = `lote-ribeirao-${batchId}.csv`;
+      anchor.download = `lote-ribeirao-${batchId}.xlsx`;
       anchor.click();
       window.URL.revokeObjectURL(url);
     } catch (error) {

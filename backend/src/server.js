@@ -55,7 +55,7 @@ import {
 } from './services/averbadores/ribeirao/ribeiraoService.js';
 import {
   cancelRibeiraoBatch,
-  exportRibeiraoBatchResultsCsv,
+  exportRibeiraoBatchResultsXlsx,
   getRibeiraoBatchHistory,
   getRibeiraoBatchResults,
   getRibeiraoBatchStatus,
@@ -1013,10 +1013,10 @@ app.get('/api/ribeirao/batch/:id/export', requirePrivilegedRole, (req, res) => {
   if (!batch) {
     return res.status(404).json({ message: 'Lote nao encontrado.' });
   }
-  const csv = exportRibeiraoBatchResultsCsv(Number(req.params.id));
-  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader('Content-Disposition', `attachment; filename="lote-ribeirao-${batch.id}.csv"`);
-  return res.send(csv);
+  const workbookBuffer = exportRibeiraoBatchResultsXlsx(Number(req.params.id));
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="lote-ribeirao-${batch.id}.xlsx"`);
+  return res.send(workbookBuffer);
 });
 
 app.get('/api/dashboard', (req, res) => {
