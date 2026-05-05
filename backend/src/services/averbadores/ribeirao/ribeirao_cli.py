@@ -177,6 +177,7 @@ def _split_typed_login_error(message: str | None) -> tuple[str | None, str]:
 async def _capture_login_snapshot(connector: PortalSecundarioLegacyConnector) -> dict:
     login_selectors = connector._selector_options(connector.settings.pdc_selector_login_user)
     password_selectors = connector._selector_options(connector.settings.pdc_selector_login_password)
+    entry_selectors = connector._selector_options(connector.settings.pdc_selector_login_entry)
     submit_selectors = connector._selector_options(connector.settings.pdc_selector_login_submit)
     success_selectors = [
         *connector._selector_options(getattr(connector.settings, "selector_logged_indicator", "")),
@@ -203,7 +204,7 @@ async def _capture_login_snapshot(connector: PortalSecundarioLegacyConnector) ->
     ]
 
     snapshot = await connector.page.evaluate(
-        """({ loginSelectors, passwordSelectors, submitSelectors, successSelectors, errorSelectors, captchaSelectors }) => {
+        """({ loginSelectors, passwordSelectors, entrySelectors, submitSelectors, successSelectors, errorSelectors, captchaSelectors }) => {
             const normalize = (v) => String(v || "")
               .normalize("NFD")
               .replace(/[\\u0300-\\u036f]/g, "")
@@ -275,6 +276,7 @@ async def _capture_login_snapshot(connector: PortalSecundarioLegacyConnector) ->
             const captchaSelector = firstVisibleSelector(captchaSelectors);
             const loginSelector = firstVisibleSelector(loginSelectors);
             const passwordSelector = firstVisibleSelector(passwordSelectors);
+            const entrySelector = firstVisibleSelector(entrySelectors);
             const submitSelector = firstVisibleSelector(submitSelectors);
             const errorText = firstText(errorSelectors) || (
               /login|senha|certificado|captcha|nao autorizado|não autorizado|inv[aá]lid/i.test(bodyText)
@@ -292,8 +294,10 @@ async def _capture_login_snapshot(connector: PortalSecundarioLegacyConnector) ->
               loginSelector,
               passwordFound: Boolean(passwordSelector),
               passwordSelector,
-              buttonFound: Boolean(submitSelector),
-              buttonSelector: submitSelector,
+              buttonFound: Boolean(entrySelector || submitSelector),
+              buttonSelector: entrySelector || submitSelector,
+              entryFound: Boolean(entrySelector),
+              entrySelector,
               successFound: Boolean(successSelector),
               successSelector,
               operacionalFound: bodyNormalized.includes("operacional"),
@@ -310,6 +314,7 @@ async def _capture_login_snapshot(connector: PortalSecundarioLegacyConnector) ->
         {
             "loginSelectors": login_selectors,
             "passwordSelectors": password_selectors,
+            "entrySelectors": entry_selectors,
             "submitSelectors": submit_selectors,
             "successSelectors": success_selectors,
             "errorSelectors": error_selectors,
@@ -319,6 +324,160 @@ async def _capture_login_snapshot(connector: PortalSecundarioLegacyConnector) ->
     for selector in snapshot.get("invalidSelectors") or []:
         print(f"[LOGIN_FLOW] selector inválido ignorado: {selector}", file=sys.stderr, flush=True)
     return snapshot
+
+
+async def _capture_login_button_debug(connector: PortalSecundarioLegacyConnector) -> dict:
+    return await connector.page.evaluate(
+        """() => {
+            const normalize = (v) => String(v || "")
+              .normalize("NFD")
+              .replace(/[\\u0300-\\u036f]/g, "")
+              .replace(/\\s+/g, " ")
+              .trim()
+              .toLowerCase();
+            const isVisible = (el) => {
+              if (!el) return false;
+              const style = window.getComputedStyle(el);
+              if (!style) return false;
+              const rect = el.getBoundingClientRect();
+              return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
+            };
+            const form = document.querySelector("#txtLogin")
+              ? (document.querySelector("#txtLogin").closest("form") || document.querySelector("form"))
+              : document.querySelector("form");
+            const root = form || document.body;
+            const buttons = Array.from(root.querySelectorAll("button,input[type='submit'],input[type='button'],input[type='image'],a"))
+              .filter((el) => isVisible(el))
+              .map((el) => ({
+                tag: (el.tagName || "").toLowerCase(),
+                id: String(el.id || ""),
+                name: String(el.name || ""),
+                type: String(el.type || ""),
+                value: String(el.value || ""),
+                textContent: String(el.textContent || "").replace(/\\s+/g, " ").trim(),
+                className: String(el.className || ""),
+                title: String(el.getAttribute("title") || ""),
+              }));
+            const inputs = Array.from(root.querySelectorAll("input[type='submit'],input[type='button']"))
+              .filter((el) => isVisible(el))
+              .map((el) => ({
+                id: String(el.id || ""),
+                name: String(el.name || ""),
+                type: String(el.type || ""),
+                value: String(el.value || ""),
+                className: String(el.className || ""),
+              }));
+            const links = Array.from(root.querySelectorAll("a"))
+              .filter((el) => isVisible(el))
+              .map((el) => ({
+                href: String(el.href || ""),
+                id: String(el.id || ""),
+                name: String(el.name || ""),
+                textContent: String(el.textContent || "").replace(/\\s+/g, " ").trim(),
+                className: String(el.className || ""),
+              }));
+            const html = String((form || root).outerHTML || "")
+              .replace(/\\s+/g, " ")
+              .trim()
+              .slice(0, 5000);
+            return {
+              formHtml: html,
+              buttons,
+              inputs,
+              links,
+              buttonCount: buttons.length,
+              submitInputCount: inputs.length,
+              linkCount: links.length,
+            };
+        }""",
+    )
+
+
+async def _click_login_initial_button(connector: PortalSecundarioLegacyConnector, *, timeout_ms: int = 2500) -> tuple[bool, str, dict]:
+    debug = await _capture_login_button_debug(connector)
+    candidate_selectors = [
+        "#Entrar",
+        "#btnEntrar",
+        "#btnLogin",
+        "#btnProxima",
+        "input[name='Entrar']",
+        "input[name='btnEntrar']",
+        "input[name='btnLogin']",
+        "input[type='submit']",
+        "input[type='button']",
+        "button[type='submit']",
+        "button:has-text('Próxima')",
+        "button:has-text('Proxima')",
+        "input[value='Próxima']",
+        "input[value='Proxima']",
+        "input[value='Entrar']",
+        "input[value='Acessar']",
+    ]
+    print(f"[LOGIN_FLOW] html do formulário de login, sem senha: {debug.get('formHtml') or ''}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] buttons encontrados: {json.dumps(debug.get('buttons') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] inputs submit/button encontrados: {json.dumps(debug.get('inputs') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] links encontrados próximos ao form, se houver: {json.dumps(debug.get('links') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
+
+    for selector in candidate_selectors:
+        try:
+            locator = connector.page.locator(selector).first
+            await locator.wait_for(state="visible", timeout=timeout_ms)
+            await locator.click(timeout=timeout_ms)
+            print(f"[LOGIN_FLOW] botao clicado: {selector}", file=sys.stderr, flush=True)
+            return True, selector, debug
+        except Exception:
+            continue
+
+    try:
+        login_locator = connector.page.locator("#txtLogin").first
+        await login_locator.press("Enter", timeout=timeout_ms)
+        print("[LOGIN_FLOW] botao clicado: Enter no txtLogin", file=sys.stderr, flush=True)
+        return True, "Enter", debug
+    except Exception:
+        pass
+
+    try:
+        form_buttons = [
+            btn for btn in (debug.get("buttons") or [])
+            if str(btn.get("tag") or "").lower() in {"button", "input", "a"}
+        ]
+        for btn in form_buttons:
+            label = " ".join(
+                [
+                    str(btn.get("id") or ""),
+                    str(btn.get("name") or ""),
+                    str(btn.get("value") or ""),
+                    str(btn.get("textContent") or ""),
+                ]
+            ).strip()
+            normalized = label.lower()
+            if not any(token in normalized for token in ["próxima", "proxima", "entrar", "acessar", "login"]):
+                continue
+            selector = ""
+            if btn.get("id"):
+                selector = f"#{btn.get('id')}"
+            elif btn.get("name") and str(btn.get("tag") or "").lower() == "input":
+                selector = f"input[name='{btn.get('name')}']"
+            elif str(btn.get("tag") or "").lower() == "input" and btn.get("value"):
+                selector = f"input[value='{btn.get('value')}']"
+            elif str(btn.get("tag") or "").lower() == "button" and btn.get("textContent"):
+                button_text = str(btn.get("textContent") or "").replace("'", "\\'")
+                selector = f"button:has-text('{button_text}')"
+            if not selector:
+                continue
+            try:
+                locator = connector.page.locator(selector).first
+                await locator.wait_for(state="visible", timeout=timeout_ms)
+                await locator.click(timeout=timeout_ms)
+                print(f"[LOGIN_FLOW] botao clicado via fallback: {selector}", file=sys.stderr, flush=True)
+                return True, selector, debug
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    print("[LOGIN_FLOW] selector inválido ignorado: button_login_fallback", file=sys.stderr, flush=True)
+    return False, "", debug
 
 
 def _log_login_snapshot(snapshot: dict, login: str, password: str, stage: str) -> None:
@@ -781,19 +940,23 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
         snapshot = await _capture_login_snapshot(connector)
         _log_login_snapshot(snapshot, login, password, "login-preenchido")
         _log_login_flow(snapshot, "login-preenchido", login, password, final_code="PENDING")
-        if not snapshot.get("buttonFound"):
-            raise _typed_login_error("LOGIN_BUTTON_NOT_FOUND", "O sistema nao encontrou o botao de login do portal.", stage="button_login")
+        button_debug = await _capture_login_button_debug(connector)
+        print(f"[LOGIN_FLOW] html do formulário de login, sem senha: {button_debug.get('formHtml') or ''}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] buttons encontrados: {json.dumps(button_debug.get('buttons') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] inputs submit/button encontrados: {json.dumps(button_debug.get('inputs') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] links encontrados próximos ao form, se houver: {json.dumps(button_debug.get('links') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
         try:
-            clicked_login = await connector._click_login_submit()
+            clicked_login, clicked_selector, _ = await _click_login_initial_button(connector)
         except Exception as exc:
             raise _typed_login_error("LOGIN_BUTTON_NOT_FOUND", "Nao consegui acionar o botao de login.", stage="button_login") from exc
         if not clicked_login:
-            try:
-                await connector.page.keyboard.press("Enter")
-            except Exception as exc:
-                raise _typed_login_error("LOGIN_BUTTON_NOT_FOUND", "Nao consegui acionar o botao de login.", stage="button_login") from exc
+            raise _typed_login_error(
+                "LOGIN_BUTTON_NOT_FOUND",
+                "O sistema nao encontrou o botao de login do portal.",
+                stage="button_login",
+            )
 
-        print("[RIBEIRAO_LOGIN] clique em login executado", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] clique de login executado: {clicked_selector or 'Enter'}", file=sys.stderr, flush=True)
         await connector.page.wait_for_timeout(1500)
         snapshot = await _capture_login_snapshot(connector)
         _log_login_snapshot(snapshot, login, password, "apos-primeiro-clique")
@@ -827,19 +990,18 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
             snapshot = await _capture_login_snapshot(connector)
             _log_login_snapshot(snapshot, login, password, "senha-preenchida")
             _log_login_flow(snapshot, "senha-preenchida", login, password, final_code="PENDING")
-            if not snapshot.get("buttonFound"):
-                raise _typed_login_error("LOGIN_BUTTON_NOT_FOUND", "O sistema nao encontrou o botao de login do portal.", stage="button_password")
             try:
-                clicked_password = await connector._click_login_submit()
+                clicked_password, clicked_selector, _ = await _click_login_initial_button(connector)
             except Exception as exc:
                 raise _typed_login_error("LOGIN_BUTTON_NOT_FOUND", "Nao consegui acionar o botao de login.", stage="button_password") from exc
             if not clicked_password:
-                try:
-                    await connector.page.keyboard.press("Enter")
-                except Exception as exc:
-                    raise _typed_login_error("LOGIN_BUTTON_NOT_FOUND", "Nao consegui acionar o botao de login.", stage="button_password") from exc
+                raise _typed_login_error(
+                    "LOGIN_BUTTON_NOT_FOUND",
+                    "O sistema nao encontrou o botao de login do portal.",
+                    stage="button_password",
+                )
 
-            print("[RIBEIRAO_LOGIN] clique em login executado", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] clique de login executado: {clicked_selector or 'Enter'}", file=sys.stderr, flush=True)
             await connector.page.wait_for_timeout(1500)
             snapshot = await _capture_login_snapshot(connector)
             _log_login_snapshot(snapshot, login, password, "apos-segundo-clique")
