@@ -158,6 +158,7 @@ LOGIN_ERROR_CODES = {
     "DNS_RESOLUTION_FAILED",
     "CHROMIUM_DNS_FAILED",
     "WORKER_INTERNAL_ERROR",
+    "USER_ALREADY_LOGGED_CONFIRM_FAILED",
 }
 
 
@@ -1265,12 +1266,12 @@ async def _retry_login_post_click(
         print(f"[LOGIN_FLOW] mensagens do portal depois do clique: {last_snapshot.get('errorText') or ''}", file=sys.stderr, flush=True)
 
         popup_text = str(last_modal.get('popupText') or last_modal.get('messageLabelText') or '').lower()
-        if last_modal.get("popupFound"):
+        if (last_modal or {}).get("popupFound"):
             if any(term in popup_text for term in ["certificado digital", "certificadodigital", "login-identific"]):
                 raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticacao manual/certificado digital.", stage="certificado_digital")
             if any(term in popup_text for term in ["login invalido", "usuario invalido", "acesso negado", "usuário inválido", "usuário nao encontrado", "login inválido", "informe usuario", "informe usuário"]):
                 raise _typed_login_error("LOGIN_REJECTED", "O portal recusou o login/senha informados.", stage="popup_login")
-            if last_modal.get("popupOkFound") and any(term in popup_text for term in ["ok", "confirm", "confirmar", "aviso", "mensagem", "informacao", "informação"]):
+            if (last_modal or {}).get("popupOkFound") and any(term in popup_text for term in ["ok", "confirm", "confirmar", "aviso", "mensagem", "informacao", "informação"]):
                 print(f"[LOGIN_FLOW] popup OK button found: {last_modal.get('popupOkSelector') or '#ucAjaxModalPopup1_btnConfirmarPopup'}", file=sys.stderr, flush=True)
                 await _click_ok_popup()
                 await connector.page.wait_for_timeout(1200)
@@ -1517,6 +1518,8 @@ def _classify_login_issue(code: str | None, message: str, snapshot: dict | None 
             return 'CHROMIUM_DNS_FAILED', raw_message or 'O navegador interno do servidor n?o conseguiu resolver o portal, mesmo com DNS do container funcionando.'
         if code_upper == 'WORKER_INTERNAL_ERROR':
             return 'WORKER_INTERNAL_ERROR', raw_message or 'Erro interno no worker de login.'
+        if code_upper == 'USER_ALREADY_LOGGED_CONFIRM_FAILED':
+            return 'USER_ALREADY_LOGGED_CONFIRM_FAILED', raw_message or 'O portal informou que o usu?rio j? estava logado, mas n?o foi poss?vel confirmar a desconex?o autom?tica.'
         if code_upper == 'LOGIN_FIELDS_NOT_FOUND':
             return 'LOGIN_FIELDS_NOT_FOUND', raw_message or 'O sistema n?o encontrou os campos de login do portal. O layout pode ter mudado.'
         if code_upper == 'LOGIN_BUTTON_NOT_FOUND':
@@ -1662,6 +1665,7 @@ def _build_connector(payload: dict, settings) -> PortalSecundarioLegacyConnector
 
 async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login: str, password: str) -> None:
     dialog_messages: list[str] = []
+    last_modal: dict = {}
 
     async def on_dialog(dialog):
         dialog_messages.append(str(dialog.message or ''))
@@ -1912,6 +1916,32 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
             print(f"[LOGIN_FLOW] certificado encontrado depois: {bool(snapshot.get('certificateFound'))}", file=sys.stderr, flush=True)
             print(f"[LOGIN_FLOW] mensagens do portal depois do clique: {snapshot.get('errorText') or ''}", file=sys.stderr, flush=True)
 
+            last_modal = await _capture_login_modal_state(connector)
+            modal_text = str((last_modal or {}).get('popupText') or (last_modal or {}).get('messageLabelText') or '').strip().lower()
+            user_already_logged = any(term in modal_text for term in [
+                'usu?rio j? logado',
+                'usuario j? logado',
+                'usuario ja logado',
+                'usu?rio ja logado',
+                'desconectar seu usu?rio dos outros terminais',
+                'desconectar seu usuario dos outros terminais',
+            ])
+            print(f"[LOGIN_FLOW] usuario_ja_logado_detectado: {str(user_already_logged).lower()}", file=sys.stderr, flush=True)
+            if user_already_logged:
+                clicked_confirm = await _click_ok_popup()
+                print(f"[LOGIN_FLOW] clicou_confirmar_desconectar: {str(clicked_confirm).lower()}", file=sys.stderr, flush=True)
+                await connector.page.wait_for_timeout(1500)
+                snapshot = await _capture_login_snapshot(connector)
+                last_modal = await _capture_login_modal_state(connector)
+                print(f"[LOGIN_FLOW] url depois confirmar desconectar: {snapshot.get('url') or ''}", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] sucesso apos confirmar desconectar: {str(bool(snapshot.get('successFound') or snapshot.get('operacionalFound') or snapshot.get('consultaMargemFound'))).lower()}", file=sys.stderr, flush=True)
+                if not (snapshot.get('successFound') or snapshot.get('operacionalFound') or snapshot.get('consultaMargemFound')):
+                    raise _typed_login_error(
+                        'USER_ALREADY_LOGGED_CONFIRM_FAILED',
+                        'O portal informou que o usu?rio j? estava logado, mas n?o foi poss?vel confirmar a desconex?o autom?tica.',
+                        stage='confirmar_usuario_logado',
+                    )
+
         if not handled_password_stage and snapshot.get("passwordFound"):
             if not password:
                 raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "O portal exibiu senha, mas a senha nao foi informada.", stage="senha_ausente")
@@ -1966,7 +1996,7 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
 
         if handled_password_stage and not (snapshot.get("successFound") or snapshot.get("operacionalFound") or snapshot.get("consultaMargemFound")):
             retry_message = "O portal nao avancou apos informar o login. Pode ser validacao por JavaScript, certificado digital ou bloqueio do portal."
-            retry_popup_text = str(last_modal.get("popupText") or last_modal.get("messageLabelText") or "").strip()
+            retry_popup_text = str((last_modal or {}).get("popupText") or (last_modal or {}).get("messageLabelText") or "").strip()
             retry_method_label = str(click_debug.get("chosenMethod") or "").strip()
             if retry_popup_text:
                 retry_message = f"{retry_message} Detalhes do portal: {retry_popup_text[:250]}"
@@ -2075,7 +2105,7 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
                     pass
                 elif snapshot.get("loginPageVisible") or snapshot.get("loginFound"):
                     retry_message = "O portal nao avancou apos informar o login. Pode ser validacao por JavaScript, certificado digital ou bloqueio do portal."
-                    retry_popup_text = str(last_modal.get("popupText") or last_modal.get("messageLabelText") or "").strip()
+                    retry_popup_text = str((last_modal or {}).get("popupText") or (last_modal or {}).get("messageLabelText") or "").strip()
                     retry_method_label = str(click_debug.get("chosenMethod") or "").strip()
                     if retry_popup_text:
                         retry_message = f"{retry_message} Detalhes do portal: {retry_popup_text[:250]}"
@@ -2096,7 +2126,7 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
                     print(f"[LOGIN_FLOW] current_url antes: {snapshot.get('url') or ''}", file=sys.stderr, flush=True)
                     raise _typed_login_error("SELECTOR_ERROR", "O portal nao avancou apos informar o login. Pode ser validacao por JavaScript, certificado digital ou bloqueio do portal.", stage="selector_check")
             else:
-                retry_popup_text = str(last_modal.get("popupText") or last_modal.get("messageLabelText") or "").strip()
+                retry_popup_text = str((last_modal or {}).get("popupText") or (last_modal or {}).get("messageLabelText") or "").strip()
                 retry_method_label = str(retry_label or click_debug.get("chosenMethod") or "").strip()
                 detailed_message = "O portal nao avancou apos informar o login. Pode ser validacao por JavaScript, certificado digital ou bloqueio do portal."
                 if retry_popup_text:
@@ -2410,7 +2440,7 @@ async def query_cpf(payload: dict) -> dict:
             status = "login_error"
         elif code == "LOGIN_OK_NAVIGATION_FAILED":
             status = "login_error"
-        elif code == "LOGIN_FIELDS_NOT_FOUND" or code == "LOGIN_BUTTON_NOT_FOUND" or code == "LOGIN_PASSWORD_FIELD_NOT_FOUND" or code == "LOGIN_TIMEOUT" or code == "LOGIN_STILL_ON_SAME_PAGE" or code == "PORTAL_CHANGED" or code == "UNKNOWN_LOGIN_ERROR" or code == "PORTAL_UNREACHABLE" or code == "DNS_RESOLUTION_FAILED" or code == "CHROMIUM_DNS_FAILED" or code == "WORKER_INTERNAL_ERROR":
+        elif code == "LOGIN_FIELDS_NOT_FOUND" or code == "LOGIN_BUTTON_NOT_FOUND" or code == "LOGIN_PASSWORD_FIELD_NOT_FOUND" or code == "LOGIN_TIMEOUT" or code == "LOGIN_STILL_ON_SAME_PAGE" or code == "PORTAL_CHANGED" or code == "UNKNOWN_LOGIN_ERROR" or code == "PORTAL_UNREACHABLE" or code == "DNS_RESOLUTION_FAILED" or code == "CHROMIUM_DNS_FAILED" or code == "WORKER_INTERNAL_ERROR" or code == "USER_ALREADY_LOGGED_CONFIRM_FAILED":
             status = "login_error"
         elif "sessao" in message.lower() and "expir" in message.lower():
             status = "session_expired"

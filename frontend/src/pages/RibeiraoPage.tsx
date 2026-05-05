@@ -1463,7 +1463,7 @@ function getSessionBlockingMessage(session?: RibeiraoSession | null) {
       ? 'O portal não respondeu após tentar login.'
       : 'O portal não avançou após informar o login. Pode ser validação por JavaScript, certificado digital ou bloqueio do portal.';
   }
-  if (['PORTAL_CHANGED', 'SELECTOR_ERROR', 'LOGIN_OK_NAVIGATION_FAILED', 'LOGIN_REJECTED', 'UNKNOWN_LOGIN_ERROR', 'DNS_RESOLUTION_FAILED', 'CHROMIUM_DNS_FAILED', 'WORKER_INTERNAL_ERROR'].includes(errorCode) || session.status === 'erro_login' || session.status === 'login_error') {
+  if (['PORTAL_CHANGED', 'SELECTOR_ERROR', 'LOGIN_OK_NAVIGATION_FAILED', 'LOGIN_REJECTED', 'UNKNOWN_LOGIN_ERROR', 'DNS_RESOLUTION_FAILED', 'CHROMIUM_DNS_FAILED', 'WORKER_INTERNAL_ERROR', 'USER_ALREADY_LOGGED_CONFIRM_FAILED'].includes(errorCode) || session.status === 'erro_login' || session.status === 'login_error') {
     if (errorCode === 'LOGIN_OK_NAVIGATION_FAILED') {
       return 'Login aceito, mas não foi possível abrir Consulta de Margem.';
     }
@@ -1538,6 +1538,9 @@ function getSessionDisplayMessage(session?: RibeiraoSession | null) {
   if (errorCode === 'WORKER_INTERNAL_ERROR') {
     return 'Erro interno no worker de login.';
   }
+  if (errorCode === 'USER_ALREADY_LOGGED_CONFIRM_FAILED') {
+    return 'O portal informou que o usu?rio j? estava logado, mas n?o foi poss?vel confirmar a desconex?o autom?tica.';
+  }
   if (errorCode === 'PORTAL_CHANGED') {
     return 'O layout do portal mudou e o fluxo de login não foi reconhecido.';
   }
@@ -1606,6 +1609,9 @@ function getFriendlyRibeiraoError(error: unknown, fallback: string) {
   }
   if (code === 'WORKER_INTERNAL_ERROR') {
     return 'Erro interno no worker de login.';
+  }
+  if (code === 'USER_ALREADY_LOGGED_CONFIRM_FAILED') {
+    return 'O portal informou que o usu?rio j? estava logado, mas n?o foi poss?vel confirmar a desconex?o autom?tica.';
   }
   if (code === 'LOGIN_FIELDS_NOT_FOUND') {
     return 'O sistema não encontrou os campos de login do portal. O layout pode ter mudado.';
