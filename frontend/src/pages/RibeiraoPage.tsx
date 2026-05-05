@@ -1517,6 +1517,9 @@ function getSessionDisplayMessage(session?: RibeiraoSession | null) {
   if (errorCode === 'LOGIN_BUTTON_NOT_FOUND') {
     return 'O sistema não encontrou o botão de login do portal.';
   }
+  if (errorCode === 'LOGIN_PASSWORD_FIELD_NOT_FOUND') {
+    return 'O sistema chegou na segunda etapa do login, mas não encontrou o campo de senha.';
+  }
   if (errorCode === 'LOGIN_TIMEOUT') {
     return 'O portal não respondeu após tentar login.';
   }
@@ -1603,6 +1606,9 @@ function getFriendlyRibeiraoError(error: unknown, fallback: string) {
   }
   if (code === 'LOGIN_BUTTON_NOT_FOUND') {
     return 'O sistema não encontrou o botão de login do portal.';
+  }
+  if (code === 'LOGIN_PASSWORD_FIELD_NOT_FOUND') {
+    return 'O sistema chegou na segunda etapa do login, mas não encontrou o campo de senha.';
   }
   if (code === 'LOGIN_TIMEOUT') {
     return 'O portal não respondeu após tentar login.';

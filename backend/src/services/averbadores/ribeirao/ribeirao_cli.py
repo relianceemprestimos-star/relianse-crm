@@ -146,6 +146,7 @@ LOGIN_ERROR_CODES = {
     "LOGIN_REJECTED",
     "LOGIN_FIELDS_NOT_FOUND",
     "LOGIN_BUTTON_NOT_FOUND",
+    "LOGIN_PASSWORD_FIELD_NOT_FOUND",
     "LOGIN_TIMEOUT",
     "LOGIN_STILL_ON_SAME_PAGE",
     "CAPTCHA_REQUIRED",
@@ -913,6 +914,178 @@ async def _capture_login_modal_state(connector: PortalSecundarioLegacyConnector)
         }
 
 
+async def _capture_second_stage_login_debug(connector: PortalSecundarioLegacyConnector) -> dict:
+    password_selectors = [
+        "#txtSenha",
+        "input[name='txtSenha']",
+        "input[type='password']",
+        "input[id*='Senha']",
+        "input[name*='Senha']",
+        "input[id*='senha']",
+        "input[name*='senha']",
+    ]
+    button_selectors = [
+        "#Entrar",
+        "#btnEntrar",
+        "#btnLogin",
+        "input[name='Entrar']",
+        "input[name='btnEntrar']",
+        "input[name='btnLogin']",
+        "input[type='submit']",
+        "input[type='button']",
+        "button[type='submit']",
+        "input[value='Entrar']",
+        "input[value='Acessar']",
+        "button:has-text('Entrar')",
+        "button:has-text('Acessar')",
+    ]
+
+    aggregate = {
+        "secondStageDetected": False,
+        "url": "",
+        "title": "",
+        "passwordFound": False,
+        "passwordSelector": "",
+        "buttonFound": False,
+        "buttonSelector": "",
+        "inputCount": 0,
+        "inputs": [],
+        "buttons": [],
+        "links": [],
+        "scopes": [],
+    }
+
+    for scope_index, scope in enumerate(_login_scopes(connector)):
+        try:
+            scope_data = await scope.evaluate(
+                """({ passwordSelectors, buttonSelectors }) => {
+                    const normalize = (value) => String(value || "")
+                      .normalize("NFD")
+                      .replace(/[\\u0300-\\u036f]/g, "")
+                      .replace(/\\s+/g, " ")
+                      .trim()
+                      .toLowerCase();
+                    const isVisible = (el) => {
+                      if (!el) return false;
+                      const style = window.getComputedStyle(el);
+                      if (!style) return false;
+                      const rect = el.getBoundingClientRect();
+                      return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
+                    };
+                    const matchesAny = (el, selectors) => selectors.some((selector) => {
+                      const raw = String(selector || "").trim();
+                      if (!raw) return false;
+                      const id = String(el.id || "");
+                      const name = String(el.name || "");
+                      const type = String(el.type || "");
+                      const value = String(el.value || "");
+                      const placeholder = String(el.getAttribute("placeholder") || "");
+                      const text = normalize(String(el.textContent || ""));
+                      if (raw === "#txtSenha") return id === "txtSenha";
+                      if (raw === "input[name='txtSenha']") return name === "txtSenha";
+                      if (raw === "input[type='password']") return type === "password";
+                      if (raw === "input[id*='Senha']") return /senha/i.test(id);
+                      if (raw === "input[name*='Senha']") return /senha/i.test(name);
+                      if (raw === "input[id*='senha']") return /senha/i.test(id);
+                      if (raw === "input[name*='senha']") return /senha/i.test(name);
+                      if (raw === "#Entrar") return id === "Entrar";
+                      if (raw === "#btnEntrar") return id === "btnEntrar";
+                      if (raw === "#btnLogin") return id === "btnLogin";
+                      if (raw === "input[name='Entrar']") return name === "Entrar";
+                      if (raw === "input[name='btnEntrar']") return name === "btnEntrar";
+                      if (raw === "input[name='btnLogin']") return name === "btnLogin";
+                      if (raw === "input[type='submit']") return type === "submit";
+                      if (raw === "input[type='button']") return type === "button";
+                      if (raw === "button[type='submit']") return el.tagName && el.tagName.toLowerCase() === "button" && type === "submit";
+                      if (raw === "input[value='Entrar']") return value === "Entrar";
+                      if (raw === "input[value='Acessar']") return value === "Acessar";
+                      if (raw === "button:has-text('Entrar')") return el.tagName && el.tagName.toLowerCase() === "button" && text.includes("entrar");
+                      if (raw === "button:has-text('Acessar')") return el.tagName && el.tagName.toLowerCase() === "button" && text.includes("acessar");
+                      return false;
+                    });
+                    const summarize = (el) => ({
+                      tag: String(el.tagName || "").toLowerCase(),
+                      id: String(el.id || ""),
+                      name: String(el.name || ""),
+                      type: String(el.type || ""),
+                      placeholder: String(el.getAttribute("placeholder") || ""),
+                      value: String(el.value || ""),
+                      textContent: String(el.textContent || "").replace(/\\s+/g, " ").trim(),
+                      className: String(el.className || ""),
+                    });
+                    const inputs = Array.from(document.querySelectorAll("input"))
+                      .filter((el) => isVisible(el))
+                      .map(summarize);
+                    const buttons = Array.from(document.querySelectorAll("button,input[type='submit'],input[type='button'],input[type='image'],a"))
+                      .filter((el) => isVisible(el))
+                      .map(summarize);
+                    const links = Array.from(document.querySelectorAll("a"))
+                      .filter((el) => isVisible(el))
+                      .map(summarize);
+                    const passwordEl = Array.from(document.querySelectorAll("input,textarea"))
+                      .find((el) => isVisible(el) && matchesAny(el, passwordSelectors)) || null;
+                    const buttonEl = Array.from(document.querySelectorAll("button,input[type='submit'],input[type='button'],input[type='image'],a"))
+                      .find((el) => isVisible(el) && matchesAny(el, buttonSelectors)) || null;
+                    return {
+                      url: String(location.href || ""),
+                      title: String(document.title || ""),
+                      secondStageDetected: /LoginSegundaEtapa\\.aspx/i.test(String(location.href || "")),
+                      inputCount: inputs.length,
+                      inputs,
+                      buttons,
+                      links,
+                      passwordFound: Boolean(passwordEl),
+                      passwordSelector: passwordEl ? (
+                        passwordEl.id ? `#${passwordEl.id}` :
+                        passwordEl.name ? `input[name='${String(passwordEl.name).replace(/'/g, "\\'")}']` :
+                        passwordEl.type === "password" ? "input[type='password']" : ""
+                      ) : "",
+                      buttonFound: Boolean(buttonEl),
+                      buttonSelector: buttonEl ? (
+                        buttonEl.id ? `#${buttonEl.id}` :
+                        buttonEl.name && String(buttonEl.tagName || "").toLowerCase() === "input" ? `input[name='${String(buttonEl.name).replace(/'/g, "\\'")}']` :
+                        buttonEl.type ? `input[type='${String(buttonEl.type)}']` : ""
+                      ) : "",
+                    };
+                }""",
+                {"passwordSelectors": password_selectors, "buttonSelectors": button_selectors},
+            )
+        except Exception as exc:
+            scope_data = {
+                "url": "",
+                "title": "",
+                "secondStageDetected": False,
+                "inputCount": 0,
+                "inputs": [],
+                "buttons": [],
+                "links": [],
+                "passwordFound": False,
+                "passwordSelector": "",
+                "buttonFound": False,
+                "buttonSelector": "",
+                "error": str(exc),
+            }
+        scope_data["scopeIndex"] = scope_index
+        aggregate["scopes"].append(scope_data)
+        aggregate["inputCount"] += int(scope_data.get("inputCount") or 0)
+        aggregate["inputs"].extend(list(scope_data.get("inputs") or []))
+        aggregate["buttons"].extend(list(scope_data.get("buttons") or []))
+        aggregate["links"].extend(list(scope_data.get("links") or []))
+        aggregate["secondStageDetected"] = bool(aggregate["secondStageDetected"] or scope_data.get("secondStageDetected"))
+        aggregate["passwordFound"] = bool(aggregate["passwordFound"] or scope_data.get("passwordFound"))
+        aggregate["buttonFound"] = bool(aggregate["buttonFound"] or scope_data.get("buttonFound"))
+        if not aggregate["url"] and scope_data.get("url"):
+            aggregate["url"] = str(scope_data.get("url") or "")
+        if not aggregate["title"] and scope_data.get("title"):
+            aggregate["title"] = str(scope_data.get("title") or "")
+        if not aggregate["passwordSelector"] and scope_data.get("passwordSelector"):
+            aggregate["passwordSelector"] = str(scope_data.get("passwordSelector") or "")
+        if not aggregate["buttonSelector"] and scope_data.get("buttonSelector"):
+            aggregate["buttonSelector"] = str(scope_data.get("buttonSelector") or "")
+
+    return aggregate
+
+
 async def _retry_login_post_click(
     connector: PortalSecundarioLegacyConnector,
     login: str,
@@ -1345,6 +1518,8 @@ def _classify_login_issue(code: str | None, message: str, snapshot: dict | None 
             return 'LOGIN_FIELDS_NOT_FOUND', raw_message or 'O sistema n?o encontrou os campos de login do portal. O layout pode ter mudado.'
         if code_upper == 'LOGIN_BUTTON_NOT_FOUND':
             return 'LOGIN_BUTTON_NOT_FOUND', raw_message or 'O sistema n?o encontrou o bot?o de login do portal.'
+        if code_upper == 'LOGIN_PASSWORD_FIELD_NOT_FOUND':
+            return 'LOGIN_PASSWORD_FIELD_NOT_FOUND', raw_message or 'O sistema chegou na segunda etapa do login, mas n?o encontrou o campo de senha.'
         if code_upper == 'LOGIN_TIMEOUT':
             return 'LOGIN_TIMEOUT', raw_message or 'O portal n?o respondeu ap?s tentar login.'
         if code_upper == 'LOGIN_STILL_ON_SAME_PAGE':
@@ -1639,7 +1814,102 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
             if code in {"LOGIN_REJECTED", "CAPTCHA_REQUIRED", "MANUAL_AUTH_REQUIRED"}:
                 raise _typed_login_error(code, typed_message, stage="erro_texto_portal")
 
-        if snapshot.get("passwordFound"):
+        handled_password_stage = False
+        current_url_lower = str(snapshot.get("url") or "").lower()
+        second_stage_detected = "loginsegundaetapa.aspx" in current_url_lower
+        if second_stage_detected:
+            second_stage_debug = await _capture_second_stage_login_debug(connector)
+            print(f"[LOGIN_FLOW] segunda etapa detectada: true", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] url segunda etapa: {second_stage_debug.get('url') or snapshot.get('url') or ''}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] inputs segunda etapa: {json.dumps(second_stage_debug.get('inputs') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] campo senha encontrado: {bool(second_stage_debug.get('passwordFound') or snapshot.get('passwordFound'))}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] botao senha encontrado: {bool(second_stage_debug.get('buttonFound') or snapshot.get('buttonFound'))}", file=sys.stderr, flush=True)
+
+            if not second_stage_debug.get("passwordFound") and not snapshot.get("passwordFound"):
+                raise _typed_login_error(
+                    "LOGIN_PASSWORD_FIELD_NOT_FOUND",
+                    "O sistema chegou na segunda etapa do login, mas nao encontrou o campo de senha.",
+                    stage="password_field",
+                )
+
+            password_selectors = [
+                second_stage_debug.get("passwordSelector") or "",
+                "#txtSenha",
+                "input[name='txtSenha']",
+                "input[type='password']",
+                "input[id*='Senha']",
+                "input[name*='Senha']",
+                "input[id*='senha']",
+                "input[name*='senha']",
+            ]
+            password_selector_used = ""
+            password_filled = False
+            for scope_index, scope in _login_scopes(connector):
+                for selector in [item for item in password_selectors if item]:
+                    try:
+                        locator = scope.locator(selector).first
+                        await locator.wait_for(state="visible", timeout=timeout_ms)
+                        await locator.fill(password, timeout=3000)
+                        password_selector_used = selector
+                        password_filled = True
+                        scope_label = 'page' if scope_index == 0 else f'frame-{scope_index}'
+                        print(f"[LOGIN_FLOW] seletor senha usado: {selector} ({scope_label})", file=sys.stderr, flush=True)
+                        break
+                    except Exception:
+                        continue
+                if password_filled:
+                    break
+
+            if not password_filled:
+                raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "Nao consegui preencher a senha na segunda etapa.", stage="fill_password")
+
+            password_value_length = 0
+            password_value_confirmed = False
+            for scope_index, scope in _login_scopes(connector):
+                for selector in [item for item in [password_selector_used, "#txtSenha", "input[name='txtSenha']", "input[type='password']"] if item]:
+                    try:
+                        locator = scope.locator(selector).first
+                        current_password_value = await locator.input_value(timeout=3000)
+                        password_value_length = len(str(current_password_value or ""))
+                        password_value_confirmed = password_value_length > 0
+                        if password_value_confirmed:
+                            break
+                    except Exception:
+                        continue
+                if password_value_confirmed:
+                    break
+
+            print(f"[LOGIN_FLOW] password_value_length: {password_value_length}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] password preenchida confirmada: {str(password_value_confirmed).lower()}", file=sys.stderr, flush=True)
+
+            snapshot = await _capture_login_snapshot(connector)
+            _log_login_snapshot(snapshot, login, password, "senha-preenchida-segunda-etapa")
+            _log_login_flow(snapshot, "senha-preenchida-segunda-etapa", login, password, final_code="PENDING")
+
+            try:
+                clicked_password, clicked_selector, click_debug = await _click_login_initial_button(connector)
+            except Exception as exc:
+                raise _typed_login_error("LOGIN_BUTTON_NOT_FOUND", "Nao consegui acionar o botao da segunda etapa.", stage="button_password") from exc
+            if not clicked_password:
+                raise _typed_login_error("LOGIN_BUTTON_NOT_FOUND", "O sistema nao encontrou o botao da segunda etapa do portal.", stage="button_password")
+
+            handled_password_stage = True
+            print(f"[LOGIN_FLOW] clique de senha executado: {clicked_selector or 'Enter'}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] botao escolhido: {json.dumps((click_debug or {}).get('chosenButtonInfo') or {}, ensure_ascii=False)}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] tentou click normal: {str((click_debug or {}).get('chosenMethod') in {'click', 'click-fallback'}).lower()}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] tentou click JS: {str((click_debug or {}).get('chosenMethod') == 'js').lower()}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] tentou Enter: {str((click_debug or {}).get('chosenMethod') == 'enter').lower()}", file=sys.stderr, flush=True)
+            await connector.page.wait_for_timeout(2500)
+            snapshot = await _capture_login_snapshot(connector)
+            _log_login_snapshot(snapshot, login, password, "apos-segunda-etapa")
+            _log_login_flow(snapshot, "apos-segunda-etapa", login, password, click_executed=True, final_code="PENDING", certificate_alert=bool(dialog_messages))
+            print(f"[LOGIN_FLOW] current_url depois: {snapshot.get('url') or ''}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] body_text_sample depois: {snapshot.get('bodySnippet') or ''}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] senha encontrada depois: {bool(snapshot.get('passwordFound'))}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] certificado encontrado depois: {bool(snapshot.get('certificateFound'))}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] mensagens do portal depois do clique: {snapshot.get('errorText') or ''}", file=sys.stderr, flush=True)
+
+        if not handled_password_stage and snapshot.get("passwordFound"):
             if not password:
                 raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "O portal exibiu senha, mas a senha nao foi informada.", stage="senha_ausente")
             try:
@@ -1690,6 +1960,28 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
             print(f"[LOGIN_FLOW] senha encontrada depois: {bool(snapshot.get('passwordFound'))}", file=sys.stderr, flush=True)
             print(f"[LOGIN_FLOW] certificado encontrado depois: {bool(snapshot.get('certificateFound'))}", file=sys.stderr, flush=True)
             print(f"[LOGIN_FLOW] mensagens do portal depois do clique: {snapshot.get('errorText') or ''}", file=sys.stderr, flush=True)
+
+        if handled_password_stage and not (snapshot.get("successFound") or snapshot.get("operacionalFound") or snapshot.get("consultaMargemFound")):
+            retry_message = "O portal nao avancou apos informar o login. Pode ser validacao por JavaScript, certificado digital ou bloqueio do portal."
+            retry_popup_text = str(last_modal.get("popupText") or last_modal.get("messageLabelText") or "").strip()
+            retry_method_label = str(click_debug.get("chosenMethod") or "").strip()
+            if retry_popup_text:
+                retry_message = f"{retry_message} Detalhes do portal: {retry_popup_text[:250]}"
+            if retry_method_label:
+                retry_message = f"{retry_message} Metodo tentado: {retry_method_label}."
+            if dialog_messages:
+                joined_dialogs = " | ".join(dialog_messages).strip()
+                if joined_dialogs:
+                    dialog_code, dialog_message = _classify_login_issue(None, joined_dialogs, snapshot)
+                    if dialog_code in {"LOGIN_REJECTED", "CAPTCHA_REQUIRED", "MANUAL_AUTH_REQUIRED"}:
+                        raise _typed_login_error(dialog_code, dialog_message, stage="dialog_post_password")
+            if snapshot.get("certificateFound") or "certificado" in str(snapshot.get("errorText") or "").lower():
+                raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticacao manual por certificado digital.", stage="certificado_digital")
+            if snapshot.get("errorText"):
+                code, typed_message = _classify_login_issue(None, snapshot.get("errorText") or "", snapshot)
+                if code in {"LOGIN_REJECTED", "CAPTCHA_REQUIRED", "MANUAL_AUTH_REQUIRED"}:
+                    raise _typed_login_error(code, typed_message, stage="erro_texto_portal")
+            raise _typed_login_error("LOGIN_STILL_ON_SAME_PAGE", retry_message, stage="password_submit")
 
         if dialog_messages:
             joined = " | ".join(dialog_messages).lower()
@@ -1808,6 +2100,8 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
                     detailed_message = f"{detailed_message} Detalhes do portal: {retry_popup_text[:250]}"
                 if retry_method_label:
                     detailed_message = f"{detailed_message} Metodo tentado: {retry_method_label}."
+                if handled_password_stage or second_stage_detected:
+                    raise _typed_login_error("LOGIN_STILL_ON_SAME_PAGE", detailed_message, stage="password_submit")
                 raise _typed_login_error("LOGIN_STILL_ON_SAME_PAGE", detailed_message, stage="mesma_tela")
         else:
             if snapshot.get("host") and ("login-identific" in str(snapshot.get("host") or "").lower() or "certificadodigital" in str(snapshot.get("url") or "").lower()):
@@ -1821,6 +2115,8 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
             print(f"[LOGIN_FLOW] tentou click JS: {str((click_debug or {}).get('chosenMethod') == 'js').lower()}", file=sys.stderr, flush=True)
             print(f"[LOGIN_FLOW] tentou Enter: {str((click_debug or {}).get('chosenMethod') == 'enter').lower()}", file=sys.stderr, flush=True)
             print(f"[LOGIN_FLOW] current_url antes: {snapshot.get('url') or ''}", file=sys.stderr, flush=True)
+            if handled_password_stage or second_stage_detected:
+                raise _typed_login_error("LOGIN_STILL_ON_SAME_PAGE", "O portal nao avancou apos informar o login. Pode ser validacao por JavaScript, certificado digital ou bloqueio do portal.", stage="password_submit")
             raise _typed_login_error("SELECTOR_ERROR", "O portal nao avan?ou ap?s informar o login. Pode ser valida??o por JavaScript, certificado digital ou bloqueio do portal.", stage="selector_check")
 
         try:
@@ -1998,7 +2294,7 @@ async def start_session(payload: dict) -> dict:
             status = "erro_login"
         elif code == "LOGIN_REJECTED":
             status = "erro_login"
-        elif code in {"LOGIN_FIELDS_NOT_FOUND", "LOGIN_BUTTON_NOT_FOUND", "LOGIN_TIMEOUT", "LOGIN_STILL_ON_SAME_PAGE", "PORTAL_CHANGED", "UNKNOWN_LOGIN_ERROR", "PORTAL_UNREACHABLE", "DNS_RESOLUTION_FAILED", "CHROMIUM_DNS_FAILED"}:
+        elif code in {"LOGIN_FIELDS_NOT_FOUND", "LOGIN_BUTTON_NOT_FOUND", "LOGIN_PASSWORD_FIELD_NOT_FOUND", "LOGIN_TIMEOUT", "LOGIN_STILL_ON_SAME_PAGE", "PORTAL_CHANGED", "UNKNOWN_LOGIN_ERROR", "PORTAL_UNREACHABLE", "DNS_RESOLUTION_FAILED", "CHROMIUM_DNS_FAILED"}:
             status = "erro_login"
         elif not code and not stage and ("browser" in message.lower() or "x server" in message.lower() or "$display" in message.lower()):
             status = "browser_launch_error"
@@ -2108,7 +2404,7 @@ async def query_cpf(payload: dict) -> dict:
             status = "login_error"
         elif code == "LOGIN_OK_NAVIGATION_FAILED":
             status = "login_error"
-        elif code == "LOGIN_FIELDS_NOT_FOUND" or code == "LOGIN_BUTTON_NOT_FOUND" or code == "LOGIN_TIMEOUT" or code == "LOGIN_STILL_ON_SAME_PAGE" or code == "PORTAL_CHANGED" or code == "UNKNOWN_LOGIN_ERROR" or code == "PORTAL_UNREACHABLE" or code == "DNS_RESOLUTION_FAILED" or code == "CHROMIUM_DNS_FAILED":
+        elif code == "LOGIN_FIELDS_NOT_FOUND" or code == "LOGIN_BUTTON_NOT_FOUND" or code == "LOGIN_PASSWORD_FIELD_NOT_FOUND" or code == "LOGIN_TIMEOUT" or code == "LOGIN_STILL_ON_SAME_PAGE" or code == "PORTAL_CHANGED" or code == "UNKNOWN_LOGIN_ERROR" or code == "PORTAL_UNREACHABLE" or code == "DNS_RESOLUTION_FAILED" or code == "CHROMIUM_DNS_FAILED":
             status = "login_error"
         elif "sessao" in message.lower() and "expir" in message.lower():
             status = "session_expired"
