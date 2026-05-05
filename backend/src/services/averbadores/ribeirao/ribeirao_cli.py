@@ -153,6 +153,7 @@ LOGIN_ERROR_CODES = {
     "UNKNOWN_LOGIN_ERROR",
     "LOGIN_OK_NAVIGATION_FAILED",
     "MANUAL_AUTH_REQUIRED",
+    "SELECTOR_ERROR",
     "DNS_RESOLUTION_FAILED",
     "CHROMIUM_DNS_FAILED",
 }
@@ -172,6 +173,178 @@ def _split_typed_login_error(message: str | None) -> tuple[str | None, str]:
         if upper.startswith(prefix):
             return code, raw[len(prefix):].strip()
     return None, raw
+
+
+def _login_scopes(connector: PortalSecundarioLegacyConnector):
+    scopes = [connector.page]
+    try:
+        scopes.extend(list(connector.page.frames))
+    except Exception:
+        pass
+    return scopes
+
+
+async def _probe_login_surface(
+    scope,
+    *,
+    login_selectors: list[str],
+    password_selectors: list[str],
+    entry_selectors: list[str],
+    submit_selectors: list[str],
+    success_selectors: list[str],
+    error_selectors: list[str],
+    captcha_selectors: list[str],
+) -> dict:
+    return await scope.evaluate(
+        """({ loginSelectors, passwordSelectors, entrySelectors, submitSelectors, successSelectors, errorSelectors, captchaSelectors }) => {
+            const normalize = (v) => String(v || "")
+              .normalize("NFD")
+              .replace(/[\\u0300-\\u036f]/g, "")
+              .replace(/\\s+/g, " ")
+              .trim()
+              .toLowerCase();
+            const isVisible = (el) => {
+              if (!el) return false;
+              const style = window.getComputedStyle(el);
+              if (!style) return false;
+              const rect = el.getBoundingClientRect();
+              return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
+            };
+            const textMatches = (selector, el) => {
+              const raw = String(selector || "").trim();
+              if (!raw) return false;
+              const textPrefix = raw.match(/^text=(.+)$/i);
+              if (textPrefix) {
+                const wanted = normalize(textPrefix[1]);
+                const hay = normalize(`${el.innerText || el.textContent || el.value || ""}`);
+                return wanted ? hay.includes(wanted) : false;
+              }
+              const hasTextMatch = raw.match(/^(.*?):has-text\\((['"])(.*)\\2\\)$/i);
+              if (hasTextMatch) {
+                const wanted = normalize(hasTextMatch[3]);
+                const hay = normalize(`${el.innerText || el.textContent || el.value || ""}`);
+                return wanted ? hay.includes(wanted) : false;
+              }
+              return false;
+            };
+            const safeQueryAll = (selector) => {
+              const raw = String(selector || "").trim();
+              if (!raw) return [];
+              if (/^text=/i.test(raw) || /:has-text\\(/i.test(raw)) {
+                const pool = Array.from(document.querySelectorAll("body *"));
+                return pool.filter((el) => isVisible(el) && textMatches(raw, el));
+              }
+              try {
+                return Array.from(document.querySelectorAll(raw));
+              } catch (_) {
+                return [];
+              }
+            };
+            const firstVisibleSelector = (selectors) => {
+              for (const selector of selectors || []) {
+                const nodes = safeQueryAll(selector);
+                const visible = nodes.find((node) => isVisible(node) && !(node.disabled || node.readOnly));
+                if (visible) return selector;
+              }
+              return "";
+            };
+            const firstText = (selectors) => {
+              for (const selector of selectors || []) {
+                const node = safeQueryAll(selector).find((el) => isVisible(el));
+                if (node) {
+                  const text = String(node.textContent || node.value || "").replace(/\\s+/g, " ").trim();
+                  if (text) return text;
+                }
+              }
+              return "";
+            };
+            const formElement = document.querySelector("form") || document.body || document.documentElement;
+            const bodyText = String(document.body?.innerText || document.body?.textContent || "").replace(/\\s+/g, " ").trim();
+            const bodyNormalized = normalize(bodyText);
+            const loginSelector = firstVisibleSelector(loginSelectors);
+            const passwordSelector = firstVisibleSelector(passwordSelectors);
+            const entrySelector = firstVisibleSelector(entrySelectors);
+            const submitSelector = firstVisibleSelector(submitSelectors);
+            const successSelector = firstVisibleSelector(successSelectors);
+            const captchaSelector = firstVisibleSelector(captchaSelectors);
+            const errorText = firstText(errorSelectors) || (
+              /login|senha|certificado|captcha|nao autorizado|nÃ£o autorizado|inv[aÃ¡]lid/i.test(bodyText)
+                ? bodyText.slice(0, 500)
+                : ""
+            );
+            return {
+              title: document.title || "",
+              url: location.href || "",
+              host: (() => {
+                try { return new URL(location.href).hostname || ""; } catch { return ""; }
+              })(),
+              inputCount: document.querySelectorAll("input").length,
+              loginFound: Boolean(loginSelector),
+              loginSelector,
+              passwordFound: Boolean(passwordSelector),
+              passwordSelector,
+              buttonFound: Boolean(entrySelector || submitSelector),
+              buttonSelector: entrySelector || submitSelector,
+              entryFound: Boolean(entrySelector),
+              entrySelector,
+              successFound: Boolean(successSelector),
+              successSelector,
+              operacionalFound: bodyNormalized.includes("operacional"),
+              consultaMargemFound: bodyNormalized.includes("consulta de margem"),
+              captchaFound: Boolean(captchaSelector),
+              captchaSelector,
+              errorText,
+              bodySnippet: bodyText.slice(0, 500),
+              bodyNormalized: bodyNormalized.slice(0, 500),
+              loginPageVisible: Boolean(loginSelector) && bodyNormalized.includes("login"),
+              formHtml: String(formElement.outerHTML || "").replace(/\\s+/g, " ").trim().slice(0, 5000),
+              buttons: Array.from(formElement.querySelectorAll("button,input[type='submit'],input[type='button'],input[type='image'],a"))
+                .filter((el) => isVisible(el))
+                .map((el) => ({
+                  tag: (el.tagName || "").toLowerCase(),
+                  id: String(el.id || ""),
+                  name: String(el.name || ""),
+                  type: String(el.type || ""),
+                  value: String(el.value || ""),
+                  textContent: String(el.textContent || "").replace(/\\s+/g, " ").trim(),
+                  className: String(el.className || ""),
+                  title: String(el.getAttribute("title") || ""),
+                })),
+              inputs: Array.from(formElement.querySelectorAll("input[type='submit'],input[type='button']"))
+                .filter((el) => isVisible(el))
+                .map((el) => ({
+                  id: String(el.id || ""),
+                  name: String(el.name || ""),
+                  type: String(el.type || ""),
+                  value: String(el.value || ""),
+                  className: String(el.className || ""),
+                })),
+              links: Array.from(formElement.querySelectorAll("a"))
+                .filter((el) => isVisible(el))
+                .map((el) => ({
+                  href: String(el.href || ""),
+                  id: String(el.id || ""),
+                  name: String(el.name || ""),
+                  textContent: String(el.textContent || "").replace(/\\s+/g, " ").trim(),
+                  className: String(el.className || ""),
+                })),
+              certificateFound: Boolean(
+                bodyNormalized.includes("certificado digital") ||
+                bodyNormalized.includes("certificadodigital") ||
+                bodyNormalized.includes("login-identific")
+              ),
+            };
+        }""",
+        {
+            "loginSelectors": login_selectors,
+            "passwordSelectors": password_selectors,
+            "entrySelectors": entry_selectors,
+            "submitSelectors": submit_selectors,
+            "successSelectors": success_selectors,
+            "errorSelectors": error_selectors,
+            "captchaSelectors": captcha_selectors,
+        },
+    )
 
 
 async def _capture_login_snapshot(connector: PortalSecundarioLegacyConnector) -> dict:
@@ -323,78 +496,185 @@ async def _capture_login_snapshot(connector: PortalSecundarioLegacyConnector) ->
     )
     for selector in snapshot.get("invalidSelectors") or []:
         print(f"[LOGIN_FLOW] selector inválido ignorado: {selector}", file=sys.stderr, flush=True)
+    frame_snapshots: list[dict] = []
+    try:
+        for frame in list(connector.page.frames)[1:]:
+            try:
+                frame_snapshot = await _probe_login_surface(
+                    frame,
+                    login_selectors=login_selectors,
+                    password_selectors=password_selectors,
+                    entry_selectors=entry_selectors,
+                    submit_selectors=submit_selectors,
+                    success_selectors=success_selectors,
+                    error_selectors=error_selectors,
+                    captcha_selectors=captcha_selectors,
+                )
+                frame_snapshots.append(frame_snapshot)
+            except Exception as exc:
+                frame_snapshots.append(
+                    {
+                        "url": getattr(frame, "url", ""),
+                        "title": "",
+                        "host": _safe_host(getattr(frame, "url", "")),
+                        "inputCount": 0,
+                        "loginFound": False,
+                        "passwordFound": False,
+                        "buttonFound": False,
+                        "entryFound": False,
+                        "successFound": False,
+                        "operacionalFound": False,
+                        "consultaMargemFound": False,
+                        "captchaFound": False,
+                        "certificateFound": False,
+                        "loginSelector": "",
+                        "passwordSelector": "",
+                        "buttonSelector": "",
+                        "entrySelector": "",
+                        "successSelector": "",
+                        "captchaSelector": "",
+                        "errorText": str(exc),
+                        "bodySnippet": "",
+                        "bodyNormalized": "",
+                        "formHtml": "",
+                        "buttons": [],
+                        "inputs": [],
+                        "links": [],
+                    }
+                )
+    except Exception:
+        frame_snapshots = []
+
+    snapshot["frameCount"] = len(frame_snapshots)
+    snapshot["frameUrls"] = [str(item.get("url") or "") for item in frame_snapshots if item.get("url")]
+    snapshot["framesInfo"] = [
+        {
+            "url": str(item.get("url") or ""),
+            "title": str(item.get("title") or ""),
+            "loginFound": bool(item.get("loginFound")),
+            "buttonFound": bool(item.get("buttonFound")),
+            "passwordFound": bool(item.get("passwordFound")),
+            "captchaFound": bool(item.get("captchaFound")),
+            "certificateFound": bool(item.get("certificateFound")),
+            "inputCount": int(item.get("inputCount") or 0),
+        }
+        for item in frame_snapshots
+    ]
+    for frame_snapshot in frame_snapshots:
+        snapshot["loginFound"] = bool(snapshot.get("loginFound")) or bool(frame_snapshot.get("loginFound"))
+        snapshot["passwordFound"] = bool(snapshot.get("passwordFound")) or bool(frame_snapshot.get("passwordFound"))
+        snapshot["buttonFound"] = bool(snapshot.get("buttonFound")) or bool(frame_snapshot.get("buttonFound"))
+        snapshot["entryFound"] = bool(snapshot.get("entryFound")) or bool(frame_snapshot.get("entryFound"))
+        snapshot["successFound"] = bool(snapshot.get("successFound")) or bool(frame_snapshot.get("successFound"))
+        snapshot["operacionalFound"] = bool(snapshot.get("operacionalFound")) or bool(frame_snapshot.get("operacionalFound"))
+        snapshot["consultaMargemFound"] = bool(snapshot.get("consultaMargemFound")) or bool(frame_snapshot.get("consultaMargemFound"))
+        snapshot["captchaFound"] = bool(snapshot.get("captchaFound")) or bool(frame_snapshot.get("captchaFound"))
+        snapshot["certificateFound"] = bool(snapshot.get("certificateFound")) or bool(frame_snapshot.get("certificateFound"))
+        if not snapshot.get("loginSelector") and frame_snapshot.get("loginSelector"):
+            snapshot["loginSelector"] = frame_snapshot.get("loginSelector")
+        if not snapshot.get("passwordSelector") and frame_snapshot.get("passwordSelector"):
+            snapshot["passwordSelector"] = frame_snapshot.get("passwordSelector")
+        if not snapshot.get("buttonSelector") and frame_snapshot.get("buttonSelector"):
+            snapshot["buttonSelector"] = frame_snapshot.get("buttonSelector")
+        if not snapshot.get("entrySelector") and frame_snapshot.get("entrySelector"):
+            snapshot["entrySelector"] = frame_snapshot.get("entrySelector")
+        if not snapshot.get("successSelector") and frame_snapshot.get("successSelector"):
+            snapshot["successSelector"] = frame_snapshot.get("successSelector")
+        if not snapshot.get("captchaSelector") and frame_snapshot.get("captchaSelector"):
+            snapshot["captchaSelector"] = frame_snapshot.get("captchaSelector")
+        if not snapshot.get("errorText") and frame_snapshot.get("errorText"):
+            snapshot["errorText"] = frame_snapshot.get("errorText")
+        if not snapshot.get("bodySnippet") and frame_snapshot.get("bodySnippet"):
+            snapshot["bodySnippet"] = frame_snapshot.get("bodySnippet")
+        if not snapshot.get("bodyNormalized") and frame_snapshot.get("bodyNormalized"):
+            snapshot["bodyNormalized"] = frame_snapshot.get("bodyNormalized")
+        if not snapshot.get("formHtml") and frame_snapshot.get("formHtml"):
+            snapshot["formHtml"] = frame_snapshot.get("formHtml")
+        if not snapshot.get("buttons") and frame_snapshot.get("buttons"):
+            snapshot["buttons"] = frame_snapshot.get("buttons")
+        if not snapshot.get("inputs") and frame_snapshot.get("inputs"):
+            snapshot["inputs"] = frame_snapshot.get("inputs")
+        if not snapshot.get("links") and frame_snapshot.get("links"):
+            snapshot["links"] = frame_snapshot.get("links")
+
+    for selector in snapshot.get("invalidSelectors") or []:
+        print(f"[LOGIN_FLOW] selector inválido ignorado: {selector}", file=sys.stderr, flush=True)
     return snapshot
 
 
 async def _capture_login_button_debug(connector: PortalSecundarioLegacyConnector) -> dict:
-    return await connector.page.evaluate(
-        """() => {
-            const normalize = (v) => String(v || "")
-              .normalize("NFD")
-              .replace(/[\\u0300-\\u036f]/g, "")
-              .replace(/\\s+/g, " ")
-              .trim()
-              .toLowerCase();
-            const isVisible = (el) => {
-              if (!el) return false;
-              const style = window.getComputedStyle(el);
-              if (!style) return false;
-              const rect = el.getBoundingClientRect();
-              return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
-            };
-            const form = document.querySelector("#txtLogin")
-              ? (document.querySelector("#txtLogin").closest("form") || document.querySelector("form"))
-              : document.querySelector("form");
-            const root = form || document.body;
-            const buttons = Array.from(root.querySelectorAll("button,input[type='submit'],input[type='button'],input[type='image'],a"))
-              .filter((el) => isVisible(el))
-              .map((el) => ({
-                tag: (el.tagName || "").toLowerCase(),
-                id: String(el.id || ""),
-                name: String(el.name || ""),
-                type: String(el.type || ""),
-                value: String(el.value || ""),
-                textContent: String(el.textContent || "").replace(/\\s+/g, " ").trim(),
-                className: String(el.className || ""),
-                title: String(el.getAttribute("title") || ""),
-              }));
-            const inputs = Array.from(root.querySelectorAll("input[type='submit'],input[type='button']"))
-              .filter((el) => isVisible(el))
-              .map((el) => ({
-                id: String(el.id || ""),
-                name: String(el.name || ""),
-                type: String(el.type || ""),
-                value: String(el.value || ""),
-                className: String(el.className || ""),
-              }));
-            const links = Array.from(root.querySelectorAll("a"))
-              .filter((el) => isVisible(el))
-              .map((el) => ({
-                href: String(el.href || ""),
-                id: String(el.id || ""),
-                name: String(el.name || ""),
-                textContent: String(el.textContent || "").replace(/\\s+/g, " ").trim(),
-                className: String(el.className || ""),
-              }));
-            const html = String((form || root).outerHTML || "")
-              .replace(/\\s+/g, " ")
-              .trim()
-              .slice(0, 5000);
-            return {
-              formHtml: html,
-              buttons,
-              inputs,
-              links,
-              buttonCount: buttons.length,
-              submitInputCount: inputs.length,
-              linkCount: links.length,
-            };
-        }""",
+    debug_scopes: list[dict] = []
+    for index, scope in enumerate(_login_scopes(connector)):
+        try:
+            scope_debug = await _probe_login_surface(
+                scope,
+                login_selectors=[],
+                password_selectors=[],
+                entry_selectors=[],
+                submit_selectors=[],
+                success_selectors=[],
+                error_selectors=[],
+                captcha_selectors=[],
+            )
+        except Exception:
+            scope_debug = {
+                "url": getattr(scope, "url", ""),
+                "title": "",
+                "formHtml": "",
+                "buttons": [],
+                "inputs": [],
+                "links": [],
+                "certificateFound": False,
+                "buttonCount": 0,
+                "submitInputCount": 0,
+                "linkCount": 0,
+            }
+        scope_debug["scopeIndex"] = index
+        debug_scopes.append(scope_debug)
+
+    if not debug_scopes:
+        return {"formHtml": "", "buttons": [], "inputs": [], "links": [], "buttonCount": 0, "submitInputCount": 0, "linkCount": 0, "frameCount": 0, "scopeUrl": ""}
+
+    best = max(
+        debug_scopes,
+        key=lambda item: int(item.get("buttonCount") or 0) + int(item.get("submitInputCount") or 0) + int(item.get("linkCount") or 0),
     )
+    buttons = best.get("buttons") or []
+    inputs = best.get("inputs") or []
+    links = best.get("links") or []
+    print(f"[LOGIN_FLOW] quantidade de frames: {max(0, len(debug_scopes) - 1)}", file=sys.stderr, flush=True)
+    return {
+        "formHtml": best.get("formHtml") or "",
+        "buttons": buttons,
+        "inputs": inputs,
+        "links": links,
+        "buttonCount": len(buttons),
+        "submitInputCount": len(inputs),
+        "linkCount": len(links),
+        "certificateFound": any(bool(item.get("certificateFound")) for item in debug_scopes),
+        "frameCount": max(0, len(debug_scopes) - 1),
+        "debugScopes": [
+            {
+                "scopeIndex": item.get("scopeIndex"),
+                "url": item.get("url") or "",
+                "title": item.get("title") or "",
+                "buttonCount": len(item.get("buttons") or []),
+                "inputCount": len(item.get("inputs") or []),
+                "linkCount": len(item.get("links") or []),
+            }
+            for item in debug_scopes
+        ],
+        "scopeUrl": best.get("url") or "",
+        "scopeTitle": best.get("title") or "",
+    }
+
+
+async def find_login_elements(connector: PortalSecundarioLegacyConnector) -> dict:
+    return await _capture_login_button_debug(connector)
 
 
 async def _click_login_initial_button(connector: PortalSecundarioLegacyConnector, *, timeout_ms: int = 2500) -> tuple[bool, str, dict]:
-    debug = await _capture_login_button_debug(connector)
+    debug = await find_login_elements(connector)
     candidate_selectors = [
         "#Entrar",
         "#btnEntrar",
@@ -405,79 +685,92 @@ async def _click_login_initial_button(connector: PortalSecundarioLegacyConnector
         "input[name='btnLogin']",
         "input[type='submit']",
         "input[type='button']",
+        "input[type='image']",
         "button[type='submit']",
-        "button:has-text('Próxima')",
+        "button:has-text('Pr?xima')",
         "button:has-text('Proxima')",
-        "input[value='Próxima']",
+        "a:has-text('Pr?xima')",
+        "a:has-text('Proxima')",
+        "input[value='Pr?xima']",
         "input[value='Proxima']",
         "input[value='Entrar']",
         "input[value='Acessar']",
     ]
-    print(f"[LOGIN_FLOW] html do formulário de login, sem senha: {debug.get('formHtml') or ''}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] html do formul?rio de login, sem senha: {debug.get('formHtml') or ''}", file=sys.stderr, flush=True)
     print(f"[LOGIN_FLOW] buttons encontrados: {json.dumps(debug.get('buttons') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
     print(f"[LOGIN_FLOW] inputs submit/button encontrados: {json.dumps(debug.get('inputs') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
-    print(f"[LOGIN_FLOW] links encontrados próximos ao form, se houver: {json.dumps(debug.get('links') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] links encontrados pr?ximos ao form, se houver: {json.dumps(debug.get('links') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
 
+    scopes = list(enumerate(_login_scopes(connector)))
     for selector in candidate_selectors:
+        for scope_index, scope in scopes:
+            try:
+                locator = scope.locator(selector).first
+                await locator.wait_for(state='visible', timeout=timeout_ms)
+                await locator.click(timeout=timeout_ms)
+                scope_label = 'page' if scope_index == 0 else f'frame-{scope_index}'
+                print(f"[LOGIN_FLOW] botao clicado: {selector} ({scope_label})", file=sys.stderr, flush=True)
+                return True, selector, debug
+            except Exception:
+                continue
+
+    for scope_index, scope in scopes:
         try:
-            locator = connector.page.locator(selector).first
-            await locator.wait_for(state="visible", timeout=timeout_ms)
-            await locator.click(timeout=timeout_ms)
-            print(f"[LOGIN_FLOW] botao clicado: {selector}", file=sys.stderr, flush=True)
-            return True, selector, debug
+            login_locator = scope.locator('#txtLogin').first
+            await login_locator.press('Enter', timeout=timeout_ms)
+            scope_label = 'page' if scope_index == 0 else f'frame-{scope_index}'
+            print(f"[LOGIN_FLOW] botao clicado: Enter no txtLogin ({scope_label})", file=sys.stderr, flush=True)
+            return True, 'Enter', debug
         except Exception:
             continue
 
     try:
-        login_locator = connector.page.locator("#txtLogin").first
-        await login_locator.press("Enter", timeout=timeout_ms)
-        print("[LOGIN_FLOW] botao clicado: Enter no txtLogin", file=sys.stderr, flush=True)
-        return True, "Enter", debug
-    except Exception:
-        pass
-
-    try:
         form_buttons = [
-            btn for btn in (debug.get("buttons") or [])
-            if str(btn.get("tag") or "").lower() in {"button", "input", "a"}
+            btn for btn in (debug.get('buttons') or [])
+            if str(btn.get('tag') or '').lower() in {'button', 'input', 'a', 'img'}
         ]
         for btn in form_buttons:
-            label = " ".join(
+            label = ' '.join(
                 [
-                    str(btn.get("id") or ""),
-                    str(btn.get("name") or ""),
-                    str(btn.get("value") or ""),
-                    str(btn.get("textContent") or ""),
+                    str(btn.get('id') or ''),
+                    str(btn.get('name') or ''),
+                    str(btn.get('value') or ''),
+                    str(btn.get('textContent') or ''),
                 ]
             ).strip()
             normalized = label.lower()
-            if not any(token in normalized for token in ["próxima", "proxima", "entrar", "acessar", "login"]):
+            if not any(token in normalized for token in ['pr?xima', 'proxima', 'entrar', 'acessar', 'login']):
                 continue
-            selector = ""
-            if btn.get("id"):
+            selector = ''
+            if btn.get('id'):
                 selector = f"#{btn.get('id')}"
-            elif btn.get("name") and str(btn.get("tag") or "").lower() == "input":
+            elif btn.get('name') and str(btn.get('tag') or '').lower() == 'input':
                 selector = f"input[name='{btn.get('name')}']"
-            elif str(btn.get("tag") or "").lower() == "input" and btn.get("value"):
+            elif str(btn.get('tag') or '').lower() == 'input' and btn.get('value'):
                 selector = f"input[value='{btn.get('value')}']"
-            elif str(btn.get("tag") or "").lower() == "button" and btn.get("textContent"):
-                button_text = str(btn.get("textContent") or "").replace("'", "\\'")
+            elif str(btn.get('tag') or '').lower() == 'button' and btn.get('textContent'):
+                button_text = str(btn.get('textContent') or '').replace("'", "\'")
                 selector = f"button:has-text('{button_text}')"
+            elif str(btn.get('tag') or '').lower() == 'a' and btn.get('textContent'):
+                anchor_text = str(btn.get('textContent') or '').replace("'", "\'")
+                selector = f"a:has-text('{anchor_text}')"
             if not selector:
                 continue
-            try:
-                locator = connector.page.locator(selector).first
-                await locator.wait_for(state="visible", timeout=timeout_ms)
-                await locator.click(timeout=timeout_ms)
-                print(f"[LOGIN_FLOW] botao clicado via fallback: {selector}", file=sys.stderr, flush=True)
-                return True, selector, debug
-            except Exception:
-                continue
+            for scope_index, scope in scopes:
+                try:
+                    locator = scope.locator(selector).first
+                    await locator.wait_for(state='visible', timeout=timeout_ms)
+                    await locator.click(timeout=timeout_ms)
+                    scope_label = 'page' if scope_index == 0 else f'frame-{scope_index}'
+                    print(f"[LOGIN_FLOW] botao clicado via fallback: {selector} ({scope_label})", file=sys.stderr, flush=True)
+                    return True, selector, debug
+                except Exception:
+                    continue
     except Exception:
         pass
 
-    print("[LOGIN_FLOW] selector inválido ignorado: button_login_fallback", file=sys.stderr, flush=True)
-    return False, "", debug
+    print('[LOGIN_FLOW] selector inv?lido ignorado: button_login_fallback', file=sys.stderr, flush=True)
+    return False, '', debug
 
 
 def _log_login_snapshot(snapshot: dict, login: str, password: str, stage: str) -> None:
@@ -967,6 +1260,14 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
             if "certificado" in joined or "login-identific" in joined or "nao encontrado" in joined or "n?o encontrado" in joined:
                 raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticacao manual por certificado digital.", stage="alerta_certificado")
 
+        if button_debug.get("certificateFound") or snapshot.get("certificateFound"):
+            print(f"[LOGIN_FLOW] quantidade de frames: {button_debug.get('frameCount') or 0}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] buttons encontrados: {json.dumps(button_debug.get('buttons') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] inputs submit/button encontrados: {json.dumps(button_debug.get('inputs') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] links encontrados próximos ao form, se houver: {json.dumps(button_debug.get('links') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
+            print("[LOGIN_FLOW] error_code final: MANUAL_AUTH_REQUIRED", file=sys.stderr, flush=True)
+            raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticação manual/certificado digital.", stage="certificado_digital")
+
         if snapshot.get("captchaFound"):
             raise _typed_login_error("CAPTCHA_REQUIRED", "O portal solicitou validacao manual.", stage="captcha")
         if snapshot.get("errorText"):
@@ -1033,8 +1334,12 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
             raise _typed_login_error("LOGIN_STILL_ON_SAME_PAGE", "O portal permaneceu na tela de login sem confirmar autenticacao.", stage="mesma_tela")
         else:
             if snapshot.get("host") and ("login-identific" in str(snapshot.get("host") or '').lower() or 'certificadodigital' in str(snapshot.get("url") or '').lower()):
-                raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticacao manual por certificado digital.", stage="certificado")
-            raise _typed_login_error("PORTAL_CHANGED", "O layout do portal mudou e o fluxo de login nao foi reconhecido.", stage="portal_alterado")
+                raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticação manual/certificado digital.", stage="certificado_digital")
+            print(f"[LOGIN_FLOW] quantidade de frames: {button_debug.get('frameCount') or 0}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] buttons encontrados: {json.dumps(button_debug.get('buttons') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] inputs submit/button encontrados: {json.dumps(button_debug.get('inputs') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] links encontrados próximos ao form, se houver: {json.dumps(button_debug.get('links') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
+            raise _typed_login_error("SELECTOR_ERROR", "O layout do portal mudou e o fluxo de login nao foi reconhecido.", stage="selector_check")
 
         try:
             await connector._select_profile_access()

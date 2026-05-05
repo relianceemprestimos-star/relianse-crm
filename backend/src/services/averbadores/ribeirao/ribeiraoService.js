@@ -164,7 +164,7 @@ function normalizeRibeiraoSessionMessage(status, message, errorCode = null) {
   if (
     normalizedStatus === RIBEIRAO_SESSION_STATUSES.LOGIN_ERROR ||
     normalizedStatus === 'erro_login' ||
-    ['LOGIN_REJECTED', 'LOGIN_FIELDS_NOT_FOUND', 'LOGIN_BUTTON_NOT_FOUND', 'LOGIN_TIMEOUT', 'LOGIN_STILL_ON_SAME_PAGE', 'PORTAL_CHANGED', 'UNKNOWN_LOGIN_ERROR', 'LOGIN_OK_NAVIGATION_FAILED', 'DNS_RESOLUTION_FAILED', 'CHROMIUM_DNS_FAILED'].includes(normalizedErrorCode)
+    ['LOGIN_REJECTED', 'LOGIN_FIELDS_NOT_FOUND', 'LOGIN_BUTTON_NOT_FOUND', 'LOGIN_TIMEOUT', 'LOGIN_STILL_ON_SAME_PAGE', 'PORTAL_CHANGED', 'SELECTOR_ERROR', 'UNKNOWN_LOGIN_ERROR', 'LOGIN_OK_NAVIGATION_FAILED', 'DNS_RESOLUTION_FAILED', 'CHROMIUM_DNS_FAILED'].includes(normalizedErrorCode)
   ) {
     if (normalizedErrorCode === 'LOGIN_FIELDS_NOT_FOUND') {
       return 'O sistema n?o encontrou os campos de login do portal. O layout pode ter mudado.';
@@ -180,6 +180,9 @@ function normalizeRibeiraoSessionMessage(status, message, errorCode = null) {
     }
     if (normalizedErrorCode === 'PORTAL_CHANGED') {
       return 'O layout do portal mudou e o fluxo de login n?o foi reconhecido.';
+    }
+    if (normalizedErrorCode === 'SELECTOR_ERROR') {
+      return 'O sistema encontrou o portal, mas nao reconheceu os elementos de login nesta tela.';
     }
     if (normalizedErrorCode === 'LOGIN_OK_NAVIGATION_FAILED') {
       return 'Login aceito, mas n?o foi poss?vel abrir Consulta de Margem.';
@@ -242,7 +245,7 @@ export function getRibeiraoSessionGate(sessionId) {
     };
   }
 
-  if (status === RIBEIRAO_SESSION_STATUSES.LOGIN_ERROR || ['LOGIN_REJECTED', 'LOGIN_FIELDS_NOT_FOUND', 'LOGIN_BUTTON_NOT_FOUND', 'LOGIN_TIMEOUT', 'LOGIN_STILL_ON_SAME_PAGE', 'PORTAL_CHANGED', 'UNKNOWN_LOGIN_ERROR', 'LOGIN_OK_NAVIGATION_FAILED'].includes(String(session.error_code || '').toUpperCase())) {
+  if (status === RIBEIRAO_SESSION_STATUSES.LOGIN_ERROR || ['LOGIN_REJECTED', 'LOGIN_FIELDS_NOT_FOUND', 'LOGIN_BUTTON_NOT_FOUND', 'LOGIN_TIMEOUT', 'LOGIN_STILL_ON_SAME_PAGE', 'PORTAL_CHANGED', 'SELECTOR_ERROR', 'UNKNOWN_LOGIN_ERROR', 'LOGIN_OK_NAVIGATION_FAILED'].includes(String(session.error_code || '').toUpperCase())) {
     return {
       success: false,
       code: String(session.error_code || 'LOGIN_ERROR').toUpperCase(),

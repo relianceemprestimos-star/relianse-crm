@@ -1463,7 +1463,7 @@ function getSessionBlockingMessage(session?: RibeiraoSession | null) {
       ? 'O portal não respondeu após tentar login.'
       : 'O portal permaneceu na tela de login sem confirmar autenticação.';
   }
-  if (['PORTAL_CHANGED', 'LOGIN_OK_NAVIGATION_FAILED', 'LOGIN_REJECTED', 'UNKNOWN_LOGIN_ERROR', 'DNS_RESOLUTION_FAILED', 'CHROMIUM_DNS_FAILED'].includes(errorCode) || session.status === 'erro_login' || session.status === 'login_error') {
+  if (['PORTAL_CHANGED', 'SELECTOR_ERROR', 'LOGIN_OK_NAVIGATION_FAILED', 'LOGIN_REJECTED', 'UNKNOWN_LOGIN_ERROR', 'DNS_RESOLUTION_FAILED', 'CHROMIUM_DNS_FAILED'].includes(errorCode) || session.status === 'erro_login' || session.status === 'login_error') {
     if (errorCode === 'LOGIN_OK_NAVIGATION_FAILED') {
       return 'Login aceito, mas não foi possível abrir Consulta de Margem.';
     }
@@ -1472,6 +1472,9 @@ function getSessionBlockingMessage(session?: RibeiraoSession | null) {
     }
     if (errorCode === 'PORTAL_CHANGED') {
       return 'O layout do portal mudou e o fluxo de login não foi reconhecido.';
+    }
+    if (errorCode === 'SELECTOR_ERROR') {
+      return 'O sistema encontrou o portal, mas não reconheceu os elementos de login nesta tela.';
     }
     if (errorCode === 'PORTAL_UNREACHABLE') {
       return 'Não foi possível acessar o portal da Prefeitura no momento.';
@@ -1531,6 +1534,9 @@ function getSessionDisplayMessage(session?: RibeiraoSession | null) {
   }
   if (errorCode === 'PORTAL_CHANGED') {
     return 'O layout do portal mudou e o fluxo de login não foi reconhecido.';
+  }
+  if (errorCode === 'SELECTOR_ERROR') {
+    return 'O sistema encontrou o portal, mas não reconheceu os elementos de login nesta tela.';
   }
   if (errorCode === 'PORTAL_UNREACHABLE') {
     return 'Não foi possível acessar o portal da Prefeitura no momento.';
@@ -1606,6 +1612,9 @@ function getFriendlyRibeiraoError(error: unknown, fallback: string) {
   }
   if (code === 'PORTAL_CHANGED') {
     return 'O layout do portal mudou e o fluxo de login não foi reconhecido.';
+  }
+  if (code === 'SELECTOR_ERROR') {
+    return 'O sistema encontrou o portal, mas não reconheceu os elementos de login nesta tela.';
   }
   if (code === 'LOGIN_OK_NAVIGATION_FAILED') {
     return 'Login aceito, mas não foi possível abrir Consulta de Margem.';
