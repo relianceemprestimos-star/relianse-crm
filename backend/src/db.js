@@ -757,6 +757,10 @@ function initSchema(database) {
       mensagem TEXT,
       best_product_type TEXT NOT NULL DEFAULT '',
       best_net_margin REAL,
+      margem_emprestimo_total REAL,
+      margem_emprestimo_disponivel REAL,
+      margem_cartao_total REAL,
+      margem_cartao_disponivel REAL,
       raw_result_json TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL,
       FOREIGN KEY (batch_id) REFERENCES ribeirao_query_batches(id) ON DELETE SET NULL,
@@ -786,6 +790,7 @@ function initSchema(database) {
       processed_count INTEGER NOT NULL DEFAULT 0,
       success_count INTEGER NOT NULL DEFAULT 0,
       no_margin_count INTEGER NOT NULL DEFAULT 0,
+      not_found_count INTEGER NOT NULL DEFAULT 0,
       error_count INTEGER NOT NULL DEFAULT 0,
       captcha_count INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'pendente',
@@ -863,6 +868,14 @@ function initSchema(database) {
 
   ensureColumns(database, 'ribeirao_margin_queries', [
     'batch_id INTEGER',
+    'margem_emprestimo_total REAL',
+    'margem_emprestimo_disponivel REAL',
+    'margem_cartao_total REAL',
+    'margem_cartao_disponivel REAL',
+  ]);
+
+  ensureColumns(database, 'ribeirao_query_batches', [
+    'not_found_count INTEGER NOT NULL DEFAULT 0',
   ]);
 
   database.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_base_cpf ON clients(base_id, cpf)');
@@ -3315,6 +3328,7 @@ export function createRibeiraoBatchRecord({
           processed_count,
           success_count,
           no_margin_count,
+          not_found_count,
           error_count,
           captcha_count,
           status,
@@ -3322,7 +3336,7 @@ export function createRibeiraoBatchRecord({
           finished_at,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 'pendente', NULL, NULL, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, 'pendente', NULL, NULL, ?, ?)
       `
     )
     .run(
@@ -3383,6 +3397,7 @@ export function getRibeiraoBatchById(id) {
     processed_count: Number(row.processed_count || 0),
     success_count: Number(row.success_count || 0),
     no_margin_count: Number(row.no_margin_count || 0),
+    not_found_count: Number(row.not_found_count || 0),
     error_count: Number(row.error_count || 0),
     captcha_count: Number(row.captcha_count || 0),
     progress_percent: row.total_cpfs ? Math.round((Number(row.processed_count || 0) / Number(row.total_cpfs || 1)) * 100) : 0,
@@ -3398,6 +3413,7 @@ export function updateRibeiraoBatchRecord(id, updates = {}) {
     processed_count: 'processed_count',
     success_count: 'success_count',
     no_margin_count: 'no_margin_count',
+    not_found_count: 'not_found_count',
     error_count: 'error_count',
     captcha_count: 'captcha_count',
     status: 'status',
@@ -3413,7 +3429,7 @@ export function updateRibeiraoBatchRecord(id, updates = {}) {
   }
 
   const sets = entries.map(([key]) => `${allowed[key]} = ?`);
-  const numericKeys = new Set(['total_cpfs', 'processed_count', 'success_count', 'no_margin_count', 'error_count', 'captcha_count', 'user_id']);
+  const numericKeys = new Set(['total_cpfs', 'processed_count', 'success_count', 'no_margin_count', 'not_found_count', 'error_count', 'captcha_count', 'user_id']);
   const nullableNumericKeys = new Set(['base_id']);
   const values = entries.map(([key, value]) => {
     if (value === undefined) {
@@ -3501,6 +3517,7 @@ export function listRibeiraoBatches(params = {}) {
     processed_count: Number(row.processed_count || 0),
     success_count: Number(row.success_count || 0),
     no_margin_count: Number(row.no_margin_count || 0),
+    not_found_count: Number(row.not_found_count || 0),
     error_count: Number(row.error_count || 0),
     captcha_count: Number(row.captcha_count || 0),
     progress_percent: row.total_cpfs ? Math.round((Number(row.processed_count || 0) / Number(row.total_cpfs || 1)) * 100) : 0,

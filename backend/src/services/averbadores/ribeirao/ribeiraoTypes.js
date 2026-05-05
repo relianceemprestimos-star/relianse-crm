@@ -12,6 +12,7 @@ export const RIBEIRAO_SESSION_STATUSES = {
 export const RIBEIRAO_QUERY_STATUSES = {
   WITH_MARGIN: 'com_marg',
   WITHOUT_MARGIN: 'sem_marg',
+  NOT_FOUND: 'nao_encontrado',
   ERROR: 'erro',
   CAPTCHA_REQUIRED: 'captcha_required',
   LOGIN_ERROR: 'login_error',
@@ -97,66 +98,66 @@ export function normalizeRibeiraoQueryResult(rawResult, cpf, sessionId, userId, 
   const payload = rawResult?.payload_extra || rawResult?.payload || rawResult?.raw_data || rawResult || {};
   const status = String(rawResult?.status || rawResult?.consulta_status || 'erro').toLowerCase();
 
-  const consignacaoGross = pickMoney(
+  const emprestimoGross = pickMoney(
+    payload.margem_emprestimo_total,
+    payload.emprestimo_total,
+    payload.margem_total_emprestimo,
+    payload.margem_bruta_emprestimo,
+    payload.margem_emprestimo_bruta,
     payload.facultativa_margem_consignavel,
     payload.consignacao_bruta,
     payload.margem_consignavel_bruta,
     payload.margem_bruta_consignacao,
     payload.bruta_facultativa
   );
-  const consignacaoNet = pickMoney(
+  const emprestimoNet = pickMoney(
+    payload.margem_emprestimo_disponivel,
+    payload.emprestimo_disponivel,
+    payload.margem_disponivel_emprestimo,
     payload.facultativa_disponivel,
     payload.consignacao_liquida,
     payload.margem_consignavel_liquida,
     payload.margem_liquida_consignacao,
     rawResult?.margem_disponivel
   );
-  const creditoGross = pickMoney(
-    payload.margem_emprestimo_total,
-    payload.emprestimo_bruto,
-    payload.credito_bruto,
-    payload.margem_bruta_credito
-  );
-  const creditoNet = pickMoney(
-    payload.margem_emprestimo_disponivel,
-    payload.emprestimo_disponivel,
-    payload.credito_liquida,
-    payload.margem_liquida_credito
-  );
   const cartaoGross = pickMoney(
+    payload.margem_cartao_total,
+    payload.cartao_total,
+    payload.margem_bruta_cartao,
     payload.cartao_margem_consignavel,
     payload.cartao_bruto,
     payload.margem_cartao,
-    payload.margem_bruta_cartao,
     payload.bruta_cartao
   );
   const cartaoNet = pickMoney(
+    payload.margem_cartao_disponivel,
     payload.cartao_disponivel,
-    payload.cartao_liquida,
     payload.margem_liquida_cartao,
     rawResult?.margem_cartao,
     rawResult?.margem_cartao_beneficio,
     payload.disp_cartao
   );
 
+  const marginsFound = [emprestimoGross, emprestimoNet, cartaoGross, cartaoNet].some(
+    (value) => value !== null && value !== undefined
+  );
+  const nonNullMargins = [emprestimoGross, emprestimoNet, cartaoGross, cartaoNet].filter(
+    (value) => value !== null && value !== undefined
+  );
+  const allMarginsZero = marginsFound && nonNullMargins.every((value) => Number(value) === 0);
+
   const margins = {
-    consignacao: {
-      gross: consignacaoGross,
-      net: consignacaoNet,
-      source_gross_column: 'facultativa_margem_consignavel',
-      source_net_column: 'facultativa_disponivel',
-    },
     credito: {
-      gross: creditoGross,
-      net: creditoNet,
+      gross: emprestimoGross,
+      net: emprestimoNet,
       source_gross_column: 'margem_emprestimo_total',
       source_net_column: 'margem_emprestimo_disponivel',
     },
     cartao: {
       gross: cartaoGross,
       net: cartaoNet,
-      source_gross_column: 'cartao_margem_consignavel',
-      source_net_column: 'cartao_disponivel',
+      source_gross_column: 'margem_cartao_total',
+      source_net_column: 'margem_cartao_disponivel',
     },
   };
 
@@ -168,19 +169,25 @@ export function normalizeRibeiraoQueryResult(rawResult, cpf, sessionId, userId, 
         ? RIBEIRAO_QUERY_STATUSES.LOGIN_ERROR
         : status.includes('expire')
           ? RIBEIRAO_QUERY_STATUSES.SESSION_EXPIRED
-          : status.includes('success') || status.includes('sucesso')
-            ? best.net !== null && best.net > 0
-              ? RIBEIRAO_QUERY_STATUSES.WITH_MARGIN
-              : RIBEIRAO_QUERY_STATUSES.WITHOUT_MARGIN
-            : status.includes('not_found')
-              ? RIBEIRAO_QUERY_STATUSES.WITHOUT_MARGIN
-              : status.includes('no_margin')
+          : status.includes('not_found') || status.includes('nao_encontrado')
+            ? RIBEIRAO_QUERY_STATUSES.NOT_FOUND
+            : marginsFound
+              ? allMarginsZero
                 ? RIBEIRAO_QUERY_STATUSES.WITHOUT_MARGIN
-                : status.includes('erro')
-                  ? RIBEIRAO_QUERY_STATUSES.ERROR
-                  : best.net !== null && best.net > 0
-                    ? RIBEIRAO_QUERY_STATUSES.WITH_MARGIN
-                    : RIBEIRAO_QUERY_STATUSES.ERROR;
+                : RIBEIRAO_QUERY_STATUSES.WITH_MARGIN
+              : status.includes('success') || status.includes('sucesso')
+                ? best.net !== null && best.net > 0
+                  ? RIBEIRAO_QUERY_STATUSES.WITH_MARGIN
+                  : RIBEIRAO_QUERY_STATUSES.WITHOUT_MARGIN
+                : status.includes('no_margin')
+                  ? RIBEIRAO_QUERY_STATUSES.WITHOUT_MARGIN
+                  : status.includes('erro')
+                    ? RIBEIRAO_QUERY_STATUSES.ERROR
+                    : best.net !== null && best.net > 0
+                      ? RIBEIRAO_QUERY_STATUSES.WITH_MARGIN
+                      : marginsFound
+                        ? RIBEIRAO_QUERY_STATUSES.WITHOUT_MARGIN
+                        : RIBEIRAO_QUERY_STATUSES.ERROR;
 
   const rawNome = selectFirstDefined([payload.nome_portal, payload.nome, payload.name, rawResult?.nome]);
   const rawMatricula = selectFirstDefined([payload.matricula, rawResult?.matricula]);
@@ -194,7 +201,23 @@ export function normalizeRibeiraoQueryResult(rawResult, cpf, sessionId, userId, 
     payload.message,
     queryStatus === RIBEIRAO_QUERY_STATUSES.WITH_MARGIN ? 'Consulta realizada com margem positiva.' : '',
     queryStatus === RIBEIRAO_QUERY_STATUSES.WITHOUT_MARGIN ? 'Consulta realizada, sem margem disponivel.' : '',
+    queryStatus === RIBEIRAO_QUERY_STATUSES.NOT_FOUND ? 'CPF nao encontrado.' : '',
   ]);
+
+  const consultaStatusLabel =
+    queryStatus === RIBEIRAO_QUERY_STATUSES.WITH_MARGIN
+      ? 'Com margem'
+      : queryStatus === RIBEIRAO_QUERY_STATUSES.WITHOUT_MARGIN
+        ? 'Sem margem'
+        : queryStatus === RIBEIRAO_QUERY_STATUSES.NOT_FOUND
+          ? 'Nao encontrado'
+          : queryStatus === RIBEIRAO_QUERY_STATUSES.CAPTCHA_REQUIRED
+            ? 'Aguardando confirmacao'
+            : queryStatus === RIBEIRAO_QUERY_STATUSES.LOGIN_ERROR
+              ? 'Erro de login'
+              : queryStatus === RIBEIRAO_QUERY_STATUSES.SESSION_EXPIRED
+                ? 'Sessao expirada'
+                : 'Erro';
 
   return {
     success: queryStatus === RIBEIRAO_QUERY_STATUSES.WITH_MARGIN || queryStatus === RIBEIRAO_QUERY_STATUSES.WITHOUT_MARGIN,
@@ -203,8 +226,12 @@ export function normalizeRibeiraoQueryResult(rawResult, cpf, sessionId, userId, 
     nome: rawNome,
     matricula: rawMatricula,
     orgao: rawOrgao,
-    margem_consignavel_bruta: consignacaoGross,
-    margem_consignavel_liquida: consignacaoNet,
+    margem_emprestimo_total: emprestimoGross,
+    margem_emprestimo_disponivel: emprestimoNet,
+    margem_cartao_total: cartaoGross,
+    margem_cartao_disponivel: cartaoNet,
+    margem_consignavel_bruta: emprestimoGross,
+    margem_consignavel_liquida: emprestimoNet,
     margem_cartao_bruta: cartaoGross,
     margem_cartao_liquida: cartaoNet,
     margins,
@@ -217,18 +244,7 @@ export function normalizeRibeiraoQueryResult(rawResult, cpf, sessionId, userId, 
     raw_result_json: JSON.stringify(rawResult ?? {}, null, 0),
     session_id: sessionId,
     user_id: userId,
-    consulta_status_label:
-      queryStatus === RIBEIRAO_QUERY_STATUSES.WITH_MARGIN
-        ? 'Com margem'
-        : queryStatus === RIBEIRAO_QUERY_STATUSES.WITHOUT_MARGIN
-          ? 'Sem margem'
-          : queryStatus === RIBEIRAO_QUERY_STATUSES.CAPTCHA_REQUIRED
-          ? 'Aguardando confirmação'
-            : queryStatus === RIBEIRAO_QUERY_STATUSES.LOGIN_ERROR
-              ? 'Erro de login'
-              : queryStatus === RIBEIRAO_QUERY_STATUSES.SESSION_EXPIRED
-                ? 'Sessao expirada'
-                : 'Erro',
+    consulta_status_label: consultaStatusLabel,
     products: Object.entries(margins).map(([product_type, item]) => ({
       product_type,
       gross_margin: item.gross,
@@ -253,6 +269,14 @@ export function formatRibeiraoSummary(result) {
     best_product_label: labelForProductType(result.best_product_type),
     best_net_margin: result.best_net_margin,
     best_net_margin_formatted: formatMoney(result.best_net_margin),
+    margem_emprestimo_total: result.margem_emprestimo_total ?? null,
+    margem_emprestimo_disponivel: result.margem_emprestimo_disponivel ?? null,
+    margem_cartao_total: result.margem_cartao_total ?? null,
+    margem_cartao_disponivel: result.margem_cartao_disponivel ?? null,
+    margem_emprestimo_total_formatted: formatMoney(result.margem_emprestimo_total),
+    margem_emprestimo_disponivel_formatted: formatMoney(result.margem_emprestimo_disponivel),
+    margem_cartao_total_formatted: formatMoney(result.margem_cartao_total),
+    margem_cartao_disponivel_formatted: formatMoney(result.margem_cartao_disponivel),
     margem_consignavel_bruta: result.margem_consignavel_bruta ?? null,
     margem_consignavel_liquida: result.margem_consignavel_liquida ?? null,
     margem_cartao_bruta: result.margem_cartao_bruta ?? null,

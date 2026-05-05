@@ -231,6 +231,7 @@ function updateBatchCounts(batchId, delta = {}, status) {
     processed_count: batch.processed_count + Number(delta.processed_count || 0),
     success_count: batch.success_count + Number(delta.success_count || 0),
     no_margin_count: batch.no_margin_count + Number(delta.no_margin_count || 0),
+    not_found_count: batch.not_found_count + Number(delta.not_found_count || 0),
     error_count: batch.error_count + Number(delta.error_count || 0),
     captcha_count: batch.captcha_count + Number(delta.captcha_count || 0),
     status: status || batch.status,
@@ -441,7 +442,9 @@ async function processBatch(batchId, {
         return getRibeiraoBatchById(batchId);
       }
 
-      if (status === RIBEIRAO_QUERY_STATUSES.WITH_MARGIN) {
+      if (status === RIBEIRAO_QUERY_STATUSES.NOT_FOUND) {
+        updateBatchCounts(batchId, { processed_count: 1, not_found_count: 1 }, 'em_andamento');
+      } else if (status === RIBEIRAO_QUERY_STATUSES.WITH_MARGIN) {
         updateBatchCounts(batchId, { processed_count: 1, success_count: 1 }, 'em_andamento');
       } else if (status === RIBEIRAO_QUERY_STATUSES.WITHOUT_MARGIN) {
         updateBatchCounts(batchId, { processed_count: 1, no_margin_count: 1 }, 'em_andamento');
@@ -563,21 +566,19 @@ export function exportRibeiraoBatchResultsCsv(batchId) {
   const marginByProduct = (row, productType) => row.margins?.find((margin) => margin.product_type === productType) || null;
   const header = [
     'CPF',
+    'Status',
+    'Mensagem',
     'Nome',
     'Matricula',
+    'Margem Emprestimo Total',
+    'Margem Emprestimo Disponivel',
+    'Margem Cartao Total',
+    'Margem Cartao Disponivel',
     'Orgao',
     'Base',
     'Cliente ID',
-    'Margem Bruta Consignacao',
-    'Margem Liquida Consignacao',
-    'Margem Bruta Credito',
-    'Margem Liquida Credito',
-    'Margem Bruta Cartao',
-    'Margem Liquida Cartao',
     'Melhor produto',
     'Melhor margem liquida',
-    'Status consulta',
-    'Mensagem',
     'Data/hora',
   ];
 
@@ -594,21 +595,19 @@ export function exportRibeiraoBatchResultsCsv(batchId) {
     ...rows.map((row) =>
       [
         row.cpf_masked || row.cpf || '',
+        row.consulta_status_label || row.consulta_status || '',
+        row.mensagem || '',
         row.nome || '',
         row.matricula || '',
+        formatMoney(row.margem_emprestimo_total ?? marginByProduct(row, 'credito')?.gross_margin ?? row.margem_consignavel_bruta),
+        formatMoney(row.margem_emprestimo_disponivel ?? marginByProduct(row, 'credito')?.net_margin ?? row.margem_consignavel_liquida),
+        formatMoney(row.margem_cartao_total ?? marginByProduct(row, 'cartao')?.gross_margin ?? row.margem_cartao_bruta),
+        formatMoney(row.margem_cartao_disponivel ?? marginByProduct(row, 'cartao')?.net_margin ?? row.margem_cartao_liquida),
         row.orgao || '',
         row.base_name || '',
         row.client_id || '',
-        formatMoney(marginByProduct(row, 'consignacao')?.gross_margin ?? row.margem_consignavel_bruta),
-        formatMoney(marginByProduct(row, 'consignacao')?.net_margin ?? row.margem_consignavel_liquida),
-        formatMoney(marginByProduct(row, 'credito')?.gross_margin ?? null),
-        formatMoney(marginByProduct(row, 'credito')?.net_margin ?? null),
-        formatMoney(marginByProduct(row, 'cartao')?.gross_margin ?? row.margem_cartao_bruta),
-        formatMoney(marginByProduct(row, 'cartao')?.net_margin ?? row.margem_cartao_liquida),
         row.best_product_type || '',
         formatMoney(row.best_net_margin),
-        row.consulta_status_label || row.consulta_status || '',
-        row.mensagem || '',
         row.created_at_formatted || row.created_at || '',
       ]
         .map(escapeCsv)

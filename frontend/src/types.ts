@@ -363,6 +363,7 @@ export type RibeiraoSessionStatus =
 export type RibeiraoQueryStatus =
   | 'com_marg'
   | 'sem_marg'
+  | 'nao_encontrado'
   | 'erro'
   | 'captcha_required'
   | 'login_error'
@@ -409,6 +410,14 @@ export interface RibeiraoQueryResult {
   best_product_type?: string;
   best_net_margin?: number | null;
   best_net_margin_formatted?: string;
+  margem_emprestimo_total?: number | null;
+  margem_emprestimo_disponivel?: number | null;
+  margem_cartao_total?: number | null;
+  margem_cartao_disponivel?: number | null;
+  margem_emprestimo_total_formatted?: string;
+  margem_emprestimo_disponivel_formatted?: string;
+  margem_cartao_total_formatted?: string;
+  margem_cartao_disponivel_formatted?: string;
   margem_consignavel_bruta?: number | null;
   margem_consignavel_liquida?: number | null;
   margem_cartao_bruta?: number | null;
@@ -513,6 +522,7 @@ export interface RibeiraoBatchRecord {
   processed_count: number;
   success_count: number;
   no_margin_count: number;
+  not_found_count: number;
   error_count: number;
   captcha_count: number;
   status: RibeiraoBatchStatus | string;

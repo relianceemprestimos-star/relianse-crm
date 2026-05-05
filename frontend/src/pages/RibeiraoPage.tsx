@@ -147,9 +147,10 @@ export default function RibeiraoPage() {
     const total = history.length;
     const withMargin = history.filter((item) => item.consulta_status === 'com_marg').length;
     const withoutMargin = history.filter((item) => item.consulta_status === 'sem_marg').length;
+    const notFound = history.filter((item) => item.consulta_status === 'nao_encontrado').length;
     const errors = history.filter((item) => item.consulta_status === 'erro' || item.consulta_status === 'login_error').length;
     const captcha = history.filter((item) => item.consulta_status === 'captcha_required').length;
-    return { total, withMargin, withoutMargin, errors, captcha };
+    return { total, withMargin, withoutMargin, notFound, errors, captcha };
   }, [history]);
 
   const batchStats = useMemo(() => {
@@ -677,10 +678,10 @@ export default function RibeiraoPage() {
                   </div>
 
                   <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                    <ExplicitMarginCard title="Margem consignável bruta" value={currentResult.margem_consignavel_bruta} tone={marginTone(currentResult.margem_consignavel_bruta)} />
-                    <ExplicitMarginCard title="Margem consignável líquida" value={currentResult.margem_consignavel_liquida} tone={marginTone(currentResult.margem_consignavel_liquida)} />
-                    <ExplicitMarginCard title="Margem cartão bruta" value={currentResult.margem_cartao_bruta} tone={marginTone(currentResult.margem_cartao_bruta)} />
-                    <ExplicitMarginCard title="Margem cartão líquida" value={currentResult.margem_cartao_liquida} tone={marginTone(currentResult.margem_cartao_liquida)} />
+                    <ExplicitMarginCard title="Margem empréstimo total" value={currentResult.margem_emprestimo_total ?? currentResult.margem_consignavel_bruta} tone={marginTone(currentResult.margem_emprestimo_total ?? currentResult.margem_consignavel_bruta)} />
+                    <ExplicitMarginCard title="Margem empréstimo disponível" value={currentResult.margem_emprestimo_disponivel ?? currentResult.margem_consignavel_liquida} tone={marginTone(currentResult.margem_emprestimo_disponivel ?? currentResult.margem_consignavel_liquida)} />
+                    <ExplicitMarginCard title="Margem cartão total" value={currentResult.margem_cartao_total ?? currentResult.margem_cartao_bruta} tone={marginTone(currentResult.margem_cartao_total ?? currentResult.margem_cartao_bruta)} />
+                    <ExplicitMarginCard title="Margem cartão disponível" value={currentResult.margem_cartao_disponivel ?? currentResult.margem_cartao_liquida} tone={marginTone(currentResult.margem_cartao_disponivel ?? currentResult.margem_cartao_liquida)} />
                   </div>
                 </div>
 
@@ -768,6 +769,7 @@ export default function RibeiraoPage() {
                 <span>Consultados: {currentBatch?.processed_count || 0}</span>
                 <span>Sucesso: {currentBatch?.success_count || 0}</span>
                 <span>Sem margem: {currentBatch?.no_margin_count || 0}</span>
+                <span>Não encontrado: {currentBatch?.not_found_count || 0}</span>
                 <span>Erros: {currentBatch?.error_count || 0}</span>
                 <span>Captcha: {currentBatch?.captcha_count || 0}</span>
               </div>
@@ -959,6 +961,7 @@ export default function RibeiraoPage() {
                 <StatLine label="Consultados" value={currentBatch?.processed_count || 0} />
                 <StatLine label="Sucesso" value={currentBatch?.success_count || 0} />
                 <StatLine label="Sem margem" value={currentBatch?.no_margin_count || 0} />
+                <StatLine label="Não encontrado" value={currentBatch?.not_found_count || 0} />
                 <StatLine label="Erros" value={currentBatch?.error_count || 0} />
                 <StatLine label="CAPTCHA" value={currentBatch?.captcha_count || 0} />
               </div>
@@ -1002,7 +1005,7 @@ export default function RibeiraoPage() {
                 <table className="min-w-[1500px] text-left text-sm">
                   <thead className="bg-bg/80 text-slate-400">
                     <tr>
-                      {['Data/hora', 'Origem', 'Base', 'Total', 'Consultados', 'Sucesso', 'Sem margem', 'Erros', 'Status do lote', 'Usuário', 'Ações'].map((column) => (
+                      {['Data/hora', 'Origem', 'Base', 'Total', 'Consultados', 'Sucesso', 'Sem margem', 'Não encontrado', 'Erros', 'Status do lote', 'Usuário', 'Ações'].map((column) => (
                         <th key={column} className="px-5 py-4 font-medium">
                           {column}
                         </th>
@@ -1019,6 +1022,7 @@ export default function RibeiraoPage() {
                         <td className="px-5 py-4 text-slate-300">{batch.processed_count}</td>
                         <td className="px-5 py-4 text-slate-300">{batch.success_count}</td>
                         <td className="px-5 py-4 text-slate-300">{batch.no_margin_count}</td>
+                        <td className="px-5 py-4 text-slate-300">{batch.not_found_count || 0}</td>
                         <td className="px-5 py-4 text-slate-300">{batch.error_count}</td>
                         <td className="px-5 py-4">
                           <Badge tone={batchStatusTone(batch.status)}>{batchStatusLabel(batch.status)}</Badge>
@@ -1063,7 +1067,7 @@ export default function RibeiraoPage() {
                   <table className="min-w-[1700px] text-left text-sm">
                     <thead className="bg-bg/80 text-slate-400">
                       <tr>
-                        {['CPF', 'Nome', 'Status consulta', 'Melhor produto', 'Melhor margem líquida', 'Consignação líquida', 'Crédito líquido', 'Cartão líquido', 'Mensagem', 'Data/hora', 'Ação'].map((column) => (
+                        {['CPF', 'Nome', 'Status consulta', 'Melhor produto', 'Melhor margem líquida', 'Empréstimo total', 'Empréstimo disponível', 'Cartão total', 'Cartão disponível', 'Mensagem', 'Data/hora', 'Ação'].map((column) => (
                           <th key={column} className="px-5 py-4 font-medium">
                             {column}
                           </th>
@@ -1083,9 +1087,10 @@ export default function RibeiraoPage() {
                           </td>
                           <td className="px-5 py-4 text-slate-300">{item.best_product_type || '-'}</td>
                           <td className="px-5 py-4 text-slate-300">{item.best_net_margin_formatted || formatCurrencyDisplay(item.best_net_margin ?? null)}</td>
-                          <td className="px-5 py-4 text-slate-300">{formatCurrencyDisplay(item.margem_consignavel_liquida ?? null)}</td>
-                          <td className="px-5 py-4 text-slate-300">{formatCurrencyDisplay(getBatchNetMargin(item, 'credito'))}</td>
-                          <td className="px-5 py-4 text-slate-300">{formatCurrencyDisplay(item.margem_cartao_liquida ?? null)}</td>
+                          <td className="px-5 py-4 text-slate-300">{formatCurrencyDisplay(item.margem_emprestimo_total ?? getBatchNetMargin(item, 'credito'))}</td>
+                          <td className="px-5 py-4 text-slate-300">{formatCurrencyDisplay(item.margem_emprestimo_disponivel ?? getBatchNetMargin(item, 'credito'))}</td>
+                          <td className="px-5 py-4 text-slate-300">{formatCurrencyDisplay(item.margem_cartao_total ?? null)}</td>
+                          <td className="px-5 py-4 text-slate-300">{formatCurrencyDisplay(item.margem_cartao_disponivel ?? null)}</td>
                           <td className="px-5 py-4 text-slate-300">{item.mensagem || '-'}</td>
                           <td className="px-5 py-4 text-slate-300">{item.created_at_formatted || item.created_at || '-'}</td>
                           <td className="px-5 py-4">
@@ -1137,7 +1142,7 @@ export default function RibeiraoPage() {
                 <table className="min-w-[1500px] text-left text-sm">
                   <thead className="bg-bg/80 text-slate-400">
                     <tr>
-                      {['Data/hora', 'Origem', 'Base', 'Total de CPFs', 'Consultados', 'Sucesso', 'Sem margem', 'Erros', 'Status do lote', 'Usuário', 'Ações'].map((column) => (
+                      {['Data/hora', 'Origem', 'Base', 'Total de CPFs', 'Consultados', 'Sucesso', 'Sem margem', 'Não encontrado', 'Erros', 'Status do lote', 'Usuário', 'Ações'].map((column) => (
                         <th key={column} className="px-5 py-4 font-medium">
                           {column}
                         </th>
@@ -1154,6 +1159,7 @@ export default function RibeiraoPage() {
                         <td className="px-5 py-4 text-slate-300">{batch.processed_count}</td>
                         <td className="px-5 py-4 text-slate-300">{batch.success_count}</td>
                         <td className="px-5 py-4 text-slate-300">{batch.no_margin_count}</td>
+                        <td className="px-5 py-4 text-slate-300">{batch.not_found_count || 0}</td>
                         <td className="px-5 py-4 text-slate-300">{batch.error_count}</td>
                         <td className="px-5 py-4">
                           <Badge tone={batchStatusTone(batch.status)}>{batchStatusLabel(batch.status)}</Badge>
@@ -1200,12 +1206,13 @@ export default function RibeiraoPage() {
               <label className="block text-sm text-slate-300">
                 Status
                 <Select className="mt-2" value={historyFilters.status} onChange={(event) => setHistoryFilters((current) => ({ ...current, status: event.target.value }))}>
-                  <option value="">Todos</option>
-                  <option value="com_marg">Com margem</option>
-                  <option value="sem_marg">Sem margem</option>
-                  <option value="erro">Erro</option>
-                  <option value="captcha_required">CAPTCHA</option>
-                  <option value="login_error">Login</option>
+                      <option value="">Todos</option>
+                      <option value="com_marg">Com margem</option>
+                      <option value="sem_marg">Sem margem</option>
+                      <option value="nao_encontrado">Nao encontrado</option>
+                      <option value="erro">Erro</option>
+                      <option value="captcha_required">CAPTCHA</option>
+                      <option value="login_error">Login</option>
                 </Select>
               </label>
               <label className="block text-sm text-slate-300">
@@ -1358,6 +1365,7 @@ function StatLine({ label, value }: { label: string; value: number }) {
 
 function queryTone(status?: string) {
   if (status === 'com_marg') return 'success';
+  if (status === 'nao_encontrado') return 'neutral';
   if (status === 'erro' || status === 'login_error') return 'danger';
   if (status === 'captcha_required') return 'info';
   return 'neutral';
@@ -1490,6 +1498,18 @@ function getFriendlyRibeiraoError(error: unknown, fallback: string) {
   }
   if (code === 'CAPTCHA_REQUIRED' || code === 'MANUAL_AUTH_REQUIRED') {
     return 'O portal solicitou validação manual.';
+  }
+  if (code === 'RESULT_TABLE_NOT_FOUND') {
+    return 'Não encontrei a tabela Detalhes da Margem.';
+  }
+  if (code === 'MARGIN_ROWS_NOT_FOUND') {
+    return 'Encontrei a página, mas não localizei as linhas de margem.';
+  }
+  if (code === 'PARSE_MARGIN_ERROR') {
+    return 'Encontrei os textos, mas não consegui converter os valores de margem.';
+  }
+  if (code === 'CPF_NOT_FOUND') {
+    return 'O portal informou que o CPF não foi encontrado.';
   }
   if (code === 'NO_ACTIVE_SESSION') {
     return 'Nenhuma sessão ativa com o portal da Prefeitura. Inicie a sessão antes de consultar.';

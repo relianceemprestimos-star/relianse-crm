@@ -105,10 +105,18 @@ function serializeQueryRow(row) {
     margem_consignavel_liquida: summary.margem_consignavel_liquida ?? null,
     margem_cartao_bruta: summary.margem_cartao_bruta ?? null,
     margem_cartao_liquida: summary.margem_cartao_liquida ?? null,
+    margem_emprestimo_total: summary.margem_emprestimo_total ?? null,
+    margem_emprestimo_disponivel: summary.margem_emprestimo_disponivel ?? null,
+    margem_cartao_total: summary.margem_cartao_total ?? null,
+    margem_cartao_disponivel: summary.margem_cartao_disponivel ?? null,
     margem_consignavel_bruta_formatted: summary.margem_consignavel_bruta_formatted,
     margem_consignavel_liquida_formatted: summary.margem_consignavel_liquida_formatted,
     margem_cartao_bruta_formatted: summary.margem_cartao_bruta_formatted,
     margem_cartao_liquida_formatted: summary.margem_cartao_liquida_formatted,
+    margem_emprestimo_total_formatted: formatMoney(summary.margem_emprestimo_total),
+    margem_emprestimo_disponivel_formatted: formatMoney(summary.margem_emprestimo_disponivel),
+    margem_cartao_total_formatted: formatMoney(summary.margem_cartao_total),
+    margem_cartao_disponivel_formatted: formatMoney(summary.margem_cartao_disponivel),
     raw_result_json: row.raw_result_json || summary.raw_result_json || '{}',
     created_at: row.created_at,
     created_at_formatted: formatDateTime(row.created_at),
@@ -627,9 +635,13 @@ export async function queryRibeiraoCpf({ userId, sessionId, cpf, login, password
         mensagem,
         best_product_type,
         best_net_margin,
+        margem_emprestimo_total,
+        margem_emprestimo_disponivel,
+        margem_cartao_total,
+        margem_cartao_disponivel,
         raw_result_json,
         created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     [
       userId,
@@ -645,6 +657,10 @@ export async function queryRibeiraoCpf({ userId, sessionId, cpf, login, password
       normalized.mensagem || '',
       normalized.best_product_type || '',
       normalized.best_net_margin,
+      normalized.margem_emprestimo_total ?? null,
+      normalized.margem_emprestimo_disponivel ?? null,
+      normalized.margem_cartao_total ?? null,
+      normalized.margem_cartao_disponivel ?? null,
       normalized.raw_result_json,
       createdAt,
     ]
@@ -656,10 +672,23 @@ export async function queryRibeiraoCpf({ userId, sessionId, cpf, login, password
   const record = one(database, 'SELECT * FROM ribeirao_margin_queries WHERE id = ?', [queryId]);
   const historyItem = serializeQueryRow(record);
 
+  const nextSessionStatus =
+    normalized.consultaStatus === RIBEIRAO_QUERY_STATUSES.WITH_MARGIN ||
+    normalized.consultaStatus === RIBEIRAO_QUERY_STATUSES.WITHOUT_MARGIN ||
+    normalized.consultaStatus === RIBEIRAO_QUERY_STATUSES.NOT_FOUND
+      ? RIBEIRAO_SESSION_STATUSES.CONNECTED
+      : normalized.consultaStatus === RIBEIRAO_QUERY_STATUSES.CAPTCHA_REQUIRED
+        ? RIBEIRAO_SESSION_STATUSES.WAITING_CAPTCHA
+        : normalized.consultaStatus === RIBEIRAO_QUERY_STATUSES.LOGIN_ERROR
+          ? RIBEIRAO_SESSION_STATUSES.LOGIN_ERROR
+          : normalized.consultaStatus === RIBEIRAO_QUERY_STATUSES.SESSION_EXPIRED
+            ? RIBEIRAO_SESSION_STATUSES.SESSION_EXPIRED
+            : RIBEIRAO_SESSION_STATUSES.ERROR;
+
   run(
     database,
     'UPDATE ribeirao_query_sessions SET status = ?, updated_at = ? WHERE id = ?',
-    [normalized.consultaStatus === RIBEIRAO_QUERY_STATUSES.WITH_MARGIN ? RIBEIRAO_SESSION_STATUSES.CONNECTED : RIBEIRAO_SESSION_STATUSES.CONNECTING, nowIso(), sessionId]
+    [nextSessionStatus, nowIso(), sessionId]
   );
 
   return {
@@ -852,6 +881,7 @@ export function getRibeiraoDashboardSummary(filters = {}) {
   const total = history.length;
   const withMargin = history.filter((item) => item.consulta_status === RIBEIRAO_QUERY_STATUSES.WITH_MARGIN).length;
   const withoutMargin = history.filter((item) => item.consulta_status === RIBEIRAO_QUERY_STATUSES.WITHOUT_MARGIN).length;
+  const notFound = history.filter((item) => item.consulta_status === RIBEIRAO_QUERY_STATUSES.NOT_FOUND).length;
   const errors = history.filter((item) => item.consulta_status === RIBEIRAO_QUERY_STATUSES.ERROR).length;
   const captcha = history.filter((item) => item.consulta_status === RIBEIRAO_QUERY_STATUSES.CAPTCHA_REQUIRED).length;
 
@@ -859,6 +889,7 @@ export function getRibeiraoDashboardSummary(filters = {}) {
     total,
     with_margin: withMargin,
     without_margin: withoutMargin,
+    not_found: notFound,
     errors,
     captcha,
     history,

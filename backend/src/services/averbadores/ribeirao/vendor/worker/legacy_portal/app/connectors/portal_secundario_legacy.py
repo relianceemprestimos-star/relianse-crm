@@ -104,6 +104,105 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
                 return match.group(1)
         return None
 
+    @staticmethod
+    def _normalize_money_text(value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        text = re.sub(r"\s+", " ", text)
+        match = re.search(r"-?\d{1,3}(?:\.\d{3})*,\d{2}|-?\d+,\d{2}", text)
+        return match.group(0) if match else text
+
+    async def _extract_margin_table(self) -> dict:
+        try:
+            data = await self.page.evaluate(
+                """() => {
+                    const normalize = (value) => String(value || "")
+                      .normalize("NFD")
+                      .replace(/[\\u0300-\\u036f]/g, "")
+                      .replace(/\\s+/g, " ")
+                      .trim()
+                      .toUpperCase();
+                    const clean = (value) => String(value || "").replace(/\\s+/g, " ").trim();
+                    const money = (value) => clean(value).match(/-?\\d{1,3}(?:\\.\\d{3})*,\\d{2}|-?\\d+,\\d{2}/)?.[0] || "";
+                    const bodyText = normalize(document.body?.innerText || document.body?.textContent || "");
+                    const notFound = /CPF\\/?MATRICULA NAO ENCONTRADO|CPF NAO ENCONTRADO|MATRICULA NAO ENCONTRADA/.test(bodyText);
+                    const tables = Array.from(document.querySelectorAll("table"));
+                    const rows = [];
+                    let tableFound = false;
+
+                    const mapHeader = (cells) => {
+                      const headerMap = { service: 0, total: 1, reserved: 2, available: 3 };
+                      cells.forEach((cell, index) => {
+                        const normalized = normalize(cell);
+                        if (normalized.includes("SERVICO")) headerMap.service = index;
+                        if (normalized.includes("MARGEM TOTAL")) headerMap.total = index;
+                        if (normalized.includes("MARGEM RESERVADA")) headerMap.reserved = index;
+                        if (normalized.includes("MARGEM DISPONIVEL")) headerMap.available = index;
+                      });
+                      return headerMap;
+                    };
+
+                    for (const table of tables) {
+                      const tableText = normalize(table.innerText || table.textContent || "");
+                      if (!tableText.includes("DETALHES DA MARGEM")) continue;
+                      tableFound = true;
+
+                      const tableRows = Array.from(table.querySelectorAll("tr"))
+                        .map((row) =>
+                          Array.from(row.querySelectorAll("th,td"))
+                            .map((cell) => clean(cell.innerText || cell.textContent || ""))
+                            .filter((cell) => cell !== "")
+                        )
+                        .filter((cells) => cells.length);
+
+                      if (!tableRows.length) {
+                        continue;
+                      }
+
+                      let headerIndex = tableRows.findIndex((cells) => {
+                        const normalizedCells = cells.map(normalize);
+                        return (
+                          normalizedCells.some((cell) => cell.includes("SERVICO")) &&
+                          normalizedCells.some((cell) => cell.includes("MARGEM TOTAL")) &&
+                          normalizedCells.some((cell) => cell.includes("MARGEM DISPONIVEL"))
+                        );
+                      });
+
+                      if (headerIndex < 0) {
+                        headerIndex = 0;
+                      }
+
+                      const headerMap = mapHeader(tableRows[headerIndex] || []);
+                      for (let index = headerIndex + 1; index < tableRows.length; index += 1) {
+                        const cells = tableRows[index];
+                        const normalizedCells = cells.map(normalize);
+                        const service = cells[headerMap.service] || cells[0] || "";
+                        const normalizedService = normalize(service);
+                        if (!normalizedService.includes("MARGEM")) continue;
+
+                        rows.push({
+                          service,
+                          total: money(cells[headerMap.total] || cells[1] || ""),
+                          reserved: money(cells[headerMap.reserved] || cells[2] || ""),
+                          available: money(cells[headerMap.available] || cells[3] || cells[cells.length - 1] || ""),
+                          raw_cells: cells,
+                          raw_normalized_cells: normalizedCells,
+                        });
+                      }
+
+                      if (rows.length) {
+                        break;
+                      }
+                    }
+
+                    return { notFound, tableFound, rows, bodyText };
+                }"""
+            )
+            return data if isinstance(data, dict) else {"notFound": False, "tableFound": False, "rows": [], "bodyText": ""}
+        except Exception:
+            return {"notFound": False, "tableFound": False, "rows": [], "bodyText": ""}
+
     @classmethod
     def _slice_between(cls, normalized_text: str, start_marker: str, end_markers: list[str]) -> str:
         text = normalized_text or ""
@@ -905,19 +1004,83 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
         await self.page.wait_for_timeout(self.settings.intervalo_entre_consultas_ms)
         await self._wait_any(self.settings.pdc_selector_result_ready, max(7000, self.settings.timeout_ms // 2))
 
-        extracted = await self._extract_margens_from_text()
+        extracted_table = await self._extract_margin_table()
+        if extracted_table.get("notFound"):
+            raise RuntimeError("CPF_NOT_FOUND: CPF/Matricula nao encontrado.")
 
-        bruta_fac = extracted.get("bruta_facultativa") or await self._extract_value_by_raw_labels(self.settings.pdc_label_facultativa)
-        disp_fac = extracted.get("disp_facultativa") or await self._extract_value_by_raw_labels(self.settings.pdc_label_margem_disponivel)
-        bruta_cartao = extracted.get("bruta_cartao") or ""
-        disp_cartao = extracted.get("disp_cartao") or await self._extract_value_by_raw_labels(self.settings.pdc_label_cartao)
-        bruta_beneficio = extracted.get("bruta_cartao_beneficio") or ""
-        disp_beneficio = extracted.get("disp_cartao_beneficio") or await self._extract_value_by_raw_labels(
-            self.settings.pdc_label_cartao_beneficio
+        table_rows = extracted_table.get("rows") or []
+        table_found = bool(extracted_table.get("tableFound"))
+
+        emprestimo_total = ""
+        emprestimo_disponivel = ""
+        cartao_total = ""
+        cartao_disponivel = ""
+        margem_rows = []
+
+        for row in table_rows:
+            service = self._normalize_text(row.get("service") or "")
+            total = self._normalize_money_text(row.get("total") or "")
+            reserved = self._normalize_money_text(row.get("reserved") or "")
+            available = self._normalize_money_text(row.get("available") or "")
+            if not service:
+                continue
+
+            margem_rows.append(
+                {
+                    "service": row.get("service") or "",
+                    "total": total,
+                    "reserved": reserved,
+                    "available": available,
+                }
+            )
+
+            if "EMPRESTIMO" in service:
+                emprestimo_total = emprestimo_total or total
+                emprestimo_disponivel = emprestimo_disponivel or available
+            elif "CARTAO" in service:
+                cartao_total = cartao_total or total
+                cartao_disponivel = cartao_disponivel or available
+
+        if not margem_rows and not table_found:
+            fallback = await self._extract_margens_from_text()
+            emprestimo_total = fallback.get("bruta_facultativa") or ""
+            emprestimo_disponivel = fallback.get("disp_facultativa") or ""
+            cartao_total = fallback.get("bruta_cartao") or fallback.get("bruta_cartao_beneficio") or ""
+            cartao_disponivel = fallback.get("disp_cartao") or fallback.get("disp_cartao_beneficio") or ""
+            if emprestimo_total or emprestimo_disponivel or cartao_total or cartao_disponivel:
+                margem_rows = [
+                    {
+                        "service": "MARGEM EMPRESTIMO",
+                        "total": emprestimo_total,
+                        "reserved": "",
+                        "available": emprestimo_disponivel,
+                    },
+                    {
+                        "service": "MARGEM CARTAO",
+                        "total": cartao_total,
+                        "reserved": "",
+                        "available": cartao_disponivel,
+                    },
+                ]
+
+        if not margem_rows:
+            raise RuntimeError("MARGIN_ROWS_NOT_FOUND: Nao encontrei linhas de margem na tela de detalhes.")
+
+        has_positive_margin = any(
+            any(
+                (value := item.get(key)) and re.search(r"\d", str(value))
+                and (number := float(str(value).replace("R$", "").replace(".", "").replace(",", ".").replace(" ", ""))) > 0
+                for key in ("total", "available")
+            )
+            for item in margem_rows
+        )
+        has_any_value = any(
+            bool(item.get("total")) or bool(item.get("available")) for item in margem_rows
         )
 
-        if not disp_fac and not bruta_fac and not disp_cartao and not disp_beneficio:
-            raise RuntimeError("Nao encontrei margens no resultado da consulta do CPF.")
+        # Se a tabela veio preenchida, mesmo com zeros, isso é sucesso com/s sem margem.
+        if not has_any_value:
+            raise RuntimeError("PARSE_MARGIN_ERROR: Encontrei a tabela, mas nao consegui extrair os valores de margem.")
 
         evidencia_png = None
         if self.settings.capture_screenshot_on_success:
@@ -926,19 +1089,27 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
             await save_evidence_pdf(self.page, self.lote_id, cpf, "sucesso")
 
         return ConsultaResultado(
-            status="sucesso",
-            margem_disponivel=disp_fac,
-            margem_cartao=disp_cartao,
-            margem_cartao_beneficio=disp_beneficio,
+            status="sucesso" if has_positive_margin else "sem_marg",
+            margem_disponivel=emprestimo_disponivel,
+            margem_cartao=cartao_disponivel,
+            margem_cartao_beneficio="",
             payload_extra={
-                "nome_portal": extracted.get("nome") or "",
-                "margem_bruta": bruta_fac or "",
-                "facultativa_margem_consignavel": bruta_fac or "",
-                "facultativa_disponivel": disp_fac or "",
-                "cartao_margem_consignavel": bruta_cartao or "",
-                "cartao_disponivel": disp_cartao or "",
-                "cartao_beneficio_margem_consignavel": bruta_beneficio or "",
-                "cartao_beneficio_disponivel": disp_beneficio or "",
+                "nome_portal": "",
+                "margem_emprestimo_total": emprestimo_total or "",
+                "margem_emprestimo_disponivel": emprestimo_disponivel or "",
+                "margem_cartao_total": cartao_total or "",
+                "margem_cartao_disponivel": cartao_disponivel or "",
+                "margem_bruta": emprestimo_total or "",
+                "facultativa_margem_consignavel": emprestimo_total or "",
+                "facultativa_disponivel": emprestimo_disponivel or "",
+                "cartao_margem_consignavel": cartao_total or "",
+                "cartao_disponivel": cartao_disponivel or "",
+                "cartao_beneficio_margem_consignavel": "",
+                "cartao_beneficio_disponivel": "",
+                "detalhes_margem": {
+                    "rows": margem_rows,
+                    "table_found": table_found,
+                },
             },
             evidencia_path=evidencia_png,
             consultado_em=datetime.utcnow(),
