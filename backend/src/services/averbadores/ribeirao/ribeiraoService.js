@@ -146,36 +146,60 @@ function clearRibeiraoSessionCache(sessionId = null) {
   ribeiraoSessionCache.delete(Number(sessionId));
 }
 
-function normalizeRibeiraoSessionMessage(status, message) {
+function normalizeRibeiraoSessionMessage(status, message, errorCode = null) {
   const normalizedStatus = String(status || '').toLowerCase();
   const raw = String(message || '').trim();
+  const normalizedErrorCode = String(errorCode || '').toUpperCase();
 
   if (normalizedStatus === RIBEIRAO_SESSION_STATUSES.CONNECTED) {
     if (!raw || /browsertype\.launch|missing x server|\$display|playwright|chromium|headed browser/i.test(raw)) {
-      return 'Sessão conectada com sucesso.';
+      return 'Sess?o conectada com sucesso.';
     }
     return raw;
   }
   if (normalizedStatus === RIBEIRAO_SESSION_STATUSES.WAITING_CAPTCHA || normalizedStatus === 'aguardando_validacao_manual') {
-    return 'O portal solicitou validação manual. Resolva no navegador aberto e clique em Atualizar status.';
+    return 'O portal solicitou valida??o manual. Resolva no navegador aberto e clique em Atualizar status.';
   }
-  if (normalizedStatus === RIBEIRAO_SESSION_STATUSES.LOGIN_ERROR || normalizedStatus === 'erro_login') {
+  if (
+    normalizedStatus === RIBEIRAO_SESSION_STATUSES.LOGIN_ERROR ||
+    normalizedStatus === 'erro_login' ||
+    ['LOGIN_REJECTED', 'LOGIN_FIELDS_NOT_FOUND', 'LOGIN_BUTTON_NOT_FOUND', 'LOGIN_TIMEOUT', 'LOGIN_STILL_ON_SAME_PAGE', 'PORTAL_CHANGED', 'UNKNOWN_LOGIN_ERROR', 'LOGIN_OK_NAVIGATION_FAILED'].includes(normalizedErrorCode)
+  ) {
+    if (normalizedErrorCode === 'LOGIN_FIELDS_NOT_FOUND') {
+      return 'O sistema n?o encontrou os campos de login do portal. O layout pode ter mudado.';
+    }
+    if (normalizedErrorCode === 'LOGIN_BUTTON_NOT_FOUND') {
+      return 'O sistema n?o encontrou o bot?o de login do portal.';
+    }
+    if (normalizedErrorCode === 'LOGIN_TIMEOUT') {
+      return 'O portal n?o respondeu ap?s tentar login.';
+    }
+    if (normalizedErrorCode === 'LOGIN_STILL_ON_SAME_PAGE') {
+      return 'O portal permaneceu na tela de login sem confirmar autentica??o.';
+    }
+    if (normalizedErrorCode === 'PORTAL_CHANGED') {
+      return 'O layout do portal mudou e o fluxo de login n?o foi reconhecido.';
+    }
+    if (normalizedErrorCode === 'LOGIN_OK_NAVIGATION_FAILED') {
+      return 'Login aceito, mas n?o foi poss?vel abrir Consulta de Margem.';
+    }
     return 'O portal recusou o login/senha informados.';
   }
   if (normalizedStatus === RIBEIRAO_SESSION_STATUSES.SESSION_EXPIRED || normalizedStatus === 'expired') {
-    return 'A sessão com o portal expirou. Inicie uma nova sessão e clique em Atualizar status.';
+    return 'A sess?o com o portal expirou. Inicie uma nova sess?o e clique em Atualizar status.';
   }
   if (normalizedStatus === RIBEIRAO_SESSION_STATUSES.ERROR || normalizedStatus === 'browser_launch_error') {
-    return 'Erro ao iniciar navegador de consulta no servidor. Verifique configuração do Playwright em produção.';
+    return 'Erro ao iniciar navegador de consulta no servidor. Verifique configura??o do Playwright em produ??o.';
   }
   if (!raw) {
-    return 'Nenhuma sessão ativa com o portal da Prefeitura. Inicie a sessão antes de consultar.';
+    return 'Nenhuma sess?o ativa com o portal da Prefeitura. Inicie a sess?o antes de consultar.';
   }
   if (/browsertype\.launch|missing x server|\$display|headed browser|playwright|chromium|xvfb/i.test(raw)) {
-    return 'Erro ao iniciar navegador de consulta no servidor. Verifique configuração do Playwright em produção.';
+    return 'Erro ao iniciar navegador de consulta no servidor. Verifique configura??o do Playwright em produ??o.';
   }
   return raw;
 }
+
 
 export function getRibeiraoSessionGate(sessionId) {
   const session = getRibeiraoSessionStatus(sessionId);
@@ -202,11 +226,11 @@ export function getRibeiraoSessionGate(sessionId) {
     };
   }
 
-  if (status === RIBEIRAO_SESSION_STATUSES.LOGIN_ERROR) {
+  if (status === RIBEIRAO_SESSION_STATUSES.LOGIN_ERROR || ['LOGIN_REJECTED', 'LOGIN_FIELDS_NOT_FOUND', 'LOGIN_BUTTON_NOT_FOUND', 'LOGIN_TIMEOUT', 'LOGIN_STILL_ON_SAME_PAGE', 'PORTAL_CHANGED', 'UNKNOWN_LOGIN_ERROR', 'LOGIN_OK_NAVIGATION_FAILED'].includes(String(session.error_code || '').toUpperCase())) {
     return {
       success: false,
-      code: 'LOGIN_ERROR',
-      message: 'Login ou senha do averbador inválidos.',
+      code: String(session.error_code || 'LOGIN_ERROR').toUpperCase(),
+      message: session.message || 'Login ou senha do averbador inv?lidos.',
       session,
     };
   }
@@ -428,7 +452,7 @@ export function getRibeiraoSessionStatus(sessionId) {
   if (cached) {
     return {
       ...cached,
-      message: normalizeRibeiraoSessionMessage(cached.status, cached.message),
+      message: normalizeRibeiraoSessionMessage(cached.status, cached.message, cached.error_code),
     };
   }
 
@@ -449,7 +473,7 @@ export function getRibeiraoSessionStatus(sessionId) {
   }
 
   const status = normalizeSessionStatus(fileStatus?.status || row.status);
-  const message = normalizeRibeiraoSessionMessage(status, fileStatus?.message || row.error_message || '');
+  const message = normalizeRibeiraoSessionMessage(status, fileStatus?.message || row.error_message || '', fileStatus?.error_code || row.error_code || null);
 
   run(
     database,
@@ -467,6 +491,7 @@ export function getRibeiraoSessionStatus(sessionId) {
     created_at: row.created_at,
     updated_at: nowIso(),
     raw: fileStatus || null,
+    error_code: fileStatus?.error_code || row.error_code || null,
   };
   ribeiraoSessionCache.set(Number(sessionId), session);
   return session;

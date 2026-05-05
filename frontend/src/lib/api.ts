@@ -377,7 +377,7 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   getRibeiraoSessionStatus: (id: number) =>
-    request<{ session: RibeiraoSessionStatus }>(`/api/ribeirao/session/${id}/status`),
+    request<{ session: RibeiraoSession }>(`/api/ribeirao/session/${id}/status`),
   queryRibeiraoCpf: (payload: {
     session_id: number;
     cpf: string;

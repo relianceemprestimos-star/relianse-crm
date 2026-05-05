@@ -8,6 +8,7 @@ import sys
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 from playwright.async_api import async_playwright
 
@@ -32,6 +33,23 @@ def _now_iso() -> str:
 
 def _clean_digits(value: object) -> str:
     return re.sub(r"\D", "", str(value or ""))
+
+
+def _mask_login(login: str) -> str:
+    text = str(login or "").strip()
+    digits = re.sub(r"\D", "", text)
+    if len(digits) >= 5:
+        return f"{digits[:3]}***{digits[-2:]}"
+    if len(text) >= 5:
+        return f"{text[:3]}***{text[-2:]}"
+    return "***"
+
+
+def _safe_host(url: str) -> str:
+    try:
+        return urlparse(str(url or "")).hostname or ""
+    except Exception:
+        return ""
 
 
 def _is_placeholder_url(url: str) -> bool:
@@ -95,6 +113,228 @@ def _browser_launch_error_message(exc: Exception) -> tuple[str, str] | None:
         )
     return None
 
+
+LOGIN_ERROR_CODES = {
+    "LOGIN_REJECTED",
+    "LOGIN_FIELDS_NOT_FOUND",
+    "LOGIN_BUTTON_NOT_FOUND",
+    "LOGIN_TIMEOUT",
+    "LOGIN_STILL_ON_SAME_PAGE",
+    "CAPTCHA_REQUIRED",
+    "PORTAL_CHANGED",
+    "UNKNOWN_LOGIN_ERROR",
+    "LOGIN_OK_NAVIGATION_FAILED",
+    "MANUAL_AUTH_REQUIRED",
+}
+
+
+def _typed_login_error(code: str, message: str) -> RuntimeError:
+    return RuntimeError(f"{code}: {message}")
+
+
+def _split_typed_login_error(message: str | None) -> tuple[str | None, str]:
+    raw = str(message or "").strip()
+    if not raw:
+        return None, ""
+    upper = raw.upper()
+    for code in LOGIN_ERROR_CODES:
+        prefix = f"{code}:"
+        if upper.startswith(prefix):
+            return code, raw[len(prefix):].strip()
+    return None, raw
+
+
+async def _capture_login_snapshot(connector: PortalSecundarioLegacyConnector) -> dict:
+    login_selectors = connector._selector_options(connector.settings.pdc_selector_login_user)
+    password_selectors = connector._selector_options(connector.settings.pdc_selector_login_password)
+    submit_selectors = connector._selector_options(connector.settings.pdc_selector_login_submit)
+    success_selectors = [
+        *connector._selector_options(getattr(connector.settings, "selector_logged_indicator", "")),
+        *connector._selector_options(connector.settings.pdc_selector_profile_access_button),
+        *connector._selector_options(connector.settings.pdc_selector_menu_consulta_margem),
+        *connector._selector_options(connector.settings.pdc_selector_cpf_input),
+    ]
+    error_selectors = [
+        "#lblMsgRH",
+        "#mensagemLabel",
+        ".alert-danger",
+        ".error",
+        ".msgErro",
+        ".toast-error",
+        ".invalid-feedback",
+    ]
+    captcha_selectors = [
+        connector.settings.pdc_selector_captcha_input,
+        "iframe[src*='captcha' i]",
+        "iframe[src*='hcaptcha' i]",
+        "iframe[title*='captcha' i]",
+        "[id*='captcha' i]",
+        "[name*='captcha' i]",
+    ]
+
+    return await connector.page.evaluate(
+        """({ loginSelectors, passwordSelectors, submitSelectors, successSelectors, errorSelectors, captchaSelectors }) => {
+            const normalize = (v) => String(v || "")
+              .normalize("NFD")
+              .replace(/[\\u0300-\\u036f]/g, "")
+              .replace(/\\s+/g, " ")
+              .trim()
+              .toLowerCase();
+            const isVisible = (el) => {
+              if (!el) return false;
+              const style = window.getComputedStyle(el);
+              if (!style) return false;
+              const rect = el.getBoundingClientRect();
+              return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
+            };
+            const firstVisibleSelector = (selectors) => {
+              for (const selector of selectors || []) {
+                const nodes = Array.from(document.querySelectorAll(selector || ""));
+                const visible = nodes.find((node) => isVisible(node) && !(node.disabled || node.readOnly));
+                if (visible) {
+                  return selector;
+                }
+              }
+              return "";
+            };
+            const firstText = (selectors) => {
+              for (const selector of selectors || []) {
+                const node = Array.from(document.querySelectorAll(selector || "")).find((el) => isVisible(el));
+                if (node) {
+                  const text = String(node.textContent || node.value || "").replace(/\\s+/g, " ").trim();
+                  if (text) return text;
+                }
+              }
+              return "";
+            };
+            const bodyText = String(document.body?.innerText || document.body?.textContent || "").replace(/\\s+/g, " ").trim();
+            const bodyNormalized = normalize(bodyText);
+            const successSelector = firstVisibleSelector(successSelectors);
+            const captchaSelector = firstVisibleSelector(captchaSelectors);
+            const loginSelector = firstVisibleSelector(loginSelectors);
+            const passwordSelector = firstVisibleSelector(passwordSelectors);
+            const submitSelector = firstVisibleSelector(submitSelectors);
+            const errorText = firstText(errorSelectors) || (
+              /login|senha|certificado|captcha|nao autorizado|não autorizado|inv[aá]lid/i.test(bodyText)
+                ? bodyText.slice(0, 500)
+                : ""
+            );
+            return {
+              title: document.title || "",
+              url: location.href || "",
+              host: (() => {
+                try { return new URL(location.href).hostname || ""; } catch { return ""; }
+              })(),
+              inputCount: document.querySelectorAll("input").length,
+              loginFound: Boolean(loginSelector),
+              loginSelector,
+              passwordFound: Boolean(passwordSelector),
+              passwordSelector,
+              buttonFound: Boolean(submitSelector),
+              buttonSelector: submitSelector,
+              successFound: Boolean(successSelector),
+              successSelector,
+              operacionalFound: bodyNormalized.includes("operacional"),
+              consultaMargemFound: bodyNormalized.includes("consulta de margem"),
+              captchaFound: Boolean(captchaSelector),
+              captchaSelector,
+              errorText,
+              bodySnippet: bodyText.slice(0, 260),
+              bodyNormalized: bodyNormalized.slice(0, 260),
+              loginPageVisible: Boolean(loginSelector) && bodyNormalized.includes("login"),
+            };
+        }""",
+        {
+            "loginSelectors": login_selectors,
+            "passwordSelectors": password_selectors,
+            "submitSelectors": submit_selectors,
+            "successSelectors": success_selectors,
+            "errorSelectors": error_selectors,
+            "captchaSelectors": captcha_selectors,
+        },
+    )
+
+
+def _log_login_snapshot(snapshot: dict, login: str, password: str, stage: str) -> None:
+    print(f"[RIBEIRAO_LOGIN] stage: {stage}", file=sys.stderr, flush=True)
+    print(f"[RIBEIRAO_LOGIN] URL aberta: {snapshot.get('host') or ''}", file=sys.stderr, flush=True)
+    print(f"[RIBEIRAO_LOGIN] URL depois do clique: {snapshot.get('url') or ''}", file=sys.stderr, flush=True)
+    print(f"[RIBEIRAO_LOGIN] titulo da pagina: {snapshot.get('title') or ''}", file=sys.stderr, flush=True)
+    print(f"[RIBEIRAO_LOGIN] inputs encontrados: {snapshot.get('inputCount') or 0}", file=sys.stderr, flush=True)
+    print(f"[RIBEIRAO_LOGIN] campo login encontrado: {bool(snapshot.get('loginFound'))}", file=sys.stderr, flush=True)
+    print(f"[RIBEIRAO_LOGIN] campo senha encontrado: {bool(snapshot.get('passwordFound'))}", file=sys.stderr, flush=True)
+    print(f"[RIBEIRAO_LOGIN] botao login encontrado: {bool(snapshot.get('buttonFound'))}", file=sys.stderr, flush=True)
+    print(f"[RIBEIRAO_LOGIN] texto de sucesso encontrado: {bool(snapshot.get('successFound'))}", file=sys.stderr, flush=True)
+    print(f"[RIBEIRAO_LOGIN] menu Operacional encontrado: {bool(snapshot.get('operacionalFound'))}", file=sys.stderr, flush=True)
+    print(f"[RIBEIRAO_LOGIN] login preenchido: {_mask_login(login)}", file=sys.stderr, flush=True)
+    print(f"[RIBEIRAO_LOGIN] senha preenchida: {bool(password)}", file=sys.stderr, flush=True)
+    print(f"[RIBEIRAO_LOGIN] passwordLength: {len(password or '')}", file=sys.stderr, flush=True)
+    print(f"[RIBEIRAO_LOGIN] passwordHasValue: {bool(password)}", file=sys.stderr, flush=True)
+    if snapshot.get('loginSelector'):
+        print(f"[RIBEIRAO_LOGIN] seletor login usado: {snapshot.get('loginSelector')}", file=sys.stderr, flush=True)
+    if snapshot.get('passwordSelector'):
+        print(f"[RIBEIRAO_LOGIN] seletor senha usado: {snapshot.get('passwordSelector')}", file=sys.stderr, flush=True)
+    if snapshot.get('buttonSelector'):
+        print(f"[RIBEIRAO_LOGIN] seletor login button usado: {snapshot.get('buttonSelector')}", file=sys.stderr, flush=True)
+
+
+def _classify_login_issue(code: str | None, message: str, snapshot: dict | None = None) -> tuple[str, str]:
+    raw_message = str(message or '').strip()
+    normalized = raw_message.lower()
+    code_upper = str(code or '').strip().upper()
+    snap = snapshot or {}
+    error_text = str(snap.get('errorText') or '').strip()
+    body_text = str(snap.get('bodySnippet') or '').strip()
+    body_normalized = str(snap.get('bodyNormalized') or '').strip().lower()
+
+    if code_upper in LOGIN_ERROR_CODES:
+        if code_upper == 'LOGIN_REJECTED':
+            return 'LOGIN_REJECTED', raw_message or 'O portal recusou o login/senha informados.'
+        if code_upper == 'MANUAL_AUTH_REQUIRED':
+            return 'MANUAL_AUTH_REQUIRED', raw_message or 'Autentica??o manual necess?ria.'
+        if code_upper == 'CAPTCHA_REQUIRED':
+            return 'CAPTCHA_REQUIRED', raw_message or 'O portal solicitou valida??o manual.'
+        if code_upper == 'LOGIN_OK_NAVIGATION_FAILED':
+            return 'LOGIN_OK_NAVIGATION_FAILED', raw_message or 'Login aceito, mas n?o foi poss?vel abrir Consulta de Margem.'
+        if code_upper == 'LOGIN_FIELDS_NOT_FOUND':
+            return 'LOGIN_FIELDS_NOT_FOUND', raw_message or 'O sistema n?o encontrou os campos de login do portal. O layout pode ter mudado.'
+        if code_upper == 'LOGIN_BUTTON_NOT_FOUND':
+            return 'LOGIN_BUTTON_NOT_FOUND', raw_message or 'O sistema n?o encontrou o bot?o de login do portal.'
+        if code_upper == 'LOGIN_TIMEOUT':
+            return 'LOGIN_TIMEOUT', raw_message or 'O portal n?o respondeu ap?s tentar login.'
+        if code_upper == 'LOGIN_STILL_ON_SAME_PAGE':
+            return 'LOGIN_STILL_ON_SAME_PAGE', raw_message or 'O portal permaneceu na tela de login sem confirmar autentica??o.'
+        if code_upper == 'PORTAL_CHANGED':
+            return 'PORTAL_CHANGED', raw_message or 'O layout do portal mudou e o fluxo de login n?o foi reconhecido.'
+        return 'UNKNOWN_LOGIN_ERROR', raw_message or 'Erro inesperado no fluxo de login.'
+
+    if snap.get('captchaFound'):
+        return 'CAPTCHA_REQUIRED', raw_message or 'O portal solicitou valida??o manual.'
+    if snap.get('loginFound') is False:
+        return 'LOGIN_FIELDS_NOT_FOUND', raw_message or 'O sistema n?o encontrou os campos de login do portal. O layout pode ter mudado.'
+    if snap.get('buttonFound') is False:
+        return 'LOGIN_BUTTON_NOT_FOUND', raw_message or 'O sistema n?o encontrou o bot?o de login do portal.'
+
+    if any(term in normalized for term in ['certificado digital', 'certificado', 'token', 'e-cpf', 'e cpf']):
+        return 'MANUAL_AUTH_REQUIRED', raw_message or 'Autentica??o manual necess?ria.'
+    if any(term in normalized for term in ['usuario ou senha', 'usu?rio ou senha', 'login ou senha', 'senha incorreta', 'senha invalida', 'senha inv?lida', 'credenciais invalidas', 'credenciais inv?lidas', 'acesso negado', 'dados incorretos']):
+        return 'LOGIN_REJECTED', raw_message or 'O portal recusou o login/senha informados.'
+    if any(term in normalized for term in ['nao consegui', 'n?o consegui', 'falha ao preencher', 'falha ao clicar', 'timeout', 'tempo limite']):
+        if snap.get('loginFound') and snap.get('buttonFound') and not snap.get('passwordFound'):
+            return 'LOGIN_STILL_ON_SAME_PAGE', raw_message or 'O portal permaneceu na tela de login sem confirmar autentica??o.'
+        return 'LOGIN_TIMEOUT', raw_message or 'O portal n?o respondeu ap?s tentar login.'
+    if snap.get('successFound'):
+        return 'LOGIN_OK_NAVIGATION_FAILED', raw_message or 'Login aceito, mas n?o foi poss?vel abrir Consulta de Margem.'
+    if 'certificado digital' in body_normalized or 'login-identific.certificadodigital.com.br' in body_normalized or 'certificadodigital' in body_normalized:
+        return 'MANUAL_AUTH_REQUIRED', raw_message or 'Autentica??o manual necess?ria.'
+    if error_text:
+        if any(term in error_text.lower() for term in ['usuario ou senha', 'usu?rio ou senha', 'login ou senha', 'senha incorreta', 'senha invalida', 'senha inv?lida', 'credenciais invalidas', 'credenciais inv?lidas', 'acesso negado', 'dados incorretos']):
+            return 'LOGIN_REJECTED', error_text
+        return 'UNKNOWN_LOGIN_ERROR', error_text
+    if body_text and 'login' in body_text.lower() and not snap.get('successFound'):
+        return 'LOGIN_STILL_ON_SAME_PAGE', raw_message or 'O portal permaneceu na tela de login sem confirmar autentica??o.'
+
+    return 'UNKNOWN_LOGIN_ERROR', raw_message or 'Erro inesperado no fluxo de login.'
 
 def _candidate_worker_roots() -> list[Path]:
     env_root = os.getenv("RIBEIRAO_PROJECT_ROOT", "").strip()
@@ -185,7 +425,7 @@ def _make_settings(payload: dict):
 def _build_connector(payload: dict, settings) -> PortalSecundarioLegacyConnector:
     session_id = str(payload.get("session_id") or payload.get("sessionId") or "1")
     login = str(payload.get("login") or payload.get("username") or os.getenv("RIBEIRAO_AVERBADOR_LOGIN") or "").strip()
-    password = str(payload.get("password") or os.getenv("RIBEIRAO_AVERBADOR_PASSWORD") or "").strip()
+    password = str(payload.get("password") or os.getenv("RIBEIRAO_AVERBADOR_PASSWORD") or "")
     credencial = {
         "id": session_id,
         "credential_id": session_id,
@@ -198,6 +438,15 @@ def _build_connector(payload: dict, settings) -> PortalSecundarioLegacyConnector
 
 
 async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login: str, password: str) -> None:
+    dialog_messages: list[str] = []
+
+    async def on_dialog(dialog):
+        dialog_messages.append(str(dialog.message or ''))
+        try:
+            await dialog.dismiss()
+        except Exception:
+            pass
+
     await connector.page.goto(connector.settings.pdc_portal_url, wait_until="domcontentloaded", timeout=max(45000, connector.settings.timeout_ms))
     await connector.page.wait_for_timeout(800)
     try:
@@ -207,54 +456,129 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
             await connector.page.locator("button:has-text('Continuar e fechar')").click(timeout=2000)
         except Exception:
             pass
-    await connector._open_login_entry()
-    await connector._open_login_administrativo()
-    if not login or not password:
-        raise RuntimeError("Login ou senha ausentes para a sessao Ribeirao.")
-    if not await connector._fill_login_user(login):
-        try:
-            await connector.page.locator("#txtLogin").fill(login, timeout=3000)
-        except Exception as exc:
-            raise RuntimeError("Nao consegui preencher o login.") from exc
-    if not await connector._click_login_submit():
-        try:
-            await connector.page.keyboard.press("Enter")
-        except Exception:
-            pass
-    if not await connector._wait_any("#txtSenha, input[type='password']", 6000):
-        raise RuntimeError("Nao consegui abrir a segunda etapa de login.")
-    if not await connector._fill_login_password(password):
-        try:
-            await connector.page.locator("#txtSenha").fill(password, timeout=3000)
-        except Exception as exc:
-            raise RuntimeError("Nao consegui preencher a senha.") from exc
-    if not await connector._click_login_submit():
-        try:
-            await connector.page.keyboard.press("Enter")
-        except Exception:
-            pass
-    await connector.page.wait_for_timeout(1200)
+
+    connector.page.on("dialog", on_dialog)
     try:
-        if await connector._wait_any("#ucAjaxModalPopupConfirmacao1_btnConfirmarPopup", 1200):
-            await connector.page.locator("#ucAjaxModalPopupConfirmacao1_btnConfirmarPopup").click(timeout=3000)
-            await connector.page.wait_for_timeout(1200)
-    except Exception:
-        pass
-    await connector._select_profile_access()
-    consulta_url = str(connector.settings.pdc_portal_url or "")
-    if "Login.aspx" in consulta_url:
-        consulta_url = consulta_url.replace("/Login.aspx", "/Margem/ConsultaMargem.aspx")
-    elif "Inicial/Inicial.aspx" in consulta_url:
-        consulta_url = consulta_url.replace("/Inicial/Inicial.aspx", "/Margem/ConsultaMargem.aspx")
-    elif "ConsultaMargem.aspx" not in consulta_url:
-        consulta_url = "https://saec.consiglog.com.br/Margem/ConsultaMargem.aspx"
-    await connector.page.goto(
-        consulta_url,
-        wait_until="domcontentloaded",
-        timeout=max(45000, connector.settings.timeout_ms),
-    )
-    await connector.page.wait_for_timeout(1200)
-    await connector._prepare_consulta_context()
+        await connector._open_login_entry()
+        await connector._open_login_administrativo()
+
+        if not login:
+            raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "Login ausente para a sessao Ribeirao.")
+
+        snapshot = await _capture_login_snapshot(connector)
+        _log_login_snapshot(snapshot, login, password, "abertura")
+        if not snapshot.get("loginFound"):
+            raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "O sistema nao encontrou os campos de login do portal. O layout pode ter mudado.")
+        if not await connector._fill_login_user(login):
+            try:
+                await connector.page.locator("#txtLogin").fill(login, timeout=3000)
+            except Exception as exc:
+                raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "Nao consegui preencher o login.") from exc
+
+        snapshot = await _capture_login_snapshot(connector)
+        _log_login_snapshot(snapshot, login, password, "login-preenchido")
+        if not snapshot.get("buttonFound"):
+            raise _typed_login_error("LOGIN_BUTTON_NOT_FOUND", "O sistema nao encontrou o botao de login do portal.")
+        if not await connector._click_login_submit():
+            try:
+                await connector.page.keyboard.press("Enter")
+            except Exception:
+                raise _typed_login_error("LOGIN_BUTTON_NOT_FOUND", "Nao consegui acionar o botao de login.")
+
+        print(f"[RIBEIRAO_LOGIN] clique em login executado", file=sys.stderr, flush=True)
+        await connector.page.wait_for_timeout(1500)
+        snapshot = await _capture_login_snapshot(connector)
+        _log_login_snapshot(snapshot, login, password, "apos-primeiro-clique")
+
+        if dialog_messages:
+            joined = " | ".join(dialog_messages).lower()
+            if "certificado" in joined or "login-identific" in joined or "nao encontrado" in joined or "n?o encontrado" in joined:
+                raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticacao manual por certificado digital.")
+
+        if snapshot.get("captchaFound"):
+            raise _typed_login_error("CAPTCHA_REQUIRED", "O portal solicitou validacao manual.")
+        if snapshot.get("errorText"):
+            code, typed_message = _classify_login_issue(None, snapshot.get("errorText") or '', snapshot)
+            if code in {"LOGIN_REJECTED", "CAPTCHA_REQUIRED", "MANUAL_AUTH_REQUIRED"}:
+                raise _typed_login_error(code, typed_message)
+
+        if snapshot.get("passwordFound"):
+            if not password:
+                raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "O portal exibiu senha, mas a senha nao foi informada.")
+            if not await connector._fill_login_password(password):
+                try:
+                    await connector.page.locator("#txtSenha").fill(password, timeout=3000)
+                except Exception as exc:
+                    raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "Nao consegui preencher a senha.") from exc
+
+            snapshot = await _capture_login_snapshot(connector)
+            _log_login_snapshot(snapshot, login, password, "senha-preenchida")
+            if not snapshot.get("buttonFound"):
+                raise _typed_login_error("LOGIN_BUTTON_NOT_FOUND", "O sistema nao encontrou o botao de login do portal.")
+            if not await connector._click_login_submit():
+                try:
+                    await connector.page.keyboard.press("Enter")
+                except Exception as exc:
+                    raise _typed_login_error("LOGIN_BUTTON_NOT_FOUND", "Nao consegui acionar o botao de login.") from exc
+
+            print(f"[RIBEIRAO_LOGIN] clique em login executado", file=sys.stderr, flush=True)
+            await connector.page.wait_for_timeout(1500)
+            snapshot = await _capture_login_snapshot(connector)
+            _log_login_snapshot(snapshot, login, password, "apos-segundo-clique")
+        else:
+            await connector.page.wait_for_timeout(2500)
+            snapshot = await _capture_login_snapshot(connector)
+            _log_login_snapshot(snapshot, login, password, "apos-espera-sem-senha")
+
+        if dialog_messages:
+            joined = " | ".join(dialog_messages).lower()
+            if "certificado" in joined or "login-identific" in joined or "nao encontrado" in joined or "n?o encontrado" in joined:
+                raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticacao manual por certificado digital.")
+
+        if snapshot.get("captchaFound"):
+            raise _typed_login_error("CAPTCHA_REQUIRED", "O portal solicitou validacao manual.")
+        if snapshot.get("successFound") or snapshot.get("operacionalFound") or snapshot.get("consultaMargemFound"):
+            pass
+        elif snapshot.get("loginPageVisible") or snapshot.get("loginFound"):
+            if snapshot.get("errorText"):
+                code, typed_message = _classify_login_issue(None, snapshot.get("errorText") or '', snapshot)
+                if code == "LOGIN_REJECTED":
+                    raise _typed_login_error(code, typed_message)
+                if code in {"MANUAL_AUTH_REQUIRED", "CAPTCHA_REQUIRED"}:
+                    raise _typed_login_error(code, typed_message)
+            if snapshot.get("host") and "login-identific" in str(snapshot.get("host") or '').lower():
+                raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticacao manual por certificado digital.")
+            raise _typed_login_error("LOGIN_STILL_ON_SAME_PAGE", "O portal permaneceu na tela de login sem confirmar autenticacao.")
+        else:
+            if snapshot.get("host") and ("login-identific" in str(snapshot.get("host") or '').lower() or 'certificadodigital' in str(snapshot.get("url") or '').lower()):
+                raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticacao manual por certificado digital.")
+            raise _typed_login_error("PORTAL_CHANGED", "O layout do portal mudou e o fluxo de login nao foi reconhecido.")
+
+        await connector._select_profile_access()
+        consulta_url = str(connector.settings.pdc_portal_url or "")
+        if "Login.aspx" in consulta_url:
+            consulta_url = consulta_url.replace("/Login.aspx", "/Margem/ConsultaMargem.aspx")
+        elif "Inicial/Inicial.aspx" in consulta_url:
+            consulta_url = consulta_url.replace("/Inicial/Inicial.aspx", "/Margem/ConsultaMargem.aspx")
+        elif "ConsultaMargem.aspx" not in consulta_url:
+            consulta_url = "https://saec.consiglog.com.br/Margem/ConsultaMargem.aspx"
+        await connector.page.goto(
+            consulta_url,
+            wait_until="domcontentloaded",
+            timeout=max(45000, connector.settings.timeout_ms),
+        )
+        await connector.page.wait_for_timeout(1200)
+        await connector._prepare_consulta_context()
+        if not await connector._wait_any(connector.settings.pdc_selector_cpf_input, 5000):
+            raise _typed_login_error("LOGIN_OK_NAVIGATION_FAILED", "Login aceito, mas nao foi possivel abrir Consulta de Margem.")
+        final_snapshot = await _capture_login_snapshot(connector)
+        _log_login_snapshot(final_snapshot, login, password, "consulta-preparada")
+    finally:
+        try:
+            connector.page.remove_listener("dialog", on_dialog)
+        except Exception:
+            pass
+
 
 
 async def _wait_for_session_login(connector: PortalSecundarioLegacyConnector, session_id: str, timeout_seconds: int) -> dict:
@@ -295,7 +619,7 @@ async def start_session(payload: dict) -> dict:
     settings = _make_settings(payload)
     session_id = str(payload.get("session_id") or payload.get("sessionId") or "1")
     login = str(payload.get("login") or payload.get("username") or os.getenv("RIBEIRAO_AVERBADOR_LOGIN") or "").strip()
-    password = str(payload.get("password") or os.getenv("RIBEIRAO_AVERBADOR_PASSWORD") or "").strip()
+    password = str(payload.get("password") or os.getenv("RIBEIRAO_AVERBADOR_PASSWORD") or "")
     timeout_seconds = int(payload.get("timeout_seconds") or 900)
 
     connector = _build_connector(payload, settings)
@@ -337,8 +661,35 @@ async def start_session(payload: dict) -> dict:
         _write_status(session_id, "conectado", "Sessao autenticada com sucesso.")
         return {"status": "conectado", "session_id": session_id}
     except Exception as exc:
-        _write_status(session_id, "erro_login", str(exc))
-        return {"status": "erro_login", "session_id": session_id, "message": str(exc)}
+        message = str(exc)
+        code, clean_message = _split_typed_login_error(message)
+        status = "erro_login"
+        extra = {"error_code": code} if code else None
+
+        if code == "MANUAL_AUTH_REQUIRED":
+            status = "aguardando_validacao_manual"
+        elif code == "CAPTCHA_REQUIRED":
+            status = "aguardando_captcha_manual"
+        elif code == "LOGIN_OK_NAVIGATION_FAILED":
+            status = "erro_login"
+        elif code == "LOGIN_REJECTED":
+            status = "erro_login"
+        elif code in {"LOGIN_FIELDS_NOT_FOUND", "LOGIN_BUTTON_NOT_FOUND", "LOGIN_TIMEOUT", "LOGIN_STILL_ON_SAME_PAGE", "PORTAL_CHANGED", "UNKNOWN_LOGIN_ERROR"}:
+            status = "erro_login"
+        elif "browser" in message.lower() or "x server" in message.lower() or "$display" in message.lower():
+            status = "browser_launch_error"
+            clean_message = "Erro ao iniciar navegador de consulta no servidor. Verifique configuracao do Playwright/Chromium em producao."
+            code = code or "BROWSER_LAUNCH_ERROR"
+        elif not code:
+            status = "erro"
+
+        _write_status(session_id, status, clean_message or message, extra)
+        return {
+            "status": status,
+            "session_id": session_id,
+            "code": code,
+            "message": clean_message or message,
+        }
     finally:
         try:
             await connector.close()
@@ -365,7 +716,7 @@ async def query_cpf(payload: dict) -> dict:
     session_id = str(payload.get("session_id") or payload.get("sessionId") or "1")
     cpf = _clean_digits(payload.get("cpf"))
     login = str(payload.get("login") or payload.get("username") or os.getenv("RIBEIRAO_AVERBADOR_LOGIN") or "").strip()
-    password = str(payload.get("password") or os.getenv("RIBEIRAO_AVERBADOR_PASSWORD") or "").strip()
+    password = str(payload.get("password") or os.getenv("RIBEIRAO_AVERBADOR_PASSWORD") or "")
 
     connector = _build_connector(payload, settings)
     if not cpf:
@@ -399,25 +750,33 @@ async def query_cpf(payload: dict) -> dict:
         return {"ok": True, "cpf": cpf, "rawResult": raw, "session_id": session_id}
     except Exception as exc:
         message = str(exc)
+        code, clean_message = _split_typed_login_error(message)
         status = "erro"
-        if "captcha" in message.lower():
+        if code == "MANUAL_AUTH_REQUIRED":
+            status = "aguardando_validacao_manual"
+        elif code == "CAPTCHA_REQUIRED":
             status = "captcha_required"
+        elif code == "LOGIN_REJECTED":
+            status = "login_error"
+        elif code == "LOGIN_OK_NAVIGATION_FAILED":
+            status = "login_error"
+        elif code == "LOGIN_FIELDS_NOT_FOUND" or code == "LOGIN_BUTTON_NOT_FOUND" or code == "LOGIN_TIMEOUT" or code == "LOGIN_STILL_ON_SAME_PAGE" or code == "PORTAL_CHANGED" or code == "UNKNOWN_LOGIN_ERROR":
+            status = "login_error"
         elif "sessao" in message.lower() and "expir" in message.lower():
             status = "session_expired"
-        elif "login" in message.lower():
-            status = "login_error"
         elif "browser" in message.lower() or "x server" in message.lower() or "$display" in message.lower():
             status = "browser_launch_error"
-            message = "Erro ao iniciar navegador de consulta no servidor. Verifique configuracao do Playwright/Chromium em producao."
+            clean_message = "Erro ao iniciar navegador de consulta no servidor. Verifique configuracao do Playwright/Chromium em producao."
+            code = code or "BROWSER_LAUNCH_ERROR"
 
-        _write_status(session_id, status, message)
+        _write_status(session_id, status, clean_message or message, {"error_code": code} if code else None)
         return {
             "ok": False,
             "cpf": cpf,
             "session_id": session_id,
             "status": status,
-            "code": "BROWSER_LAUNCH_ERROR" if status == "browser_launch_error" else None,
-            "message": message,
+            "code": code or ("BROWSER_LAUNCH_ERROR" if status == "browser_launch_error" else None),
+            "message": clean_message or message,
         }
     finally:
         try:

@@ -699,7 +699,7 @@ app.post('/api/ribeirao/session/start', requirePrivilegedRole, async (req, res) 
     if (isError) {
       return res.status(400).json({
         success: false,
-        code: String(sessionStatus || 'ERROR').toUpperCase(),
+        code: String(session?.error_code || sessionStatus || 'ERROR').toUpperCase(),
         message:
           session?.message ||
           session?.error_message ||
@@ -777,6 +777,33 @@ app.post('/api/ribeirao/query', requirePrivilegedRole, async (req, res) => {
       clientId,
       baseId,
     });
+
+    if (result?.ok === false) {
+      const errorCode = String(result?.code || result?.status || 'ERROR').toUpperCase();
+      const statusMap = {
+        NO_ACTIVE_SESSION: 400,
+        MANUAL_AUTH_REQUIRED: 409,
+        CAPTCHA_REQUIRED: 409,
+        LOGIN_ERROR: 401,
+        LOGIN_REJECTED: 401,
+        LOGIN_FIELDS_NOT_FOUND: 400,
+        LOGIN_BUTTON_NOT_FOUND: 400,
+        LOGIN_TIMEOUT: 408,
+        LOGIN_STILL_ON_SAME_PAGE: 400,
+        PORTAL_CHANGED: 400,
+        LOGIN_OK_NAVIGATION_FAILED: 400,
+        SESSION_EXPIRED: 409,
+        PORTAL_UNAVAILABLE: 503,
+        INVALID_CPF: 400,
+      };
+      return res.status(statusMap[errorCode] || 400).json({
+        success: false,
+        code: errorCode,
+        message: result?.message || 'Falha ao consultar margem no Ribeirao.',
+        session_id: result?.session_id || sessionId,
+        cpf: result?.cpf || cpf,
+      });
+    }
 
     return res.json(result);
   } catch (error) {

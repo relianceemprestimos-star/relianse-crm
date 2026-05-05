@@ -386,6 +386,7 @@ export interface RibeiraoSession {
   user_id: number;
   status: RibeiraoSessionStatus;
   message?: string;
+  error_code?: string | null;
   started_at?: string;
   finished_at?: string | null;
   created_at?: string;

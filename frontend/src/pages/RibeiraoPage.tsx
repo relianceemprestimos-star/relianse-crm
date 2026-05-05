@@ -293,8 +293,12 @@ export default function RibeiraoPage() {
         nextSession?.status === 'conectando'
       ) {
         toast(response.message || 'Aguardando autenticação manual no navegador aberto.');
-      } else if (nextSession?.status === 'erro_login' || nextSession?.status === 'login_error') {
-        toast.error('O portal recusou o login/senha informados.');
+      } else if (
+        nextSession?.status === 'erro_login' ||
+        nextSession?.status === 'login_error' ||
+        nextSession?.error_code
+      ) {
+        toast.error(getSessionDisplayMessage(nextSession));
       } else if (nextSession?.status === 'sessao_expirada' || nextSession?.status === 'expired') {
         toast.error('A sessão expirou. Inicie novamente.');
       } else {
@@ -1419,13 +1423,33 @@ function getSessionBlockingMessage(session?: RibeiraoSession | null) {
   if (!session?.id) {
     return 'Nenhuma sessão ativa com o portal da Prefeitura. Inicie a sessão antes de consultar.';
   }
+  const errorCode = String(session.error_code || '').toUpperCase();
   if (session.status === 'conectando') {
     return 'A sessão ainda está conectando ao portal. Aguarde a autenticação manual e clique em Atualizar status.';
   }
   if (session.status === 'aguardando_captcha_manual' || session.status === 'aguardando_validacao_manual' || session.status === 'captcha_required') {
     return 'O portal solicitou validação manual. Resolva no navegador aberto e clique em Atualizar status.';
   }
-  if (session.status === 'erro_login' || session.status === 'login_error') {
+  if (['LOGIN_FIELDS_NOT_FOUND', 'LOGIN_BUTTON_NOT_FOUND'].includes(errorCode)) {
+    return errorCode === 'LOGIN_FIELDS_NOT_FOUND'
+      ? 'O sistema não encontrou os campos de login do portal. O layout pode ter mudado.'
+      : 'O sistema não encontrou o botão de login do portal.';
+  }
+  if (['LOGIN_TIMEOUT', 'LOGIN_STILL_ON_SAME_PAGE'].includes(errorCode)) {
+    return errorCode === 'LOGIN_TIMEOUT'
+      ? 'O portal não respondeu após tentar login.'
+      : 'O portal permaneceu na tela de login sem confirmar autenticação.';
+  }
+  if (['PORTAL_CHANGED', 'LOGIN_OK_NAVIGATION_FAILED', 'LOGIN_REJECTED', 'UNKNOWN_LOGIN_ERROR'].includes(errorCode) || session.status === 'erro_login' || session.status === 'login_error') {
+    if (errorCode === 'LOGIN_OK_NAVIGATION_FAILED') {
+      return 'Login aceito, mas não foi possível abrir Consulta de Margem.';
+    }
+    if (errorCode === 'PORTAL_CHANGED') {
+      return 'O layout do portal mudou e o fluxo de login não foi reconhecido.';
+    }
+    if (errorCode === 'LOGIN_REJECTED') {
+      return 'O portal recusou o login/senha informados.';
+    }
     return 'Login ou senha do averbador inválidos.';
   }
   if (session.status === 'sessao_expirada' || session.status === 'expired') {
@@ -1444,6 +1468,7 @@ function getSessionDisplayMessage(session?: RibeiraoSession | null) {
 
   const status = String(session.status || '').toLowerCase();
   const message = String(session.message || '').trim();
+  const errorCode = String(session.error_code || '').toUpperCase();
 
   if (status === 'conectado') {
     return !isTechnicalBrowserMessage(message) && message ? message : 'Sessão conectada com sucesso.';
@@ -1454,7 +1479,25 @@ function getSessionDisplayMessage(session?: RibeiraoSession | null) {
   if (status === 'aguardando_captcha_manual' || status === 'aguardando_validacao_manual' || status === 'captcha_required') {
     return 'O portal solicitou validação manual. Resolva no navegador aberto e clique em Atualizar status.';
   }
-  if (status === 'erro_login' || status === 'login_error') {
+  if (errorCode === 'LOGIN_FIELDS_NOT_FOUND') {
+    return 'O sistema não encontrou os campos de login do portal. O layout pode ter mudado.';
+  }
+  if (errorCode === 'LOGIN_BUTTON_NOT_FOUND') {
+    return 'O sistema não encontrou o botão de login do portal.';
+  }
+  if (errorCode === 'LOGIN_TIMEOUT') {
+    return 'O portal não respondeu após tentar login.';
+  }
+  if (errorCode === 'LOGIN_STILL_ON_SAME_PAGE') {
+    return 'O portal permaneceu na tela de login sem confirmar autenticação.';
+  }
+  if (errorCode === 'LOGIN_OK_NAVIGATION_FAILED') {
+    return 'Login aceito, mas não foi possível abrir Consulta de Margem.';
+  }
+  if (errorCode === 'PORTAL_CHANGED') {
+    return 'O layout do portal mudou e o fluxo de login não foi reconhecido.';
+  }
+  if (errorCode === 'LOGIN_REJECTED' || status === 'erro_login' || status === 'login_error') {
     return 'O portal recusou o login/senha informados.';
   }
   if (status === 'sessao_expirada' || status === 'expired') {
@@ -1493,8 +1536,26 @@ function getFriendlyRibeiraoError(error: unknown, fallback: string) {
   if (code === 'BROWSER_LAUNCH_ERROR') {
     return 'Erro ao iniciar navegador de consulta no servidor. Verifique configuração do Playwright em produção.';
   }
-  if (code === 'LOGIN_ERROR') {
+  if (code === 'LOGIN_ERROR' || code === 'LOGIN_REJECTED') {
     return 'O portal recusou o login/senha informados.';
+  }
+  if (code === 'LOGIN_FIELDS_NOT_FOUND') {
+    return 'O sistema não encontrou os campos de login do portal. O layout pode ter mudado.';
+  }
+  if (code === 'LOGIN_BUTTON_NOT_FOUND') {
+    return 'O sistema não encontrou o botão de login do portal.';
+  }
+  if (code === 'LOGIN_TIMEOUT') {
+    return 'O portal não respondeu após tentar login.';
+  }
+  if (code === 'LOGIN_STILL_ON_SAME_PAGE') {
+    return 'O portal permaneceu na tela de login sem confirmar autenticação.';
+  }
+  if (code === 'PORTAL_CHANGED') {
+    return 'O layout do portal mudou e o fluxo de login não foi reconhecido.';
+  }
+  if (code === 'LOGIN_OK_NAVIGATION_FAILED') {
+    return 'Login aceito, mas não foi possível abrir Consulta de Margem.';
   }
   if (code === 'CAPTCHA_REQUIRED' || code === 'MANUAL_AUTH_REQUIRED') {
     return 'O portal solicitou validação manual.';
