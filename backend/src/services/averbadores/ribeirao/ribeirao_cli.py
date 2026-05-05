@@ -748,6 +748,39 @@ async def _click_login_initial_button(connector: PortalSecundarioLegacyConnector
         except Exception:
             return False
 
+    async def _submit_form(scope) -> bool:
+        try:
+            return bool(
+                await scope.evaluate(
+                    """() => {
+                        const form = document.querySelector('form');
+                        if (form) {
+                            form.submit();
+                            return true;
+                        }
+                        return false;
+                    }"""
+                )
+            )
+        except Exception:
+            return False
+
+    async def _do_postback(scope) -> bool:
+        try:
+            return bool(
+                await scope.evaluate(
+                    """() => {
+                        if (typeof __doPostBack === 'function') {
+                            __doPostBack('Entrar', '');
+                            return true;
+                        }
+                        return false;
+                    }"""
+                )
+            )
+        except Exception:
+            return False
+
     for selector in candidate_selectors:
         for scope_index, scope in scopes:
             ok_normal = await _click_scope(scope, selector, 'click')
@@ -777,6 +810,34 @@ async def _click_login_initial_button(connector: PortalSecundarioLegacyConnector
                 print(f"[LOGIN_FLOW] tentou click JS: true", file=sys.stderr, flush=True)
                 print(f"[LOGIN_FLOW] tentou Enter: false", file=sys.stderr, flush=True)
                 return True, selector, {**debug, "attempts": attempts, "chosenButton": chosen_button, "chosenSelector": chosen_selector, "chosenMethod": "js", "chosenButtonInfo": chosen_button_info}
+
+    for scope_index, scope in scopes:
+        ok_postback = await _do_postback(scope)
+        attempts.append({"selector": "#Entrar", "scope": scope_index, "method": "do_postback", "ok": ok_postback})
+        if ok_postback:
+            chosen_button = "#Entrar"
+            chosen_selector = "#Entrar"
+            chosen_button_info = _button_info_for_selector("#Entrar")
+            scope_label = 'page' if scope_index == 0 else f'frame-{scope_index}'
+            print(f"[LOGIN_FLOW] botao clicado: __doPostBack(Entrar) ({scope_label})", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] tentou click normal: false", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] tentou click JS: false", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] tentou Enter: false", file=sys.stderr, flush=True)
+            return True, '#Entrar', {**debug, "attempts": attempts, "chosenButton": chosen_button, "chosenSelector": chosen_selector, "chosenMethod": "do_postback", "chosenButtonInfo": chosen_button_info}
+
+    for scope_index, scope in scopes:
+        ok_submit = await _submit_form(scope)
+        attempts.append({"selector": "form", "scope": scope_index, "method": "form_submit", "ok": ok_submit})
+        if ok_submit:
+            chosen_button = "#Entrar"
+            chosen_selector = "#Entrar"
+            chosen_button_info = _button_info_for_selector("#Entrar")
+            scope_label = 'page' if scope_index == 0 else f'frame-{scope_index}'
+            print(f"[LOGIN_FLOW] botao clicado: form.submit() ({scope_label})", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] tentou click normal: false", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] tentou click JS: false", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] tentou Enter: false", file=sys.stderr, flush=True)
+            return True, '#Entrar', {**debug, "attempts": attempts, "chosenButton": chosen_button, "chosenSelector": chosen_selector, "chosenMethod": "form_submit", "chosenButtonInfo": chosen_button_info}
 
     for scope_index, scope in scopes:
         try:
@@ -1100,8 +1161,8 @@ async def _retry_login_post_click(
         ("locator_click", "click"),
         ("page_click_force", "page_click_force"),
         ("js_click", "js_click"),
-        ("form_submit", "form_submit"),
         ("do_postback", "do_postback"),
+        ("form_submit", "form_submit"),
         ("enter", "enter"),
     ]
     preferred_info = dict((button_debug or {}).get("chosenButtonInfo") or {})
@@ -1892,6 +1953,8 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
             snapshot = await _capture_login_snapshot(connector)
             _log_login_snapshot(snapshot, login, password, "senha-preenchida-segunda-etapa")
             _log_login_flow(snapshot, "senha-preenchida-segunda-etapa", login, password, final_code="PENDING")
+            print(f"[LOGIN_FLOW] url antes senha: {snapshot.get('url') or ''}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] password_submit_method: pending", file=sys.stderr, flush=True)
 
             try:
                 clicked_password, clicked_selector, click_debug = await _click_login_initial_button(connector)
@@ -1902,6 +1965,7 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
 
             handled_password_stage = True
             print(f"[LOGIN_FLOW] clique de senha executado: {clicked_selector or 'Enter'}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] password_submit_method: {str((click_debug or {}).get('chosenMethod') or clicked_selector or '').strip()}", file=sys.stderr, flush=True)
             print(f"[LOGIN_FLOW] botao escolhido: {json.dumps((click_debug or {}).get('chosenButtonInfo') or {}, ensure_ascii=False)}", file=sys.stderr, flush=True)
             print(f"[LOGIN_FLOW] tentou click normal: {str((click_debug or {}).get('chosenMethod') in {'click', 'click-fallback'}).lower()}", file=sys.stderr, flush=True)
             print(f"[LOGIN_FLOW] tentou click JS: {str((click_debug or {}).get('chosenMethod') == 'js').lower()}", file=sys.stderr, flush=True)
@@ -1912,6 +1976,9 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
             _log_login_flow(snapshot, "apos-segunda-etapa", login, password, click_executed=True, final_code="PENDING", certificate_alert=bool(dialog_messages))
             print(f"[LOGIN_FLOW] current_url depois: {snapshot.get('url') or ''}", file=sys.stderr, flush=True)
             print(f"[LOGIN_FLOW] body_text_sample depois: {snapshot.get('bodySnippet') or ''}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] mensagemLabel depois senha: {(last_modal or {}).get('messageLabelText') or ''}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] popupText depois senha: {(last_modal or {}).get('popupText') or ''}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] botao OK popup visivel: {bool((last_modal or {}).get('popupOkFound'))}", file=sys.stderr, flush=True)
             print(f"[LOGIN_FLOW] senha encontrada depois: {bool(snapshot.get('passwordFound'))}", file=sys.stderr, flush=True)
             print(f"[LOGIN_FLOW] certificado encontrado depois: {bool(snapshot.get('certificateFound'))}", file=sys.stderr, flush=True)
             print(f"[LOGIN_FLOW] mensagens do portal depois do clique: {snapshot.get('errorText') or ''}", file=sys.stderr, flush=True)
@@ -1980,6 +2047,9 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
             _log_login_flow(snapshot, "apos-segundo-clique", login, password, click_executed=True, final_code="PENDING", certificate_alert=bool(dialog_messages))
             print(f"[LOGIN_FLOW] current_url depois: {snapshot.get('url') or ''}", file=sys.stderr, flush=True)
             print(f"[LOGIN_FLOW] body_text_sample depois: {snapshot.get('bodySnippet') or ''}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] mensagemLabel depois senha: {(last_modal or {}).get('messageLabelText') or ''}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] popupText depois senha: {(last_modal or {}).get('popupText') or ''}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] botao OK popup visivel: {bool((last_modal or {}).get('popupOkFound'))}", file=sys.stderr, flush=True)
             print(f"[LOGIN_FLOW] senha encontrada depois: {bool(snapshot.get('passwordFound'))}", file=sys.stderr, flush=True)
             print(f"[LOGIN_FLOW] certificado encontrado depois: {bool(snapshot.get('certificateFound'))}", file=sys.stderr, flush=True)
             print(f"[LOGIN_FLOW] mensagens do portal depois do clique: {snapshot.get('errorText') or ''}", file=sys.stderr, flush=True)
