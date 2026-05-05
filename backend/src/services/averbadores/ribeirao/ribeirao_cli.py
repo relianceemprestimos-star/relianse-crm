@@ -7,6 +7,7 @@ import re
 import socket
 import sys
 import traceback
+import unicodedata
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -151,6 +152,9 @@ LOGIN_ERROR_CODES = {
     "LOGIN_STILL_ON_SAME_PAGE",
     "CAPTCHA_REQUIRED",
     "PORTAL_CHANGED",
+    "CONVENIO_ACTION_NOT_FOUND",
+    "CONVENIO_SELECTION_FAILED",
+    "CONVENIO_NOT_FOUND",
     "UNKNOWN_LOGIN_ERROR",
     "LOGIN_OK_NAVIGATION_FAILED",
     "MANUAL_AUTH_REQUIRED",
@@ -160,6 +164,22 @@ LOGIN_ERROR_CODES = {
     "WORKER_INTERNAL_ERROR",
     "USER_ALREADY_LOGGED_CONFIRM_FAILED",
 }
+
+
+def _normalize_ribeirao_text(value: object) -> str:
+    text = unicodedata.normalize("NFD", str(value or ""))
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
+def _convenio_target_terms() -> list[str]:
+    return [
+        _normalize_ribeirao_text("PREFEITURA RIBEIRAO PRETO SP - RIBEIRAO PRETO"),
+        _normalize_ribeirao_text("PREFEITURA RIBEIRAO PRETO"),
+        _normalize_ribeirao_text("RIBEIRAO PRETO"),
+        _normalize_ribeirao_text("RIBEIRAO PRETO SP"),
+        _normalize_ribeirao_text("PREFEITURA DE RIBEIRAO PRETO"),
+    ]
 
 
 def _typed_login_error(code: str, message: str, stage: str | None = None) -> RibeiraoLoginError:
@@ -1149,6 +1169,551 @@ async def _capture_second_stage_login_debug(connector: PortalSecundarioLegacyCon
     return aggregate
 
 
+async def _capture_convenio_selection_debug(connector: PortalSecundarioLegacyConnector) -> dict:
+    target_terms = _convenio_target_terms()
+    aggregate = {
+        "selectionDetected": False,
+        "url": "",
+        "title": "",
+        "bodySnippet": "",
+        "bodyNormalized": "",
+        "inputCount": 0,
+        "inputs": [],
+        "buttons": [],
+        "links": [],
+        "tables": [],
+        "rows": [],
+        "rowCount": 0,
+        "targetFound": False,
+        "actionFound": False,
+        "singleConvenio": False,
+        "multipleConvenios": False,
+        "selectedRow": None,
+        "selectedAction": None,
+    }
+
+    for scope_index, scope in enumerate(_login_scopes(connector)):
+        try:
+            scope_data = await scope.evaluate(
+                """({ targetTerms }) => {
+                    const normalize = (value) => String(value || "")
+                      .normalize("NFD")
+                      .replace(/[\\u0300-\\u036f]/g, "")
+                      .replace(/\\s+/g, " ")
+                      .trim()
+                      .toLowerCase();
+                    const isVisible = (el) => {
+                      if (!el) return false;
+                      const style = window.getComputedStyle(el);
+                      if (!style) return false;
+                      const rect = el.getBoundingClientRect();
+                      return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
+                    };
+                    const textOf = (el) => String(el?.textContent || el?.value || "").replace(/\\s+/g, " ").trim();
+                    const q = (text) => String(text || "").replace(/\\\\/g, "\\\\\\\\").replace(/'/g, "\\\\'");
+                    const matchesTarget = (text) => {
+                      const hay = normalize(text);
+                      return (targetTerms || []).some((term) => term && hay.includes(normalize(term)));
+                    };
+                    const summarizeElement = (el) => {
+                      const tag = String(el.tagName || "").toLowerCase();
+                      const textContent = textOf(el);
+                      const onclick = String(el.getAttribute("onclick") || "");
+                      const postbackMatch = onclick.match(/__doPostBack\\(['\"]([^'\"]*)['\"],['\"]([^'\"]*)['\"]\\)/i);
+                      const selectorHints = [];
+                      const domSelectors = [];
+                      if (el.id) {
+                        selectorHints.push(`#${q(el.id)}`);
+                        domSelectors.push(`#${q(el.id)}`);
+                      }
+                      if (el.name) {
+                        const byName = `${tag}[name='${q(el.name)}']`;
+                        selectorHints.push(byName);
+                        domSelectors.push(byName);
+                      }
+                      if (tag === "input" && el.value) {
+                        const byValue = `input[value='${q(el.value)}']`;
+                        selectorHints.push(byValue);
+                        domSelectors.push(byValue);
+                      }
+                      if (tag === "a" && el.href) {
+                        const byHref = `a[href='${q(el.href)}']`;
+                        selectorHints.push(byHref);
+                        domSelectors.push(byHref);
+                      }
+                      if (tag === "img") {
+                        const alt = String(el.getAttribute("alt") || "").trim();
+                        const title = String(el.getAttribute("title") || "").trim();
+                        if (alt) {
+                          const byAlt = `img[alt='${q(alt)}']`;
+                          selectorHints.push(byAlt);
+                          domSelectors.push(byAlt);
+                        }
+                        if (title) {
+                          const byTitle = `img[title='${q(title)}']`;
+                          selectorHints.push(byTitle);
+                          domSelectors.push(byTitle);
+                        }
+                      }
+                      if (tag === "button" && textContent) {
+                        selectorHints.push(`button:has-text('${q(textContent)}')`);
+                      }
+                      if (tag === "a" && textContent) {
+                        selectorHints.push(`a:has-text('${q(textContent)}')`);
+                      }
+                      return {
+                        tag,
+                        id: String(el.id || ""),
+                        name: String(el.name || ""),
+                        type: String(el.type || ""),
+                        value: String(el.value || ""),
+                        textContent,
+                        className: String(el.className || ""),
+                        href: String(el.href || ""),
+                        onclick,
+                        postbackTarget: postbackMatch ? String(postbackMatch[1] || "") : "",
+                        postbackArg: postbackMatch ? String(postbackMatch[2] || "") : "",
+                        selectorHints: Array.from(new Set(selectorHints)).slice(0, 12),
+                        domSelectors: Array.from(new Set(domSelectors)).slice(0, 12),
+                      };
+                    };
+                    const collect = (root) => {
+                      const inputList = Array.from(root.querySelectorAll("input"))
+                        .filter((el) => isVisible(el))
+                        .map((el) => ({
+                          tag: String(el.tagName || "").toLowerCase(),
+                          id: String(el.id || ""),
+                          name: String(el.name || ""),
+                          type: String(el.type || ""),
+                          placeholder: String(el.getAttribute("placeholder") || ""),
+                          value: String(el.value || ""),
+                          textContent: textOf(el),
+                          className: String(el.className || ""),
+                        }));
+                      const buttonList = Array.from(root.querySelectorAll("button,input[type='submit'],input[type='button'],a"))
+                        .filter((el) => isVisible(el))
+                        .map((el) => ({
+                          tag: String(el.tagName || "").toLowerCase(),
+                          id: String(el.id || ""),
+                          name: String(el.name || ""),
+                          type: String(el.type || ""),
+                          value: String(el.value || ""),
+                          textContent: textOf(el),
+                          className: String(el.className || ""),
+                          href: String(el.href || ""),
+                          onclick: String(el.getAttribute("onclick") || ""),
+                        }));
+                      const linkList = Array.from(root.querySelectorAll("a"))
+                        .filter((el) => isVisible(el))
+                        .map((el) => ({
+                          href: String(el.href || ""),
+                          id: String(el.id || ""),
+                          name: String(el.name || ""),
+                          textContent: textOf(el),
+                          className: String(el.className || ""),
+                        }));
+                      const tables = [];
+                      const rows = [];
+                      let totalRows = 0;
+                      const tableList = Array.from(root.querySelectorAll("table")).filter((el) => isVisible(el));
+                      tableList.forEach((table, tableIndex) => {
+                        const headerCells = Array.from(table.querySelectorAll("th"))
+                          .filter((el) => isVisible(el))
+                          .map(textOf)
+                          .filter(Boolean);
+                        const tableRows = Array.from(table.querySelectorAll("tr")).filter((el) => isVisible(el));
+                        const rowSummaries = [];
+                        const headerIndex = headerCells.findIndex((text) => normalize(text).includes("acao"));
+                        tableRows.forEach((row, rowIndex) => {
+                          const cells = Array.from(row.querySelectorAll("th,td")).filter((el) => isVisible(el));
+                          const cellTexts = cells.map(textOf);
+                          const rowText = cellTexts.join(" | ").replace(/\\s+/g, " ").trim();
+                          const rowTextNormalized = normalize(rowText);
+                          if (!rowTextNormalized) {
+                            return;
+                          }
+                          const targetMatch = matchesTarget(rowText);
+                          const actionCellIndex = headerIndex >= 0 ? headerIndex : Math.max(cells.length - 1, 0);
+                          const actionCell = cells[actionCellIndex] || cells[cells.length - 1] || null;
+                          const actionNodes = actionCell
+                            ? Array.from(actionCell.querySelectorAll("a,button,input[type='submit'],input[type='button'],input[type='image'],img,[onclick]"))
+                                .filter((el) => isVisible(el))
+                            : [];
+                          if (actionCell && isVisible(actionCell) && String(actionCell.getAttribute("onclick") || "").trim()) {
+                            actionNodes.unshift(actionCell);
+                          }
+                          const actionCandidates = actionNodes.map(summarizeElement).slice(0, 8);
+                          const actionFound = Boolean(actionCandidates.length);
+                          const rowInfo = {
+                            tableIndex,
+                            rowIndex,
+                            rowText,
+                            rowTextNormalized,
+                            targetMatch,
+                            actionFound,
+                            actionCellIndex,
+                            cells: cellTexts.slice(0, 12),
+                            actionCandidates,
+                          };
+                          rowSummaries.push(rowInfo);
+                          rows.push(rowInfo);
+                        });
+                        tables.push({
+                          tableIndex,
+                          headers: headerCells.slice(0, 12),
+                          rowCount: rowSummaries.length,
+                          cellCount: rowSummaries.reduce((acc, item) => acc + (item.cells ? item.cells.length : 0), 0),
+                          rows: rowSummaries.slice(0, 12),
+                        });
+                      });
+                      const targetRows = rows.filter((row) => row.targetMatch);
+                      let selectedRow = null;
+                      if (targetRows.length) {
+                        selectedRow = targetRows[0];
+                      } else if (rows.length === 1) {
+                        selectedRow = rows[0];
+                      }
+                      const selectedAction = selectedRow && selectedRow.actionCandidates && selectedRow.actionCandidates.length
+                        ? selectedRow.actionCandidates[0]
+                        : null;
+                      return {
+                        selectionDetected: /selecione o convenio|selecione o convênio|convenio sigla acao|convênio sigla ação/i.test(String(root.body?.innerText || root.body?.textContent || "")) || /loginselecao\\.aspx/i.test(String(location.href || "")),
+                        url: String(location.href || ""),
+                        title: String(document.title || ""),
+                        bodySnippet: String(root.body?.innerText || root.body?.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 500),
+                        bodyNormalized: normalize(String(root.body?.innerText || root.body?.textContent || "")).slice(0, 500),
+                        inputCount: inputList.length,
+                        inputs: inputList.slice(0, 30),
+                        buttons: buttonList.slice(0, 30),
+                        links: linkList.slice(0, 30),
+                        tables,
+                        rows: rows.slice(0, 60),
+                        rowCount: rows.length,
+                        targetFound: Boolean(targetRows.length),
+                        actionFound: Boolean(selectedAction),
+                        singleConvenio: rows.length === 1,
+                        multipleConvenios: rows.length > 1,
+                        selectedRow,
+                        selectedAction,
+                        targetCount: targetRows.length,
+                      };
+                    };
+                    return collect(document);
+                }""",
+                {"targetTerms": target_terms},
+            )
+        except Exception as exc:
+            scope_data = {
+                "selectionDetected": False,
+                "url": getattr(scope, "url", ""),
+                "title": "",
+                "bodySnippet": "",
+                "bodyNormalized": "",
+                "inputCount": 0,
+                "inputs": [],
+                "buttons": [],
+                "links": [],
+                "tables": [],
+                "rows": [],
+                "rowCount": 0,
+                "targetFound": False,
+                "actionFound": False,
+                "singleConvenio": False,
+                "multipleConvenios": False,
+                "selectedRow": None,
+                "selectedAction": None,
+                "targetCount": 0,
+                "error": str(exc),
+            }
+        scope_data["scopeIndex"] = scope_index
+        aggregate["url"] = aggregate["url"] or str(scope_data.get("url") or "")
+        aggregate["title"] = aggregate["title"] or str(scope_data.get("title") or "")
+        aggregate["bodySnippet"] = aggregate["bodySnippet"] or str(scope_data.get("bodySnippet") or "")
+        aggregate["bodyNormalized"] = aggregate["bodyNormalized"] or str(scope_data.get("bodyNormalized") or "")
+        aggregate["selectionDetected"] = bool(aggregate["selectionDetected"] or scope_data.get("selectionDetected"))
+        aggregate["inputCount"] += int(scope_data.get("inputCount") or 0)
+        aggregate["inputs"].extend(list(scope_data.get("inputs") or []))
+        aggregate["buttons"].extend(list(scope_data.get("buttons") or []))
+        aggregate["links"].extend(list(scope_data.get("links") or []))
+        aggregate["tables"].extend(list(scope_data.get("tables") or []))
+        scoped_rows = []
+        for row in list(scope_data.get("rows") or []):
+            row_copy = dict(row or {})
+            row_copy["scopeIndex"] = scope_index
+            scoped_rows.append(row_copy)
+        aggregate["rows"].extend(scoped_rows)
+        aggregate["rowCount"] += int(scope_data.get("rowCount") or 0)
+        aggregate["targetFound"] = bool(aggregate["targetFound"] or scope_data.get("targetFound"))
+        aggregate["actionFound"] = bool(aggregate["actionFound"] or scope_data.get("actionFound"))
+        aggregate["singleConvenio"] = bool(aggregate["singleConvenio"] or scope_data.get("singleConvenio"))
+        aggregate["multipleConvenios"] = bool(aggregate["multipleConvenios"] or scope_data.get("multipleConvenios"))
+        if not aggregate["selectedRow"] and scope_data.get("selectedRow"):
+            selected_row = dict(scope_data.get("selectedRow") or {})
+            selected_row["scopeIndex"] = scope_index
+            aggregate["selectedRow"] = selected_row
+        if not aggregate["selectedAction"] and scope_data.get("selectedAction"):
+            selected_action = dict(scope_data.get("selectedAction") or {})
+            selected_action["scopeIndex"] = scope_index
+            aggregate["selectedAction"] = selected_action
+
+    return aggregate
+
+
+async def _click_convenio_action(
+    connector: PortalSecundarioLegacyConnector,
+    selection_debug: dict,
+    timeout_ms: int,
+) -> tuple[bool, str, dict]:
+    selected_row = dict(selection_debug.get("selectedRow") or {})
+    selected_action = dict(selection_debug.get("selectedAction") or {})
+    selected_scope_index = int(selected_row.get("scopeIndex") or selected_action.get("scopeIndex") or 0)
+    scopes = list(_login_scopes(connector))
+    ordered_scopes = scopes[selected_scope_index:] + scopes[:selected_scope_index] if scopes else []
+    if not ordered_scopes:
+        ordered_scopes = scopes
+
+    selector_hints = list(selected_action.get("selectorHints") or [])
+    dom_selectors = list(selected_action.get("domSelectors") or [])
+    postback_target = str(selected_action.get("postbackTarget") or "").strip()
+    postback_arg = str(selected_action.get("postbackArg") or "").strip()
+    row_text = str(selected_row.get("rowText") or "").strip()
+    action_text = str(selected_action.get("textContent") or "").strip()
+
+    async def _click_by_selector(scope, selector: str, *, force: bool = False, js: bool = False) -> bool:
+        if not selector:
+            return False
+        try:
+            if js:
+                if selector.startswith("button:has-text(") or selector.startswith("a:has-text("):
+                    return False
+                return bool(
+                    await scope.evaluate(
+                        """(selector) => {
+                            try {
+                                const el = document.querySelector(selector);
+                                if (!el) return false;
+                                el.click();
+                                return true;
+                            } catch (_) {
+                                return false;
+                            }
+                        }""",
+                        selector,
+                    )
+                )
+            await scope.locator(selector).first.click(timeout=timeout_ms, force=force)
+            return True
+        except Exception:
+            return False
+
+    async def _click_row(scope) -> bool:
+        try:
+            return bool(
+                await scope.evaluate(
+                    """({ rowText, actionText, postbackTarget, postbackArg, targetTerms }) => {
+                        const normalize = (value) => String(value || "")
+                          .normalize("NFD")
+                          .replace(/[\\u0300-\\u036f]/g, "")
+                          .replace(/\\s+/g, " ")
+                          .trim()
+                          .toLowerCase();
+                        const wantedRow = normalize(rowText);
+                        const wantedAction = normalize(actionText);
+                        const terms = (targetTerms || []).map((term) => normalize(term)).filter(Boolean);
+                        const isVisible = (el) => {
+                          if (!el) return false;
+                          const style = window.getComputedStyle(el);
+                          if (!style) return false;
+                          const rect = el.getBoundingClientRect();
+                          return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
+                        };
+                        const rows = Array.from(document.querySelectorAll("table tr")).filter((el) => isVisible(el));
+                        const matchRow = rows.find((row) => {
+                          const rowTextNow = normalize(String(row.innerText || row.textContent || ""));
+                          if (wantedRow && rowTextNow.includes(wantedRow)) return true;
+                          return terms.some((term) => term && rowTextNow.includes(term));
+                        });
+                        if (!matchRow) return false;
+                        const actionNodes = Array.from(matchRow.querySelectorAll("a,button,input[type='submit'],input[type='button'],input[type='image'],img,[onclick]")).filter((el) => isVisible(el));
+                        let chosen = actionNodes.find((el) => wantedAction && normalize(String(el.innerText || el.textContent || el.value || "")).includes(wantedAction)) || actionNodes[0] || null;
+                        if (!chosen) {
+                          chosen = matchRow;
+                        }
+                        const onclick = String(chosen.getAttribute ? chosen.getAttribute("onclick") || "" : "");
+                        if (postbackTarget && typeof __doPostBack === "function") {
+                          __doPostBack(postbackTarget, postbackArg || "");
+                          return true;
+                        }
+                        try {
+                          chosen.click();
+                          return true;
+                        } catch (_) {
+                          try {
+                            matchRow.click();
+                            return true;
+                          } catch (_) {
+                            return false;
+                          }
+                        }
+                    }""",
+                    {
+                        "rowText": row_text,
+                        "actionText": action_text,
+                        "postbackTarget": postback_target,
+                        "postbackArg": postback_arg,
+                        "targetTerms": _convenio_target_terms(),
+                    },
+                )
+            )
+        except Exception:
+            return False
+
+    async def _do_postback(scope) -> bool:
+        if not postback_target:
+            return False
+        try:
+            return bool(
+                await scope.evaluate(
+                    """({ postbackTarget, postbackArg }) => {
+                        try {
+                            if (typeof __doPostBack === "function") {
+                                __doPostBack(postbackTarget, postbackArg || "");
+                                return true;
+                            }
+                        } catch (_) {}
+                        return false;
+                    }""",
+                    {"postbackTarget": postback_target, "postbackArg": postback_arg},
+                )
+            )
+        except Exception:
+            return False
+
+    methods = [
+        ("locator_click", False, False),
+        ("page_click_force", True, False),
+        ("js_click", False, True),
+        ("do_postback", False, False),
+        ("row_click_js", False, False),
+    ]
+
+    for scope_index, scope in enumerate(ordered_scopes or scopes):
+        scope_label = "page" if scope_index == 0 else f"frame-{scope_index}"
+        for selector in selector_hints:
+            print(f"[LOGIN_FLOW] convenio action candidate: {selector} ({scope_label})", file=sys.stderr, flush=True)
+        for method_name, force_click, js_click in methods:
+            print(f"[LOGIN_FLOW] convenio clique tentativa: {method_name} ({scope_label})", file=sys.stderr, flush=True)
+            action_ok = False
+            if method_name == "do_postback":
+                action_ok = await _do_postback(scope)
+            elif method_name == "row_click_js":
+                action_ok = await _click_row(scope)
+            else:
+                for selector in selector_hints or dom_selectors:
+                    action_ok = await _click_by_selector(scope, selector, force=force_click, js=js_click)
+                    if action_ok:
+                        break
+            print(f"[LOGIN_FLOW] convenio clique executado metodo={method_name}: {str(action_ok).lower()}", file=sys.stderr, flush=True)
+            if action_ok:
+                return True, method_name, {"scopeIndex": scope_index, "selectorHints": selector_hints, "domSelectors": dom_selectors, "postbackTarget": postback_target, "postbackArg": postback_arg}
+
+    return False, "", {"scopeIndex": selected_scope_index, "selectorHints": selector_hints, "domSelectors": dom_selectors, "postbackTarget": postback_target, "postbackArg": postback_arg}
+
+
+async def _handle_convenio_selection(
+    connector: PortalSecundarioLegacyConnector,
+    login: str,
+    password: str,
+    timeout_ms: int,
+    snapshot: dict,
+) -> tuple[dict, dict, bool]:
+    selection_debug = await _capture_convenio_selection_debug(connector)
+    if not selection_debug.get("selectionDetected"):
+        return snapshot, selection_debug, False
+
+    print(f"[LOGIN_FLOW] selecao_convenio_detectada: true", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] url selecao convenio: {selection_debug.get('url') or snapshot.get('url') or ''}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] body_text_sample selecao convenio: {selection_debug.get('bodySnippet') or snapshot.get('bodySnippet') or ''}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] inputs selecao convenio: {json.dumps(selection_debug.get('inputs') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] buttons selecao convenio: {json.dumps(selection_debug.get('buttons') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] links selecao convenio: {json.dumps(selection_debug.get('links') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] tabelas selecao convenio: {json.dumps(selection_debug.get('tables') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] convenio alvo encontrado: {str(bool(selection_debug.get('targetFound'))).lower()}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] acao convenio encontrada: {str(bool(selection_debug.get('actionFound'))).lower()}", file=sys.stderr, flush=True)
+
+    selected_row = dict(selection_debug.get("selectedRow") or {})
+    selected_action = dict(selection_debug.get("selectedAction") or {})
+    if not selection_debug.get("targetFound") and not selection_debug.get("singleConvenio"):
+        raise _typed_login_error(
+            "CONVENIO_NOT_FOUND",
+            "O login foi aceito, mas o convenio de Ribeirao Preto nao foi encontrado.",
+            stage="selecionar_convenio",
+        )
+    if not selected_row:
+        raise _typed_login_error(
+            "CONVENIO_ACTION_NOT_FOUND",
+            "O login foi aceito, mas o sistema nao encontrou o botao de acesso do convenio.",
+            stage="selecionar_convenio",
+        )
+    if not selected_action or not selected_action.get("selectorHints") and not selected_action.get("domSelectors") and not selected_action.get("postbackTarget"):
+        raise _typed_login_error(
+            "CONVENIO_ACTION_NOT_FOUND",
+            "O login foi aceito, mas o sistema nao encontrou o botao de acesso do convenio.",
+            stage="selecionar_convenio",
+        )
+
+    print(f"[LOGIN_FLOW] convenio escolhido: {json.dumps(selected_row, ensure_ascii=False)}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] convenio action escolhido: {json.dumps(selected_action, ensure_ascii=False)}", file=sys.stderr, flush=True)
+    if selection_debug.get("singleConvenio"):
+        print("[LOGIN_FLOW] auto_select_first_convenio: true", file=sys.stderr, flush=True)
+
+    clicked, method_name, click_debug = await _click_convenio_action(connector, selection_debug, timeout_ms)
+    print(f"[LOGIN_FLOW] convenio clique metodo final: {method_name or ''}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] convenio clique executado: {str(clicked).lower()}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] convenio click debug: {json.dumps(click_debug or {}, ensure_ascii=False)}", file=sys.stderr, flush=True)
+    if not clicked:
+        raise _typed_login_error(
+            "CONVENIO_SELECTION_FAILED",
+            "O login foi aceito, mas o portal nao avancou apos selecionar o convenio.",
+            stage="selecionar_convenio",
+        )
+
+    await connector.page.wait_for_timeout(2500)
+    post_snapshot = await _capture_login_snapshot(connector)
+    _log_login_snapshot(post_snapshot, login, password, "apos-selecao-convenio")
+    _log_login_flow(post_snapshot, "apos-selecao-convenio", login, password, click_executed=True, final_code="PENDING")
+    print(f"[LOGIN_FLOW] url depois selecao convenio: {post_snapshot.get('url') or ''}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] body_text_sample depois selecao convenio: {post_snapshot.get('bodySnippet') or ''}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] sucesso apos selecao convenio: {str(bool(post_snapshot.get('successFound') or post_snapshot.get('operacionalFound') or post_snapshot.get('consultaMargemFound'))).lower()}", file=sys.stderr, flush=True)
+
+    if post_snapshot.get("successFound") or post_snapshot.get("operacionalFound") or post_snapshot.get("consultaMargemFound"):
+        return post_snapshot, selection_debug, True
+
+    post_url = str(post_snapshot.get("url") or "").lower()
+    post_body = _normalize_ribeirao_text(post_snapshot.get("bodySnippet") or "")
+    if "loginselecao.aspx" in post_url or "selecione o convenio" in post_body or "convênio sigla ação" in post_body:
+        raise _typed_login_error(
+            "CONVENIO_SELECTION_FAILED",
+            "O login foi aceito, mas o portal nao avancou apos selecionar o convenio.",
+            stage="selecionar_convenio",
+        )
+
+    if post_snapshot.get("captchaFound"):
+        raise _typed_login_error("CAPTCHA_REQUIRED", "O portal solicitou validacao manual.", stage="selecionar_convenio")
+    if post_snapshot.get("certificateFound"):
+        raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticacao manual/certificado digital.", stage="selecionar_convenio")
+    if post_snapshot.get("errorText"):
+        code, typed_message = _classify_login_issue(None, post_snapshot.get("errorText") or "", post_snapshot)
+        if code in {"LOGIN_REJECTED", "CAPTCHA_REQUIRED", "MANUAL_AUTH_REQUIRED"}:
+            raise _typed_login_error(code, typed_message, stage="selecionar_convenio")
+
+    raise _typed_login_error(
+        "CONVENIO_SELECTION_FAILED",
+        "O login foi aceito, mas o portal nao avancou apos selecionar o convenio.",
+        stage="selecionar_convenio",
+    )
+
+
 async def _retry_login_post_click(
     connector: PortalSecundarioLegacyConnector,
     login: str,
@@ -1587,6 +2152,12 @@ def _classify_login_issue(code: str | None, message: str, snapshot: dict | None 
             return 'LOGIN_BUTTON_NOT_FOUND', raw_message or 'O sistema n?o encontrou o bot?o de login do portal.'
         if code_upper == 'LOGIN_PASSWORD_FIELD_NOT_FOUND':
             return 'LOGIN_PASSWORD_FIELD_NOT_FOUND', raw_message or 'O sistema chegou na segunda etapa do login, mas n?o encontrou o campo de senha.'
+        if code_upper == 'CONVENIO_ACTION_NOT_FOUND':
+            return 'CONVENIO_ACTION_NOT_FOUND', raw_message or 'O login foi aceito, mas o sistema nao encontrou o botao de acesso do convenio.'
+        if code_upper == 'CONVENIO_SELECTION_FAILED':
+            return 'CONVENIO_SELECTION_FAILED', raw_message or 'O login foi aceito, mas o portal nao avancou apos selecionar o convenio.'
+        if code_upper == 'CONVENIO_NOT_FOUND':
+            return 'CONVENIO_NOT_FOUND', raw_message or 'O login foi aceito, mas o convenio de Ribeirao Preto nao foi encontrado.'
         if code_upper == 'LOGIN_TIMEOUT':
             return 'LOGIN_TIMEOUT', raw_message or 'O portal n?o respondeu ap?s tentar login.'
         if code_upper == 'LOGIN_STILL_ON_SAME_PAGE':
@@ -2061,8 +2632,24 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
             print(f"[LOGIN_FLOW] current_url depois: {snapshot.get('url') or ''}", file=sys.stderr, flush=True)
             print(f"[LOGIN_FLOW] body_text_sample depois: {snapshot.get('bodySnippet') or ''}", file=sys.stderr, flush=True)
             print(f"[LOGIN_FLOW] senha encontrada depois: {bool(snapshot.get('passwordFound'))}", file=sys.stderr, flush=True)
-            print(f"[LOGIN_FLOW] certificado encontrado depois: {bool(snapshot.get('certificateFound'))}", file=sys.stderr, flush=True)
-            print(f"[LOGIN_FLOW] mensagens do portal depois do clique: {snapshot.get('errorText') or ''}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] certificado encontrado depois: {bool(snapshot.get('certificateFound'))}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] mensagens do portal depois do clique: {snapshot.get('errorText') or ''}", file=sys.stderr, flush=True)
+
+        selection_snapshot = snapshot
+        selection_body = _normalize_ribeirao_text(selection_snapshot.get("bodySnippet") or "")
+        selection_url = str(selection_snapshot.get("url") or "").lower()
+        if "loginselecao.aspx" in selection_url or "selecione o convenio" in selection_body or "convenio sigla acao" in selection_body:
+            selection_snapshot, selection_debug, selection_ok = await _handle_convenio_selection(
+                connector,
+                login,
+                password,
+                timeout_ms,
+                selection_snapshot,
+            )
+            snapshot = selection_snapshot
+            current_url_lower = str(snapshot.get("url") or "").lower()
+            if selection_ok:
+                print(f"[LOGIN_FLOW] convenios processados com sucesso: {str(bool(snapshot.get('successFound') or snapshot.get('operacionalFound') or snapshot.get('consultaMargemFound'))).lower()}", file=sys.stderr, flush=True)
 
         if handled_password_stage and not (snapshot.get("successFound") or snapshot.get("operacionalFound") or snapshot.get("consultaMargemFound")):
             retry_message = "O portal nao avancou apos informar o login. Pode ser validacao por JavaScript, certificado digital ou bloqueio do portal."
@@ -2168,44 +2755,48 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
                 print(f"[LOGIN_FLOW] current_url depois: {snapshot.get('url') or ''}", file=sys.stderr, flush=True)
                 print(f"[LOGIN_FLOW] body_text_sample depois: {snapshot.get('bodySnippet') or ''}", file=sys.stderr, flush=True)
                 print(f"[LOGIN_FLOW] senha encontrada depois: {bool(snapshot.get('passwordFound'))}", file=sys.stderr, flush=True)
-                print(f"[LOGIN_FLOW] certificado encontrado depois: {bool(snapshot.get('certificateFound'))}", file=sys.stderr, flush=True)
-                print(f"[LOGIN_FLOW] mensagens do portal depois do clique: {snapshot.get('errorText') or ''}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] certificado encontrado depois: {bool(snapshot.get('certificateFound'))}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] mensagens do portal depois do clique: {snapshot.get('errorText') or ''}", file=sys.stderr, flush=True)
 
-                if snapshot.get("successFound") or snapshot.get("operacionalFound") or snapshot.get("consultaMargemFound"):
-                    pass
-                elif snapshot.get("loginPageVisible") or snapshot.get("loginFound"):
-                    retry_message = "O portal nao avancou apos informar o login. Pode ser validacao por JavaScript, certificado digital ou bloqueio do portal."
-                    retry_popup_text = str((last_modal or {}).get("popupText") or (last_modal or {}).get("messageLabelText") or "").strip()
-                    retry_method_label = str(click_debug.get("chosenMethod") or "").strip()
-                    if retry_popup_text:
-                        retry_message = f"{retry_message} Detalhes do portal: {retry_popup_text[:250]}"
-                    if retry_method_label:
-                        retry_message = f"{retry_message} Metodo tentado: {retry_method_label}."
-                    raise _typed_login_error("LOGIN_STILL_ON_SAME_PAGE", retry_message, stage="mesma_tela")
-                else:
-                    if snapshot.get("host") and ("login-identific" in str(snapshot.get("host") or "").lower() or "certificadodigital" in str(snapshot.get("url") or "").lower()):
-                        raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticacao manual/certificado digital.", stage="certificado_digital")
-                    print(f"[LOGIN_FLOW] quantidade de frames: {button_debug.get('frameCount') or 0}", file=sys.stderr, flush=True)
-                    print(f"[LOGIN_FLOW] buttons encontrados: {json.dumps(button_debug.get('buttons') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
-                    print(f"[LOGIN_FLOW] inputs submit/button encontrados: {json.dumps(button_debug.get('inputs') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
-                    print(f"[LOGIN_FLOW] links encontrados pr?ximos ao form, se houver: {json.dumps(button_debug.get('links') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
-                    print(f"[LOGIN_FLOW] botao escolhido: {json.dumps((click_debug or {}).get('chosenButtonInfo') or {}, ensure_ascii=False)}", file=sys.stderr, flush=True)
-                    print(f"[LOGIN_FLOW] tentou click normal: {str((click_debug or {}).get('chosenMethod') in {'click', 'click-fallback'}).lower()}", file=sys.stderr, flush=True)
-                    print(f"[LOGIN_FLOW] tentou click JS: {str((click_debug or {}).get('chosenMethod') == 'js').lower()}", file=sys.stderr, flush=True)
-                    print(f"[LOGIN_FLOW] tentou Enter: {str((click_debug or {}).get('chosenMethod') == 'enter').lower()}", file=sys.stderr, flush=True)
-                    print(f"[LOGIN_FLOW] current_url antes: {snapshot.get('url') or ''}", file=sys.stderr, flush=True)
-                    raise _typed_login_error("SELECTOR_ERROR", "O portal nao avancou apos informar o login. Pode ser validacao por JavaScript, certificado digital ou bloqueio do portal.", stage="selector_check")
-            else:
+            selection_snapshot = snapshot
+            selection_body = _normalize_ribeirao_text(selection_snapshot.get("bodySnippet") or "")
+            selection_url = str(selection_snapshot.get("url") or "").lower()
+            if "loginselecao.aspx" in selection_url or "selecione o convenio" in selection_body or "convenio sigla acao" in selection_body:
+                selection_snapshot, selection_debug, selection_ok = await _handle_convenio_selection(
+                    connector,
+                    login,
+                    password,
+                    timeout_ms,
+                    selection_snapshot,
+                )
+                snapshot = selection_snapshot
+                current_url_lower = str(snapshot.get("url") or "").lower()
+                if selection_ok:
+                    print(f"[LOGIN_FLOW] convenios processados com sucesso: {str(bool(snapshot.get('successFound') or snapshot.get('operacionalFound') or snapshot.get('consultaMargemFound'))).lower()}", file=sys.stderr, flush=True)
+            if snapshot.get("successFound") or snapshot.get("operacionalFound") or snapshot.get("consultaMargemFound"):
+                pass
+            elif snapshot.get("loginPageVisible") or snapshot.get("loginFound"):
+                retry_message = "O portal nao avancou apos informar o login. Pode ser validacao por JavaScript, certificado digital ou bloqueio do portal."
                 retry_popup_text = str((last_modal or {}).get("popupText") or (last_modal or {}).get("messageLabelText") or "").strip()
-                retry_method_label = str(retry_label or click_debug.get("chosenMethod") or "").strip()
-                detailed_message = "O portal nao avancou apos informar o login. Pode ser validacao por JavaScript, certificado digital ou bloqueio do portal."
+                retry_method_label = str(click_debug.get("chosenMethod") or "").strip()
                 if retry_popup_text:
-                    detailed_message = f"{detailed_message} Detalhes do portal: {retry_popup_text[:250]}"
+                    retry_message = f"{retry_message} Detalhes do portal: {retry_popup_text[:250]}"
                 if retry_method_label:
-                    detailed_message = f"{detailed_message} Metodo tentado: {retry_method_label}."
-                if handled_password_stage or second_stage_detected:
-                    raise _typed_login_error("LOGIN_STILL_ON_SAME_PAGE", detailed_message, stage="password_submit")
-                raise _typed_login_error("LOGIN_STILL_ON_SAME_PAGE", detailed_message, stage="mesma_tela")
+                    retry_message = f"{retry_message} Metodo tentado: {retry_method_label}."
+                raise _typed_login_error("LOGIN_STILL_ON_SAME_PAGE", retry_message, stage="mesma_tela")
+            else:
+                if snapshot.get("host") and ("login-identific" in str(snapshot.get("host") or "").lower() or "certificadodigital" in str(snapshot.get("url") or "").lower()):
+                    raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticacao manual/certificado digital.", stage="certificado_digital")
+                print(f"[LOGIN_FLOW] quantidade de frames: {button_debug.get('frameCount') or 0}", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] buttons encontrados: {json.dumps(button_debug.get('buttons') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] inputs submit/button encontrados: {json.dumps(button_debug.get('inputs') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] links encontrados pr?ximos ao form, se houver: {json.dumps(button_debug.get('links') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] botao escolhido: {json.dumps((click_debug or {}).get('chosenButtonInfo') or {}, ensure_ascii=False)}", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] tentou click normal: {str((click_debug or {}).get('chosenMethod') in {'click', 'click-fallback'}).lower()}", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] tentou click JS: {str((click_debug or {}).get('chosenMethod') == 'js').lower()}", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] tentou Enter: {str((click_debug or {}).get('chosenMethod') == 'enter').lower()}", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] current_url antes: {snapshot.get('url') or ''}", file=sys.stderr, flush=True)
+                raise _typed_login_error("SELECTOR_ERROR", "O portal nao avancou apos informar o login. Pode ser validacao por JavaScript, certificado digital ou bloqueio do portal.", stage="selector_check")
         else:
             if snapshot.get("host") and ("login-identific" in str(snapshot.get("host") or "").lower() or "certificadodigital" in str(snapshot.get("url") or "").lower()):
                 raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticacao manual/certificado digital.", stage="certificado_digital")
@@ -2397,7 +2988,7 @@ async def start_session(payload: dict) -> dict:
             status = "erro_login"
         elif code == "LOGIN_REJECTED":
             status = "erro_login"
-        elif code in {"LOGIN_FIELDS_NOT_FOUND", "LOGIN_BUTTON_NOT_FOUND", "LOGIN_PASSWORD_FIELD_NOT_FOUND", "LOGIN_TIMEOUT", "LOGIN_STILL_ON_SAME_PAGE", "PORTAL_CHANGED", "UNKNOWN_LOGIN_ERROR", "PORTAL_UNREACHABLE", "DNS_RESOLUTION_FAILED", "CHROMIUM_DNS_FAILED"}:
+        elif code in {"LOGIN_FIELDS_NOT_FOUND", "LOGIN_BUTTON_NOT_FOUND", "LOGIN_PASSWORD_FIELD_NOT_FOUND", "LOGIN_TIMEOUT", "LOGIN_STILL_ON_SAME_PAGE", "PORTAL_CHANGED", "CONVENIO_ACTION_NOT_FOUND", "CONVENIO_SELECTION_FAILED", "CONVENIO_NOT_FOUND", "UNKNOWN_LOGIN_ERROR", "PORTAL_UNREACHABLE", "DNS_RESOLUTION_FAILED", "CHROMIUM_DNS_FAILED"}:
             status = "erro_login"
         elif not code and not stage and ("browser" in message.lower() or "x server" in message.lower() or "$display" in message.lower()):
             status = "browser_launch_error"
@@ -2510,7 +3101,7 @@ async def query_cpf(payload: dict) -> dict:
             status = "login_error"
         elif code == "LOGIN_OK_NAVIGATION_FAILED":
             status = "login_error"
-        elif code == "LOGIN_FIELDS_NOT_FOUND" or code == "LOGIN_BUTTON_NOT_FOUND" or code == "LOGIN_PASSWORD_FIELD_NOT_FOUND" or code == "LOGIN_TIMEOUT" or code == "LOGIN_STILL_ON_SAME_PAGE" or code == "PORTAL_CHANGED" or code == "UNKNOWN_LOGIN_ERROR" or code == "PORTAL_UNREACHABLE" or code == "DNS_RESOLUTION_FAILED" or code == "CHROMIUM_DNS_FAILED" or code == "WORKER_INTERNAL_ERROR" or code == "USER_ALREADY_LOGGED_CONFIRM_FAILED":
+        elif code == "LOGIN_FIELDS_NOT_FOUND" or code == "LOGIN_BUTTON_NOT_FOUND" or code == "LOGIN_PASSWORD_FIELD_NOT_FOUND" or code == "LOGIN_TIMEOUT" or code == "LOGIN_STILL_ON_SAME_PAGE" or code == "PORTAL_CHANGED" or code == "CONVENIO_ACTION_NOT_FOUND" or code == "CONVENIO_SELECTION_FAILED" or code == "CONVENIO_NOT_FOUND" or code == "UNKNOWN_LOGIN_ERROR" or code == "PORTAL_UNREACHABLE" or code == "DNS_RESOLUTION_FAILED" or code == "CHROMIUM_DNS_FAILED" or code == "WORKER_INTERNAL_ERROR" or code == "USER_ALREADY_LOGGED_CONFIRM_FAILED":
             status = "login_error"
         elif "sessao" in message.lower() and "expir" in message.lower():
             status = "session_expired"

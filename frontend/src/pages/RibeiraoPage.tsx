@@ -1463,7 +1463,7 @@ function getSessionBlockingMessage(session?: RibeiraoSession | null) {
       ? 'O portal não respondeu após tentar login.'
       : 'O portal não avançou após informar o login. Pode ser validação por JavaScript, certificado digital ou bloqueio do portal.';
   }
-  if (['PORTAL_CHANGED', 'SELECTOR_ERROR', 'LOGIN_OK_NAVIGATION_FAILED', 'LOGIN_REJECTED', 'UNKNOWN_LOGIN_ERROR', 'DNS_RESOLUTION_FAILED', 'CHROMIUM_DNS_FAILED', 'WORKER_INTERNAL_ERROR', 'USER_ALREADY_LOGGED_CONFIRM_FAILED'].includes(errorCode) || session.status === 'erro_login' || session.status === 'login_error') {
+  if (['PORTAL_CHANGED', 'SELECTOR_ERROR', 'CONVENIO_ACTION_NOT_FOUND', 'CONVENIO_SELECTION_FAILED', 'CONVENIO_NOT_FOUND', 'LOGIN_OK_NAVIGATION_FAILED', 'LOGIN_REJECTED', 'UNKNOWN_LOGIN_ERROR', 'DNS_RESOLUTION_FAILED', 'CHROMIUM_DNS_FAILED', 'WORKER_INTERNAL_ERROR', 'USER_ALREADY_LOGGED_CONFIRM_FAILED'].includes(errorCode) || session.status === 'erro_login' || session.status === 'login_error') {
     if (errorCode === 'LOGIN_OK_NAVIGATION_FAILED') {
       return 'Login aceito, mas não foi possível abrir Consulta de Margem.';
     }
@@ -1475,6 +1475,15 @@ function getSessionBlockingMessage(session?: RibeiraoSession | null) {
     }
     if (errorCode === 'SELECTOR_ERROR') {
       return 'O sistema encontrou o portal, mas não reconheceu os elementos de login nesta tela.';
+    }
+    if (errorCode === 'CONVENIO_ACTION_NOT_FOUND') {
+      return 'O login foi aceito, mas o sistema não encontrou o botão de acesso do convênio.';
+    }
+    if (errorCode === 'CONVENIO_SELECTION_FAILED') {
+      return 'O login foi aceito, mas o portal não avançou após selecionar o convênio.';
+    }
+    if (errorCode === 'CONVENIO_NOT_FOUND') {
+      return 'O login foi aceito, mas o convênio de Ribeirão Preto não foi encontrado.';
     }
     if (errorCode === 'PORTAL_UNREACHABLE') {
       return 'Não foi possível acessar o portal da Prefeitura no momento.';
@@ -1519,6 +1528,15 @@ function getSessionDisplayMessage(session?: RibeiraoSession | null) {
   }
   if (errorCode === 'LOGIN_PASSWORD_FIELD_NOT_FOUND') {
     return 'O sistema chegou na segunda etapa do login, mas não encontrou o campo de senha.';
+  }
+  if (errorCode === 'CONVENIO_ACTION_NOT_FOUND') {
+    return 'O login foi aceito, mas o sistema não encontrou o botão de acesso do convênio.';
+  }
+  if (errorCode === 'CONVENIO_SELECTION_FAILED') {
+    return 'O login foi aceito, mas o portal não avançou após selecionar o convênio.';
+  }
+  if (errorCode === 'CONVENIO_NOT_FOUND') {
+    return 'O login foi aceito, mas o convênio de Ribeirão Preto não foi encontrado.';
   }
   if (errorCode === 'LOGIN_TIMEOUT') {
     return 'O portal não respondeu após tentar login.';
@@ -1621,6 +1639,15 @@ function getFriendlyRibeiraoError(error: unknown, fallback: string) {
   }
   if (code === 'LOGIN_PASSWORD_FIELD_NOT_FOUND') {
     return 'O sistema chegou na segunda etapa do login, mas não encontrou o campo de senha.';
+  }
+  if (code === 'CONVENIO_ACTION_NOT_FOUND') {
+    return 'O login foi aceito, mas o sistema não encontrou o botão de acesso do convênio.';
+  }
+  if (code === 'CONVENIO_SELECTION_FAILED') {
+    return 'O login foi aceito, mas o portal não avançou após selecionar o convênio.';
+  }
+  if (code === 'CONVENIO_NOT_FOUND') {
+    return 'O login foi aceito, mas o convênio de Ribeirão Preto não foi encontrado.';
   }
   if (code === 'LOGIN_TIMEOUT') {
     return 'O portal não respondeu após tentar login.';
