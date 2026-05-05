@@ -1461,7 +1461,7 @@ function getSessionBlockingMessage(session?: RibeiraoSession | null) {
   if (['LOGIN_TIMEOUT', 'LOGIN_STILL_ON_SAME_PAGE'].includes(errorCode)) {
     return errorCode === 'LOGIN_TIMEOUT'
       ? 'O portal não respondeu após tentar login.'
-      : 'O portal permaneceu na tela de login sem confirmar autenticação.';
+      : 'O portal não avançou após informar o login. Pode ser validação por JavaScript, certificado digital ou bloqueio do portal.';
   }
   if (['PORTAL_CHANGED', 'SELECTOR_ERROR', 'LOGIN_OK_NAVIGATION_FAILED', 'LOGIN_REJECTED', 'UNKNOWN_LOGIN_ERROR', 'DNS_RESOLUTION_FAILED', 'CHROMIUM_DNS_FAILED'].includes(errorCode) || session.status === 'erro_login' || session.status === 'login_error') {
     if (errorCode === 'LOGIN_OK_NAVIGATION_FAILED') {
@@ -1521,7 +1521,7 @@ function getSessionDisplayMessage(session?: RibeiraoSession | null) {
     return 'O portal não respondeu após tentar login.';
   }
   if (errorCode === 'LOGIN_STILL_ON_SAME_PAGE') {
-    return 'O portal permaneceu na tela de login sem confirmar autenticação.';
+    return 'O portal não avançou após informar o login. Pode ser validação por JavaScript, certificado digital ou bloqueio do portal.';
   }
   if (errorCode === 'LOGIN_OK_NAVIGATION_FAILED') {
     return 'Login aceito, mas não foi possível abrir Consulta de Margem.';
@@ -1608,7 +1608,7 @@ function getFriendlyRibeiraoError(error: unknown, fallback: string) {
     return 'O portal não respondeu após tentar login.';
   }
   if (code === 'LOGIN_STILL_ON_SAME_PAGE') {
-    return 'O portal permaneceu na tela de login sem confirmar autenticação.';
+    return 'O portal não avançou após informar o login. Pode ser validação por JavaScript, certificado digital ou bloqueio do portal.';
   }
   if (code === 'PORTAL_CHANGED') {
     return 'O layout do portal mudou e o fluxo de login não foi reconhecido.';

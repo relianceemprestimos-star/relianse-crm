@@ -701,18 +701,79 @@ async def _click_login_initial_button(connector: PortalSecundarioLegacyConnector
     print(f"[LOGIN_FLOW] inputs submit/button encontrados: {json.dumps(debug.get('inputs') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
     print(f"[LOGIN_FLOW] links encontrados pr?ximos ao form, se houver: {json.dumps(debug.get('links') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
 
+    attempts: list[dict] = []
     scopes = list(enumerate(_login_scopes(connector)))
+    chosen_button = None
+    chosen_selector = ""
+    chosen_button_info = {}
+
+    def _button_info_for_selector(selector: str) -> dict:
+        raw = str(selector or "").strip()
+        if not raw:
+            return {}
+        selector_lower = raw.lower()
+        for btn in (debug.get('buttons') or []):
+            candidates = [
+                f"#{btn.get('id') or ''}".lower() if btn.get('id') else "",
+                f"input[name='{btn.get('name') or ''}']".lower() if btn.get('name') else "",
+                f"input[value='{btn.get('value') or ''}']".lower() if btn.get('value') else "",
+                f"button:has-text('{str(btn.get('textContent') or '').strip()}')".lower() if btn.get('textContent') else "",
+                f"a:has-text('{str(btn.get('textContent') or '').strip()}')".lower() if btn.get('textContent') else "",
+            ]
+            if any(candidate and candidate == selector_lower for candidate in candidates):
+                return {
+                    "tag": str(btn.get('tag') or ''),
+                    "id": str(btn.get('id') or ''),
+                    "name": str(btn.get('name') or ''),
+                    "type": str(btn.get('type') or ''),
+                    "value": str(btn.get('value') or ''),
+                    "textContent": str(btn.get('textContent') or ''),
+                    "className": str(btn.get('className') or ''),
+                    "onclick": str(btn.get('onclick') or ''),
+                }
+        return {}
+
+    async def _click_scope(scope, selector: str, method: str) -> bool:
+        try:
+            locator = scope.locator(selector).first
+            await locator.wait_for(state='visible', timeout=timeout_ms)
+            if method == 'js':
+                await locator.evaluate("(el) => el.click()")
+            else:
+                await locator.click(timeout=timeout_ms)
+            return True
+        except Exception:
+            return False
+
     for selector in candidate_selectors:
         for scope_index, scope in scopes:
-            try:
-                locator = scope.locator(selector).first
-                await locator.wait_for(state='visible', timeout=timeout_ms)
-                await locator.click(timeout=timeout_ms)
+            ok_normal = await _click_scope(scope, selector, 'click')
+            attempts.append({"selector": selector, "scope": scope_index, "method": "click", "ok": ok_normal})
+            if ok_normal:
+                chosen_button = selector
+                chosen_selector = selector
+                chosen_button_info = _button_info_for_selector(selector)
                 scope_label = 'page' if scope_index == 0 else f'frame-{scope_index}'
                 print(f"[LOGIN_FLOW] botao clicado: {selector} ({scope_label})", file=sys.stderr, flush=True)
-                return True, selector, debug
-            except Exception:
-                continue
+                print(f"[LOGIN_FLOW] tentou click normal: true", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] tentou click JS: false", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] tentou Enter: false", file=sys.stderr, flush=True)
+                return True, selector, {**debug, "attempts": attempts, "chosenButton": chosen_button, "chosenSelector": chosen_selector, "chosenMethod": "click", "chosenButtonInfo": chosen_button_info}
+
+    for selector in candidate_selectors:
+        for scope_index, scope in scopes:
+            ok_js = await _click_scope(scope, selector, 'js')
+            attempts.append({"selector": selector, "scope": scope_index, "method": "js", "ok": ok_js})
+            if ok_js:
+                chosen_button = selector
+                chosen_selector = selector
+                chosen_button_info = _button_info_for_selector(selector)
+                scope_label = 'page' if scope_index == 0 else f'frame-{scope_index}'
+                print(f"[LOGIN_FLOW] botao clicado: {selector} ({scope_label}) via JS", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] tentou click normal: false", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] tentou click JS: true", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] tentou Enter: false", file=sys.stderr, flush=True)
+                return True, selector, {**debug, "attempts": attempts, "chosenButton": chosen_button, "chosenSelector": chosen_selector, "chosenMethod": "js", "chosenButtonInfo": chosen_button_info}
 
     for scope_index, scope in scopes:
         try:
@@ -720,7 +781,10 @@ async def _click_login_initial_button(connector: PortalSecundarioLegacyConnector
             await login_locator.press('Enter', timeout=timeout_ms)
             scope_label = 'page' if scope_index == 0 else f'frame-{scope_index}'
             print(f"[LOGIN_FLOW] botao clicado: Enter no txtLogin ({scope_label})", file=sys.stderr, flush=True)
-            return True, 'Enter', debug
+            print(f"[LOGIN_FLOW] tentou click normal: false", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] tentou click JS: false", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] tentou Enter: true", file=sys.stderr, flush=True)
+            return True, 'Enter', {**debug, "attempts": attempts, "chosenButton": 'Enter', "chosenSelector": '#txtLogin', "chosenMethod": 'enter', "chosenButtonInfo": {"tag": "input", "id": "txtLogin", "name": "", "type": "text", "value": "", "textContent": "", "className": "", "onclick": ""}}
         except Exception:
             continue
 
@@ -757,20 +821,21 @@ async def _click_login_initial_button(connector: PortalSecundarioLegacyConnector
             if not selector:
                 continue
             for scope_index, scope in scopes:
-                try:
-                    locator = scope.locator(selector).first
-                    await locator.wait_for(state='visible', timeout=timeout_ms)
-                    await locator.click(timeout=timeout_ms)
+                ok_normal = await _click_scope(scope, selector, 'click')
+                attempts.append({"selector": selector, "scope": scope_index, "method": "click-fallback", "ok": ok_normal})
+                if ok_normal:
                     scope_label = 'page' if scope_index == 0 else f'frame-{scope_index}'
                     print(f"[LOGIN_FLOW] botao clicado via fallback: {selector} ({scope_label})", file=sys.stderr, flush=True)
-                    return True, selector, debug
-                except Exception:
-                    continue
+                    print(f"[LOGIN_FLOW] tentou click normal: true", file=sys.stderr, flush=True)
+                    print(f"[LOGIN_FLOW] tentou click JS: false", file=sys.stderr, flush=True)
+                    print(f"[LOGIN_FLOW] tentou Enter: false", file=sys.stderr, flush=True)
+                    return True, selector, {**debug, "attempts": attempts, "chosenButton": selector, "chosenSelector": selector, "chosenMethod": "click-fallback", "chosenButtonInfo": chosen_button_info}
+        
     except Exception:
         pass
 
     print('[LOGIN_FLOW] selector inv?lido ignorado: button_login_fallback', file=sys.stderr, flush=True)
-    return False, '', debug
+    return False, '', {**debug, "attempts": attempts, "chosenButton": '', "chosenSelector": '', "chosenMethod": ''}
 
 
 def _log_login_snapshot(snapshot: dict, login: str, password: str, stage: str) -> None:
@@ -1011,7 +1076,7 @@ def _classify_login_issue(code: str | None, message: str, snapshot: dict | None 
         if code_upper == 'LOGIN_TIMEOUT':
             return 'LOGIN_TIMEOUT', raw_message or 'O portal n?o respondeu ap?s tentar login.'
         if code_upper == 'LOGIN_STILL_ON_SAME_PAGE':
-            return 'LOGIN_STILL_ON_SAME_PAGE', raw_message or 'O portal permaneceu na tela de login sem confirmar autentica??o.'
+            return 'LOGIN_STILL_ON_SAME_PAGE', raw_message or 'O portal nao avancou apos informar o login. Pode ser validacao por JavaScript, certificado digital ou bloqueio do portal.'
         if code_upper == 'PORTAL_CHANGED':
             return 'PORTAL_CHANGED', raw_message or 'O layout do portal mudou e o fluxo de login n?o foi reconhecido.'
         return 'UNKNOWN_LOGIN_ERROR', raw_message or 'Erro inesperado no fluxo de login.'
@@ -1025,22 +1090,22 @@ def _classify_login_issue(code: str | None, message: str, snapshot: dict | None 
 
     if any(term in normalized for term in ['certificado digital', 'certificado', 'token', 'e-cpf', 'e cpf']):
         return 'MANUAL_AUTH_REQUIRED', raw_message or 'Autentica??o manual necess?ria.'
-    if any(term in normalized for term in ['usuario ou senha', 'usu?rio ou senha', 'login ou senha', 'senha incorreta', 'senha invalida', 'senha inv?lida', 'credenciais invalidas', 'credenciais inv?lidas', 'acesso negado', 'dados incorretos']):
+    if any(term in normalized for term in ['usuario ou senha', 'usu?rio ou senha', 'login ou senha', 'senha incorreta', 'senha invalida', 'senha inv?lida', 'credenciais invalidas', 'credenciais inv?lidas', 'acesso negado', 'dados incorretos', 'usuario nao encontrado', 'usu?rio n?o encontrado', 'informe usuario', 'informe usu?rio', 'pr?xima etapa', 'proxima etapa']):
         return 'LOGIN_REJECTED', raw_message or 'O portal recusou o login/senha informados.'
     if any(term in normalized for term in ['nao consegui', 'n?o consegui', 'falha ao preencher', 'falha ao clicar', 'timeout', 'tempo limite']):
         if snap.get('loginFound') and snap.get('buttonFound') and not snap.get('passwordFound'):
-            return 'LOGIN_STILL_ON_SAME_PAGE', raw_message or 'O portal permaneceu na tela de login sem confirmar autentica??o.'
+            return 'LOGIN_STILL_ON_SAME_PAGE', raw_message or 'O portal nao avancou apos informar o login. Pode ser validacao por JavaScript, certificado digital ou bloqueio do portal.'
         return 'LOGIN_TIMEOUT', raw_message or 'O portal n?o respondeu ap?s tentar login.'
     if snap.get('successFound'):
         return 'LOGIN_OK_NAVIGATION_FAILED', raw_message or 'Login aceito, mas n?o foi poss?vel abrir Consulta de Margem.'
     if 'certificado digital' in body_normalized or 'login-identific.certificadodigital.com.br' in body_normalized or 'certificadodigital' in body_normalized:
         return 'MANUAL_AUTH_REQUIRED', raw_message or 'Autentica??o manual necess?ria.'
     if error_text:
-        if any(term in error_text.lower() for term in ['usuario ou senha', 'usu?rio ou senha', 'login ou senha', 'senha incorreta', 'senha invalida', 'senha inv?lida', 'credenciais invalidas', 'credenciais inv?lidas', 'acesso negado', 'dados incorretos']):
+        if any(term in error_text.lower() for term in ['usuario ou senha', 'usu?rio ou senha', 'login ou senha', 'senha incorreta', 'senha invalida', 'senha inv?lida', 'credenciais invalidas', 'credenciais inv?lidas', 'acesso negado', 'dados incorretos', 'usuario nao encontrado', 'usu?rio n?o encontrado', 'informe usuario', 'informe usu?rio', 'pr?xima etapa', 'proxima etapa']):
             return 'LOGIN_REJECTED', error_text
         return 'UNKNOWN_LOGIN_ERROR', error_text
     if body_text and 'login' in body_text.lower() and not snap.get('successFound'):
-        return 'LOGIN_STILL_ON_SAME_PAGE', raw_message or 'O portal permaneceu na tela de login sem confirmar autentica??o.'
+        return 'LOGIN_STILL_ON_SAME_PAGE', raw_message or 'O portal nao avancou apos informar o login. Pode ser validacao por JavaScript, certificado digital ou bloqueio do portal.'
 
     return 'UNKNOWN_LOGIN_ERROR', raw_message or 'Erro inesperado no fluxo de login.'
 
@@ -1233,13 +1298,30 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
         snapshot = await _capture_login_snapshot(connector)
         _log_login_snapshot(snapshot, login, password, "login-preenchido")
         _log_login_flow(snapshot, "login-preenchido", login, password, final_code="PENDING")
+        print(f"[LOGIN_FLOW] url antes: {snapshot.get('url') or ''}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] body_text_sample antes: {snapshot.get('bodySnippet') or ''}", file=sys.stderr, flush=True)
+        login_value_length = 0
+        login_value_confirmed = False
+        for scope in _login_scopes(connector):
+            try:
+                login_locator = scope.locator("#txtLogin").first
+                current_login_value = await login_locator.input_value(timeout=3000)
+                login_value_length = len(str(current_login_value or ""))
+                login_value_confirmed = login_value_length > 0
+                if login_value_confirmed:
+                    break
+            except Exception:
+                continue
+        print(f"[LOGIN_FLOW] login preenchido confirmado: {str(login_value_confirmed).lower()}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] login_value_length: {login_value_length}", file=sys.stderr, flush=True)
         button_debug = await _capture_login_button_debug(connector)
         print(f"[LOGIN_FLOW] html do formulário de login, sem senha: {button_debug.get('formHtml') or ''}", file=sys.stderr, flush=True)
         print(f"[LOGIN_FLOW] buttons encontrados: {json.dumps(button_debug.get('buttons') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
         print(f"[LOGIN_FLOW] inputs submit/button encontrados: {json.dumps(button_debug.get('inputs') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
         print(f"[LOGIN_FLOW] links encontrados próximos ao form, se houver: {json.dumps(button_debug.get('links') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] current_url antes: {snapshot.get('url') or ''}", file=sys.stderr, flush=True)
         try:
-            clicked_login, clicked_selector, _ = await _click_login_initial_button(connector)
+            clicked_login, clicked_selector, click_debug = await _click_login_initial_button(connector)
         except Exception as exc:
             raise _typed_login_error("LOGIN_BUTTON_NOT_FOUND", "Nao consegui acionar o botao de login.", stage="button_login") from exc
         if not clicked_login:
@@ -1250,10 +1332,20 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
             )
 
         print(f"[LOGIN_FLOW] clique de login executado: {clicked_selector or 'Enter'}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] botao escolhido: {json.dumps((click_debug or {}).get('chosenButtonInfo') or {}, ensure_ascii=False)}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] tentou click normal: {str((click_debug or {}).get('chosenMethod') in {'click', 'click-fallback'}).lower()}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] tentou click JS: {str((click_debug or {}).get('chosenMethod') == 'js').lower()}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] tentou Enter: {str((click_debug or {}).get('chosenMethod') == 'enter').lower()}", file=sys.stderr, flush=True)
         await connector.page.wait_for_timeout(1500)
+        await connector.page.wait_for_timeout(2500)
         snapshot = await _capture_login_snapshot(connector)
         _log_login_snapshot(snapshot, login, password, "apos-primeiro-clique")
         _log_login_flow(snapshot, "apos-primeiro-clique", login, password, click_executed=True, final_code="PENDING", certificate_alert=bool(dialog_messages))
+        print(f"[LOGIN_FLOW] current_url depois: {snapshot.get('url') or ''}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] body_text_sample depois: {snapshot.get('bodySnippet') or ''}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] senha encontrada depois: {bool(snapshot.get('passwordFound'))}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] certificado encontrado depois: {bool(snapshot.get('certificateFound'))}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] mensagens do portal depois do clique: {snapshot.get('errorText') or ''}", file=sys.stderr, flush=True)
 
         if dialog_messages:
             joined = " | ".join(dialog_messages).lower()
@@ -1264,9 +1356,9 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
             print(f"[LOGIN_FLOW] quantidade de frames: {button_debug.get('frameCount') or 0}", file=sys.stderr, flush=True)
             print(f"[LOGIN_FLOW] buttons encontrados: {json.dumps(button_debug.get('buttons') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
             print(f"[LOGIN_FLOW] inputs submit/button encontrados: {json.dumps(button_debug.get('inputs') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
-            print(f"[LOGIN_FLOW] links encontrados próximos ao form, se houver: {json.dumps(button_debug.get('links') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] links encontrados pr?ximos ao form, se houver: {json.dumps(button_debug.get('links') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
             print("[LOGIN_FLOW] error_code final: MANUAL_AUTH_REQUIRED", file=sys.stderr, flush=True)
-            raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticação manual/certificado digital.", stage="certificado_digital")
+            raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autentica??o manual/certificado digital.", stage="certificado_digital")
 
         if snapshot.get("captchaFound"):
             raise _typed_login_error("CAPTCHA_REQUIRED", "O portal solicitou validacao manual.", stage="captcha")
@@ -1292,7 +1384,7 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
             _log_login_snapshot(snapshot, login, password, "senha-preenchida")
             _log_login_flow(snapshot, "senha-preenchida", login, password, final_code="PENDING")
             try:
-                clicked_password, clicked_selector, _ = await _click_login_initial_button(connector)
+                clicked_password, clicked_selector, click_debug = await _click_login_initial_button(connector)
             except Exception as exc:
                 raise _typed_login_error("LOGIN_BUTTON_NOT_FOUND", "Nao consegui acionar o botao de login.", stage="button_password") from exc
             if not clicked_password:
@@ -1303,15 +1395,29 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
                 )
 
             print(f"[LOGIN_FLOW] clique de login executado: {clicked_selector or 'Enter'}", file=sys.stderr, flush=True)
-            await connector.page.wait_for_timeout(1500)
+            print(f"[LOGIN_FLOW] botao escolhido: {json.dumps((click_debug or {}).get('chosenButtonInfo') or {}, ensure_ascii=False)}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] tentou click normal: {str((click_debug or {}).get('chosenMethod') in {'click', 'click-fallback'}).lower()}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] tentou click JS: {str((click_debug or {}).get('chosenMethod') == 'js').lower()}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] tentou Enter: {str((click_debug or {}).get('chosenMethod') == 'enter').lower()}", file=sys.stderr, flush=True)
+            await connector.page.wait_for_timeout(2500)
             snapshot = await _capture_login_snapshot(connector)
             _log_login_snapshot(snapshot, login, password, "apos-segundo-clique")
             _log_login_flow(snapshot, "apos-segundo-clique", login, password, click_executed=True, final_code="PENDING", certificate_alert=bool(dialog_messages))
+            print(f"[LOGIN_FLOW] current_url depois: {snapshot.get('url') or ''}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] body_text_sample depois: {snapshot.get('bodySnippet') or ''}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] senha encontrada depois: {bool(snapshot.get('passwordFound'))}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] certificado encontrado depois: {bool(snapshot.get('certificateFound'))}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] mensagens do portal depois do clique: {snapshot.get('errorText') or ''}", file=sys.stderr, flush=True)
         else:
-            await connector.page.wait_for_timeout(2500)
+            await connector.page.wait_for_timeout(3000)
             snapshot = await _capture_login_snapshot(connector)
             _log_login_snapshot(snapshot, login, password, "apos-espera-sem-senha")
             _log_login_flow(snapshot, "apos-espera-sem-senha", login, password, click_executed=True, final_code="PENDING", certificate_alert=bool(dialog_messages))
+            print(f"[LOGIN_FLOW] current_url depois: {snapshot.get('url') or ''}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] body_text_sample depois: {snapshot.get('bodySnippet') or ''}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] senha encontrada depois: {bool(snapshot.get('passwordFound'))}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] certificado encontrado depois: {bool(snapshot.get('certificateFound'))}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] mensagens do portal depois do clique: {snapshot.get('errorText') or ''}", file=sys.stderr, flush=True)
 
         if dialog_messages:
             joined = " | ".join(dialog_messages).lower()
@@ -1331,15 +1437,20 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
                     raise _typed_login_error(code, typed_message, stage="erro_texto_portal")
             if snapshot.get("host") and "login-identific" in str(snapshot.get("host") or '').lower():
                 raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticacao manual por certificado digital.", stage="certificado")
-            raise _typed_login_error("LOGIN_STILL_ON_SAME_PAGE", "O portal permaneceu na tela de login sem confirmar autenticacao.", stage="mesma_tela")
+            raise _typed_login_error("LOGIN_STILL_ON_SAME_PAGE", "O portal nao avancou apos informar o login. Pode ser validacao por JavaScript, certificado digital ou bloqueio do portal.", stage="mesma_tela")
         else:
-            if snapshot.get("host") and ("login-identific" in str(snapshot.get("host") or '').lower() or 'certificadodigital' in str(snapshot.get("url") or '').lower()):
-                raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticação manual/certificado digital.", stage="certificado_digital")
+            if snapshot.get("host") and ("login-identific" in str(snapshot.get("host") or "").lower() or "certificadodigital" in str(snapshot.get("url") or "").lower()):
+                raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticacao manual/certificado digital.", stage="certificado_digital")
             print(f"[LOGIN_FLOW] quantidade de frames: {button_debug.get('frameCount') or 0}", file=sys.stderr, flush=True)
             print(f"[LOGIN_FLOW] buttons encontrados: {json.dumps(button_debug.get('buttons') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
             print(f"[LOGIN_FLOW] inputs submit/button encontrados: {json.dumps(button_debug.get('inputs') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
-            print(f"[LOGIN_FLOW] links encontrados próximos ao form, se houver: {json.dumps(button_debug.get('links') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
-            raise _typed_login_error("SELECTOR_ERROR", "O layout do portal mudou e o fluxo de login nao foi reconhecido.", stage="selector_check")
+            print(f"[LOGIN_FLOW] links encontrados pr?ximos ao form, se houver: {json.dumps(button_debug.get('links') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] botao escolhido: {json.dumps((click_debug or {}).get('chosenButtonInfo') or {}, ensure_ascii=False)}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] tentou click normal: {str((click_debug or {}).get('chosenMethod') in {'click', 'click-fallback'}).lower()}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] tentou click JS: {str((click_debug or {}).get('chosenMethod') == 'js').lower()}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] tentou Enter: {str((click_debug or {}).get('chosenMethod') == 'enter').lower()}", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] current_url antes: {snapshot.get('url') or ''}", file=sys.stderr, flush=True)
+            raise _typed_login_error("SELECTOR_ERROR", "O portal nao avan?ou ap?s informar o login. Pode ser valida??o por JavaScript, certificado digital ou bloqueio do portal.", stage="selector_check")
 
         try:
             await connector._select_profile_access()
@@ -1418,6 +1529,7 @@ async def _wait_for_session_login(connector: PortalSecundarioLegacyConnector, se
             _write_status(session_id, "conectando", "Autenticando no averbador.")
 
         await connector.page.wait_for_timeout(1500)
+        await connector.page.wait_for_timeout(2500)
 
     _write_status(session_id, "erro_login", "Tempo limite excedido aguardando autenticacao manual.")
     return {"status": "erro_login", "session_id": session_id, "message": "Tempo limite excedido aguardando autenticacao manual."}

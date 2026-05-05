@@ -176,7 +176,7 @@ function normalizeRibeiraoSessionMessage(status, message, errorCode = null) {
       return 'O portal n?o respondeu ap?s tentar login.';
     }
     if (normalizedErrorCode === 'LOGIN_STILL_ON_SAME_PAGE') {
-      return 'O portal permaneceu na tela de login sem confirmar autentica??o.';
+      return 'O portal não avançou após informar o login. Pode ser validação por JavaScript, certificado digital ou bloqueio do portal.';
     }
     if (normalizedErrorCode === 'PORTAL_CHANGED') {
       return 'O layout do portal mudou e o fluxo de login n?o foi reconhecido.';
