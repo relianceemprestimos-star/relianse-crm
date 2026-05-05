@@ -202,7 +202,7 @@ async def _capture_login_snapshot(connector: PortalSecundarioLegacyConnector) ->
         "[name*='captcha' i]",
     ]
 
-    return await connector.page.evaluate(
+    snapshot = await connector.page.evaluate(
         """({ loginSelectors, passwordSelectors, submitSelectors, successSelectors, errorSelectors, captchaSelectors }) => {
             const normalize = (v) => String(v || "")
               .normalize("NFD")
@@ -210,6 +210,7 @@ async def _capture_login_snapshot(connector: PortalSecundarioLegacyConnector) ->
               .replace(/\\s+/g, " ")
               .trim()
               .toLowerCase();
+            const invalidSelectors = [];
             const isVisible = (el) => {
               if (!el) return false;
               const style = window.getComputedStyle(el);
@@ -217,9 +218,40 @@ async def _capture_login_snapshot(connector: PortalSecundarioLegacyConnector) ->
               const rect = el.getBoundingClientRect();
               return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
             };
+            const textMatches = (selector, el) => {
+              const raw = String(selector || "").trim();
+              if (!raw) return false;
+              const textPrefix = raw.match(/^text=(.+)$/i);
+              if (textPrefix) {
+                const wanted = normalize(textPrefix[1]);
+                const hay = normalize(`${el.innerText || el.textContent || el.value || ""}`);
+                return wanted ? hay.includes(wanted) : false;
+              }
+              const hasTextMatch = raw.match(/^(.*?):has-text\\((['"])(.*)\\2\\)$/i);
+              if (hasTextMatch) {
+                const wanted = normalize(hasTextMatch[3]);
+                const hay = normalize(`${el.innerText || el.textContent || el.value || ""}`);
+                return wanted ? hay.includes(wanted) : false;
+              }
+              return false;
+            };
+            const safeQueryAll = (selector) => {
+              const raw = String(selector || "").trim();
+              if (!raw) return [];
+              if (/^text=/i.test(raw) || /:has-text\\(/i.test(raw)) {
+                const pool = Array.from(document.querySelectorAll("body *"));
+                return pool.filter((el) => isVisible(el) && textMatches(raw, el));
+              }
+              try {
+                return Array.from(document.querySelectorAll(raw));
+              } catch (error) {
+                invalidSelectors.push(raw);
+                return [];
+              }
+            };
             const firstVisibleSelector = (selectors) => {
               for (const selector of selectors || []) {
-                const nodes = Array.from(document.querySelectorAll(selector || ""));
+                const nodes = safeQueryAll(selector);
                 const visible = nodes.find((node) => isVisible(node) && !(node.disabled || node.readOnly));
                 if (visible) {
                   return selector;
@@ -229,7 +261,7 @@ async def _capture_login_snapshot(connector: PortalSecundarioLegacyConnector) ->
             };
             const firstText = (selectors) => {
               for (const selector of selectors || []) {
-                const node = Array.from(document.querySelectorAll(selector || "")).find((el) => isVisible(el));
+                const node = safeQueryAll(selector).find((el) => isVisible(el));
                 if (node) {
                   const text = String(node.textContent || node.value || "").replace(/\\s+/g, " ").trim();
                   if (text) return text;
@@ -272,6 +304,7 @@ async def _capture_login_snapshot(connector: PortalSecundarioLegacyConnector) ->
               bodySnippet: bodyText.slice(0, 500),
               bodyNormalized: bodyNormalized.slice(0, 500),
               loginPageVisible: Boolean(loginSelector) && bodyNormalized.includes("login"),
+              invalidSelectors,
             };
         }""",
         {
@@ -283,6 +316,9 @@ async def _capture_login_snapshot(connector: PortalSecundarioLegacyConnector) ->
             "captchaSelectors": captcha_selectors,
         },
     )
+    for selector in snapshot.get("invalidSelectors") or []:
+        print(f"[LOGIN_FLOW] selector inválido ignorado: {selector}", file=sys.stderr, flush=True)
+    return snapshot
 
 
 def _log_login_snapshot(snapshot: dict, login: str, password: str, stage: str) -> None:

@@ -576,8 +576,41 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
                       const rect = el.getBoundingClientRect();
                       return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
                     };
+                    const normalize = (v) => String(v || "")
+                      .normalize("NFD")
+                      .replace(/[\\u0300-\\u036f]/g, "")
+                      .toLowerCase()
+                      .trim();
+                    const textMatches = (selector, el) => {
+                      const raw = String(selector || "").trim();
+                      const textPrefix = raw.match(/^text=(.+)$/i);
+                      if (textPrefix) {
+                        const wanted = normalize(textPrefix[1]);
+                        const hay = normalize(el.innerText || el.textContent || el.value || "");
+                        return wanted ? hay.includes(wanted) : false;
+                      }
+                      const hasTextMatch = raw.match(/^(.*?):has-text\\((['"])(.*)\\2\\)$/i);
+                      if (hasTextMatch) {
+                        const wanted = normalize(hasTextMatch[3]);
+                        const hay = normalize(el.innerText || el.textContent || el.value || "");
+                        return wanted ? hay.includes(wanted) : false;
+                      }
+                      return false;
+                    };
+                    const safeQueryAll = (selector) => {
+                      const raw = String(selector || "").trim();
+                      if (!raw) return [];
+                      if (/^text=/i.test(raw) || /:has-text\\(/i.test(raw)) {
+                        return Array.from(document.querySelectorAll("body *")).filter((el) => isVisible(el) && textMatches(raw, el));
+                      }
+                      try {
+                        return Array.from(document.querySelectorAll(raw));
+                      } catch (_) {
+                        return [];
+                      }
+                    };
                     for (const selector of selectors || []) {
-                      const nodes = Array.from(document.querySelectorAll(selector || ""));
+                      const nodes = safeQueryAll(selector);
                       for (const node of nodes) {
                         if (!isVisible(node)) continue;
                         if (node instanceof HTMLInputElement || node instanceof HTMLButtonElement) {
@@ -618,8 +651,41 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
                       }
                       return true;
                     };
+                    const normalizeText = (v) => String(v || "")
+                      .normalize("NFD")
+                      .replace(/[\\u0300-\\u036f]/g, "")
+                      .toLowerCase()
+                      .trim();
+                    const textMatches = (selector, el) => {
+                      const raw = String(selector || "").trim();
+                      const textPrefix = raw.match(/^text=(.+)$/i);
+                      if (textPrefix) {
+                        const wanted = normalizeText(textPrefix[1]);
+                        const hay = normalizeText(el.innerText || el.textContent || el.value || "");
+                        return wanted ? hay.includes(wanted) : false;
+                      }
+                      const hasTextMatch = raw.match(/^(.*?):has-text\\((['"])(.*)\\2\\)$/i);
+                      if (hasTextMatch) {
+                        const wanted = normalizeText(hasTextMatch[3]);
+                        const hay = normalizeText(el.innerText || el.textContent || el.value || "");
+                        return wanted ? hay.includes(wanted) : false;
+                      }
+                      return false;
+                    };
+                    const safeQueryAll = (selector) => {
+                      const raw = String(selector || "").trim();
+                      if (!raw) return [];
+                      if (/^text=/i.test(raw) || /:has-text\\(/i.test(raw)) {
+                        return Array.from(document.querySelectorAll("body *")).filter((el) => isVisible(el) && textMatches(raw, el));
+                      }
+                      try {
+                        return Array.from(document.querySelectorAll(raw));
+                      } catch (_) {
+                        return [];
+                      }
+                    };
                     for (const selector of selectors || []) {
-                      const nodes = Array.from(document.querySelectorAll(selector || ""));
+                      const nodes = safeQueryAll(selector);
                       for (const node of nodes) {
                         if (!isVisible(node) || !canClick(node)) continue;
                         if (typeof node.click === "function") {
