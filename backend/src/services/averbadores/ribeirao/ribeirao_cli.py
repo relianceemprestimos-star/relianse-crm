@@ -323,6 +323,126 @@ def _log_login_flow(
     print(f"[LOGIN_FLOW] senha informada: {bool(password)}", file=sys.stderr, flush=True)
 
 
+async def _capture_login_fallback_snapshot(connector: PortalSecundarioLegacyConnector) -> dict:
+    try:
+        title = await connector.page.title()
+    except Exception:
+        title = ""
+    try:
+        current_url = connector.page.url or ""
+    except Exception:
+        current_url = ""
+    try:
+        body_text = await connector.page.locator("body").inner_text(timeout=5000)
+    except Exception:
+        try:
+            body_text = await connector.page.content()
+        except Exception:
+            body_text = ""
+    body_sample = str(body_text or "")[:500]
+    body_normalized = re.sub(r"\s+", " ", body_sample).strip().lower()
+    try:
+        login_found = await connector.page.locator("#txtLogin").count() > 0
+    except Exception:
+        login_found = False
+    try:
+        button_found = await connector.page.locator(
+            "button:has-text('Próxima'), button:has-text('Proxima'), input[value='Próxima'], input[value='Proxima'], #Entrar"
+        ).count() > 0
+    except Exception:
+        button_found = False
+    try:
+        password_found = await connector.page.locator("#txtSenha, input[type='password']").count() > 0
+    except Exception:
+        password_found = False
+    try:
+        input_count = await connector.page.locator("input").count()
+    except Exception:
+        input_count = 0
+
+    return {
+        "title": title,
+        "url": current_url,
+        "host": _safe_host(current_url),
+        "inputCount": input_count,
+        "loginFound": login_found,
+        "loginSelector": "#txtLogin" if login_found else "",
+        "passwordFound": password_found,
+        "passwordSelector": "#txtSenha" if password_found else "",
+        "buttonFound": button_found,
+        "buttonSelector": "button:has-text('Próxima')" if button_found else "",
+        "successFound": False,
+        "successSelector": "",
+        "operacionalFound": "operacional" in body_normalized,
+        "consultaMargemFound": "consulta de margem" in body_normalized,
+        "captchaFound": False,
+        "captchaSelector": "",
+        "errorText": "",
+        "bodySnippet": body_sample,
+        "bodyNormalized": body_normalized[:500],
+        "loginPageVisible": bool(login_found) and "login" in body_normalized,
+    }
+
+
+async def _goto_login_with_fallback(
+    connector: PortalSecundarioLegacyConnector,
+    target_url: str,
+    *,
+    stage_label: str,
+    timeout_ms: int,
+) -> tuple[dict, object | None, bool]:
+    print(f"[LOGIN_FLOW] {stage_label} goto iniciando", file=sys.stderr, flush=True)
+    response = None
+    last_exc: Exception | None = None
+    for wait_until, timeout in (
+        ("domcontentloaded", timeout_ms),
+        ("commit", max(timeout_ms, 60000)),
+        ("load", max(timeout_ms, 60000)),
+    ):
+        try:
+            response = await connector.page.goto(
+                target_url,
+                wait_until=wait_until,
+                timeout=timeout,
+            )
+            break
+        except PlaywrightTimeoutError as exc:
+            last_exc = exc
+            print(f"[LOGIN_FLOW] {stage_label} goto timeout no wait_until={wait_until}", file=sys.stderr, flush=True)
+        except Exception as exc:
+            last_exc = exc
+            print(f"[LOGIN_FLOW] {stage_label} goto falhou no wait_until={wait_until}: {exc}", file=sys.stderr, flush=True)
+        try:
+            await connector.page.wait_for_timeout(1200)
+        except Exception:
+            pass
+
+    snapshot = await _capture_login_fallback_snapshot(connector)
+    response_status = ""
+    response_url = ""
+    try:
+        response_status = str(getattr(response, "status", "") or "")
+    except Exception:
+        response_status = ""
+    try:
+        response_url = str(getattr(response, "url", "") or "")
+    except Exception:
+        response_url = ""
+    print(f"[LOGIN_FLOW] goto response status: {response_status}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] goto response url: {response_url}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] current_url: {snapshot.get('url') or ''}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] title: {snapshot.get('title') or ''}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] body_text_sample: {snapshot.get('bodySnippet') or ''}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] txtLogin encontrado: {bool(snapshot.get('loginFound'))}", file=sys.stderr, flush=True)
+    if snapshot.get("loginFound"):
+        print(f"[LOGIN_FLOW] {stage_label} goto concluído", file=sys.stderr, flush=True)
+        return snapshot, response, True
+
+    if last_exc is not None:
+        print(f"[LOGIN_FLOW] {stage_label} goto excecao final: {last_exc}", file=sys.stderr, flush=True)
+    return snapshot, response, False
+
+
 def _classify_login_issue(code: str | None, message: str, snapshot: dict | None = None) -> tuple[str, str]:
     raw_message = str(message or '').strip()
     normalized = raw_message.lower()
@@ -491,18 +611,22 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
             await dialog.dismiss()
         except Exception:
             pass
-    print("[LOGIN_FLOW] goto iniciando", file=sys.stderr, flush=True)
-    try:
-        await connector.page.goto(
-            connector.settings.pdc_portal_url,
-            wait_until="domcontentloaded",
-            timeout=max(45000, connector.settings.timeout_ms),
-        )
-    except PlaywrightTimeoutError as exc:
-        raise _typed_login_error("LOGIN_TIMEOUT", "O portal nao respondeu apos abrir a URL inicial.", stage="goto") from exc
-    except Exception as exc:
-        raise _typed_login_error("PORTAL_UNREACHABLE", "Nao foi possivel abrir o portal da Prefeitura.", stage="goto") from exc
-    print("[LOGIN_FLOW] goto concluído", file=sys.stderr, flush=True)
+    timeout_ms = max(60000, connector.settings.timeout_ms)
+    snapshot, response, login_found = await _goto_login_with_fallback(
+        connector,
+        connector.settings.pdc_portal_url,
+        stage_label="goto",
+        timeout_ms=timeout_ms,
+    )
+    if login_found:
+        _log_login_snapshot(snapshot, login, password, "goto")
+        _log_login_flow(snapshot, "goto", login, password, final_code="PENDING")
+    elif not snapshot.get("bodySnippet") and not snapshot.get("inputCount"):
+        print("[LOGIN_FLOW] error_code final: PORTAL_UNREACHABLE", file=sys.stderr, flush=True)
+        raise _typed_login_error("PORTAL_UNREACHABLE", "Nao foi possivel abrir o portal da Prefeitura.", stage="goto")
+    elif not snapshot.get("loginFound") and (snapshot.get("bodySnippet") or snapshot.get("inputCount")):
+        print("[LOGIN_FLOW] error_code final: LOGIN_FIELDS_NOT_FOUND", file=sys.stderr, flush=True)
+        raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "O sistema nao encontrou os campos de login do portal. O layout pode ter mudado.", stage="goto")
 
     await connector.page.wait_for_timeout(800)
     try:
