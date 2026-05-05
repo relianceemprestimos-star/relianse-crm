@@ -43,6 +43,7 @@ import { authMiddleware, loginWithCredentials, roleMiddleware } from './auth.js'
 import { hashPassword, verifyPassword } from './security.js';
 import {
   applyRibeiraoResultToClient,
+  getRibeiraoDiagnostics,
   getRibeiraoHistoryById,
   getRibeiraoConfigStatus,
   getRibeiraoSessionGate,
@@ -474,6 +475,10 @@ app.post('/api/settings', (req, res) => {
 
 app.get('/api/ribeirao/config', requirePrivilegedRole, (_req, res) => {
   return res.json({ config: getRibeiraoConfigStatus() });
+});
+
+app.get('/api/ribeirao/diagnostics', requirePrivilegedRole, (_req, res) => {
+  return res.json({ diagnostics: getRibeiraoDiagnostics() });
 });
 
 app.post('/api/upload', upload.single('file'), (req, res) => {

@@ -19,6 +19,7 @@ import type {
   Settings,
   UserRecord,
   UploadAnalysis,
+  RibeiraoDiagnostics,
 } from '../types';
 import { clearAuthSession, getAccessSession, getAuthToken } from './session';
 
@@ -220,6 +221,7 @@ export const api = {
     request<DashboardData>(`/api/dashboard${buildQuery(filters)}`),
   getSettings: () => request<{ settings: Settings }>('/api/settings'),
   getRibeiraoConfig: () => request<{ config: RibeiraoConfigStatus }>('/api/ribeirao/config'),
+  getRibeiraoDiagnostics: () => request<{ diagnostics: RibeiraoDiagnostics }>('/api/ribeirao/diagnostics'),
   getBases: (filters: Record<string, string | number | undefined | null> = {}) =>
     request<{ bases: Base[] }>(`/api/bases${buildQuery(filters)}`),
   renameBase: (id: number, nome_base: string) =>

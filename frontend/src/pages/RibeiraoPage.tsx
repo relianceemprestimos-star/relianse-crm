@@ -23,8 +23,8 @@ import type {
   RibeiraoBatchPreview,
   RibeiraoBatchRecord,
   RibeiraoBatchResultItem,
+  RibeiraoDiagnostics,
   RibeiraoHistoryItem,
-  RibeiraoConfigStatus,
   RibeiraoSession,
   RibeiraoSessionStatus,
 } from '../types';
@@ -59,7 +59,7 @@ export default function RibeiraoPage() {
   const [login, setLogin] = useState('');
   const [password, setPassword] = useState('');
   const [session, setSession] = useState<RibeiraoSession | null>(null);
-  const [ribeiraoConfig, setRibeiraoConfig] = useState<RibeiraoConfigStatus | null>(null);
+  const [ribeiraoDiagnostics, setRibeiraoDiagnostics] = useState<RibeiraoDiagnostics | null>(null);
   const [sessionLoading, setSessionLoading] = useState(false);
   const [sessionRefreshing, setSessionRefreshing] = useState(false);
   const [cpf, setCpf] = useState('');
@@ -92,7 +92,7 @@ export default function RibeiraoPage() {
     if (savedBatch) {
       void refreshBatchStatus(savedBatch);
     }
-    void loadRibeiraoConfig();
+    void loadRibeiraoDiagnostics();
     void loadHistory(historyFilters);
     void loadBatchHistory();
     void loadBases();
@@ -142,7 +142,7 @@ export default function RibeiraoPage() {
   }, [currentBatch?.id, currentBatch?.status]);
 
   const visibleHistory = useMemo(() => history, [history]);
-  const ribeiraoUrlReady = Boolean(ribeiraoConfig?.configured);
+  const ribeiraoUrlReady = Boolean(ribeiraoDiagnostics?.ribeiraoConfigured);
   const stats = useMemo(() => {
     const total = history.length;
     const withMargin = history.filter((item) => item.consulta_status === 'com_marg').length;
@@ -171,12 +171,12 @@ export default function RibeiraoPage() {
     }
   }
 
-  async function loadRibeiraoConfig() {
+  async function loadRibeiraoDiagnostics() {
     try {
-      const response = await api.getRibeiraoConfig();
-      setRibeiraoConfig(response.config);
+      const response = await api.getRibeiraoDiagnostics();
+      setRibeiraoDiagnostics(response.diagnostics);
     } catch (error) {
-      setRibeiraoConfig(null);
+      setRibeiraoDiagnostics(null);
       toast.error(error instanceof Error ? error.message : 'Falha ao carregar configuração do averbador.');
     }
   }
@@ -258,8 +258,8 @@ export default function RibeiraoPage() {
   }
 
   async function handleStartSession() {
-    if (!ribeiraoConfig?.configured) {
-      toast.error(ribeiraoConfig?.hint || 'Configure a URL do averbador no servidor antes de iniciar a sessão.');
+    if (!ribeiraoDiagnostics?.ribeiraoConfigured) {
+      toast.error(ribeiraoDiagnostics?.hint || 'Configure a URL do averbador no servidor antes de iniciar a sessão.');
       return;
     }
 
@@ -571,8 +571,13 @@ export default function RibeiraoPage() {
                 <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">
                   <p className="font-semibold text-white">URL do averbador não configurada no servidor.</p>
                   <p className="mt-1 text-amber-100/90">
-                    {ribeiraoConfig?.hint || 'Configure RIBEIRAO_AVERBADOR_URL no .env da VPS e reinicie os containers.'}
+                    {ribeiraoDiagnostics?.hint || 'Configure RIBEIRAO_AVERBADOR_URL no .env da VPS e reinicie os containers.'}
                   </p>
+                  {ribeiraoDiagnostics?.ribeiraoHost ? (
+                    <p className="mt-2 text-xs text-amber-50/80">
+                      Host detectado: {ribeiraoDiagnostics.ribeiraoHost}
+                    </p>
+                  ) : null}
                 </div>
               ) : null}
 

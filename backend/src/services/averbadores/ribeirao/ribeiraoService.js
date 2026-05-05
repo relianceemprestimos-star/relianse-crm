@@ -275,20 +275,54 @@ function maskRibeiraoUrl(value) {
   }
 }
 
-export function getRibeiraoConfigStatus() {
-  const configuredUrl = String(process.env.RIBEIRAO_AVERBADOR_URL || process.env.RIBEIRAO_AVERBADOR_CONSULTA_URL || '').trim();
-  const configured = !isPlaceholderUrl(configuredUrl) && configuredUrl.startsWith('http');
+function resolveRibeiraoUrls() {
+  const loginUrl = String(process.env.RIBEIRAO_AVERBADOR_URL || '').trim();
+  const consultaUrl = String(process.env.RIBEIRAO_AVERBADOR_CONSULTA_URL || '').trim() || loginUrl;
+  return {
+    loginUrl,
+    consultaUrl,
+  };
+}
+
+export function getRibeiraoDiagnostics() {
+  const { loginUrl, consultaUrl } = resolveRibeiraoUrls();
+  const effectiveUrl = loginUrl || consultaUrl;
+  const configured = Boolean(loginUrl) && !isPlaceholderUrl(loginUrl) && loginUrl.startsWith('http');
+  const fallbackConsulta = Boolean(consultaUrl) && !isPlaceholderUrl(consultaUrl) && consultaUrl.startsWith('http');
+  let ribeiraoHost = '';
+  try {
+    if (effectiveUrl) {
+      ribeiraoHost = new URL(effectiveUrl).hostname;
+    }
+  } catch {
+    ribeiraoHost = '';
+  }
 
   return {
-    configured,
-    env_key: 'RIBEIRAO_AVERBADOR_URL',
-    value_masked: configured ? maskRibeiraoUrl(configuredUrl) : '',
+    ribeiraoConfigured: configured,
+    ribeiraoHost,
+    hasLoginUrl: Boolean(loginUrl) && !isPlaceholderUrl(loginUrl) && loginUrl.startsWith('http'),
+    hasConsultaUrl: fallbackConsulta,
+    headless: resolveRibeiraoHeadless(),
+    loginUrlMasked: configured ? maskRibeiraoUrl(loginUrl) : '',
+    consultaUrlMasked: fallbackConsulta ? maskRibeiraoUrl(consultaUrl) : '',
     message: configured
       ? 'URL do averbador configurada no servidor.'
       : 'URL do averbador não configurada no servidor.',
     hint: configured
       ? 'A consulta Ribeirão está pronta para usar essa URL.'
       : 'Configure RIBEIRAO_AVERBADOR_URL no .env da VPS e reinicie os containers.',
+  };
+}
+
+export function getRibeiraoConfigStatus() {
+  const diagnostics = getRibeiraoDiagnostics();
+  return {
+    configured: diagnostics.ribeiraoConfigured,
+    env_key: 'RIBEIRAO_AVERBADOR_URL',
+    value_masked: diagnostics.loginUrlMasked || diagnostics.consultaUrlMasked || '',
+    message: diagnostics.message,
+    hint: diagnostics.hint,
   };
 }
 
@@ -450,7 +484,8 @@ export async function startRibeiraoSession({ userId, login, password, timeoutSec
       0
   );
 
-  const configuredUrl = process.env.RIBEIRAO_AVERBADOR_URL || process.env.RIBEIRAO_AVERBADOR_CONSULTA_URL || '';
+  const { loginUrl, consultaUrl } = resolveRibeiraoUrls();
+  const configuredUrl = loginUrl || consultaUrl || '';
   if (isPlaceholderUrl(configuredUrl) || !String(configuredUrl || '').startsWith('http')) {
     const message = 'URL do averbador de Ribeirao nao configurada. Configure RIBEIRAO_AVERBADOR_URL no .env da VPS e reinicie os containers.';
     run(

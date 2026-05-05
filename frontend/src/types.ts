@@ -183,6 +183,18 @@ export interface RibeiraoConfigStatus {
   hint: string;
 }
 
+export interface RibeiraoDiagnostics {
+  ribeiraoConfigured: boolean;
+  ribeiraoHost: string;
+  hasLoginUrl: boolean;
+  hasConsultaUrl: boolean;
+  headless: boolean;
+  loginUrlMasked?: string;
+  consultaUrlMasked?: string;
+  message?: string;
+  hint?: string;
+}
+
 export interface UserRecord {
   id: number;
   name: string;
