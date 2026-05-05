@@ -658,7 +658,7 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
     async def _extract_value_by_labels(self, labels: list[str]) -> str | None:
         try:
             value = await self.page.evaluate(
-                """(labels) => {
+                r"""(labels) => {
                     const normalize = (v) =>
                       String(v || "")
                         .normalize("NFD")

@@ -28,6 +28,7 @@ const API_URL = String(import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 export class ApiError extends Error {
   code?: string;
   status?: number;
+  data?: unknown;
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -62,6 +63,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const error = new ApiError(data?.message || 'Sessão expirada. Faça login novamente.');
     error.code = data?.code;
     error.status = response.status;
+    error.data = data;
     throw error;
   }
 
@@ -69,6 +71,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const error = new ApiError(data?.message || 'Erro inesperado na API.');
     error.code = data?.code;
     error.status = response.status;
+    error.data = data;
     throw error;
   }
 
@@ -104,6 +107,7 @@ async function requestBlob(path: string, init: RequestInit = {}): Promise<Blob> 
     }
     const error = new ApiError('Sessão expirada. Faça login novamente.');
     error.status = response.status;
+    error.data = null;
     throw error;
   }
 
@@ -118,6 +122,7 @@ async function requestBlob(path: string, init: RequestInit = {}): Promise<Blob> 
     }
     const error = new ApiError(message);
     error.status = response.status;
+    error.data = null;
     throw error;
   }
 

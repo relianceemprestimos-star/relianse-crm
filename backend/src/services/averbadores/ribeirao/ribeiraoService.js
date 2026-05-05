@@ -72,6 +72,7 @@ function normalizeSessionStatus(status) {
   if (text.includes('aguard')) return RIBEIRAO_SESSION_STATUSES.WAITING_CAPTCHA;
   if (text.includes('conectado')) return RIBEIRAO_SESSION_STATUSES.CONNECTED;
   if (text.includes('login')) return RIBEIRAO_SESSION_STATUSES.LOGIN_ERROR;
+  if (text.includes('unreach') || text.includes('browser_launch_error') || text.includes('launch')) return RIBEIRAO_SESSION_STATUSES.ERROR;
   if (text.includes('expir')) return RIBEIRAO_SESSION_STATUSES.SESSION_EXPIRED;
   if (text.includes('erro')) return RIBEIRAO_SESSION_STATUSES.ERROR;
   return RIBEIRAO_SESSION_STATUSES.CONNECTING;
@@ -189,6 +190,9 @@ function normalizeRibeiraoSessionMessage(status, message, errorCode = null) {
     return 'A sess?o com o portal expirou. Inicie uma nova sess?o e clique em Atualizar status.';
   }
   if (normalizedStatus === RIBEIRAO_SESSION_STATUSES.ERROR || normalizedStatus === 'browser_launch_error') {
+    if (normalizedErrorCode === 'PORTAL_UNREACHABLE') {
+      return 'Não foi possível acessar o portal da Prefeitura no momento.';
+    }
     return 'Erro ao iniciar navegador de consulta no servidor. Verifique configura??o do Playwright em produ??o.';
   }
   if (!raw) {
@@ -453,6 +457,7 @@ export function getRibeiraoSessionStatus(sessionId) {
     return {
       ...cached,
       message: normalizeRibeiraoSessionMessage(cached.status, cached.message, cached.error_code),
+      stage: cached.stage || null,
     };
   }
 
@@ -486,6 +491,7 @@ export function getRibeiraoSessionStatus(sessionId) {
     user_id: Number(row.user_id),
     status,
     message,
+    stage: fileStatus?.stage || row.stage || null,
     started_at: row.started_at,
     finished_at: row.finished_at,
     created_at: row.created_at,
@@ -604,6 +610,7 @@ export async function startRibeiraoSession({ userId, login, password, timeoutSec
     user_id: userId,
     status: RIBEIRAO_SESSION_STATUSES.CONNECTED,
     message: result?.message || 'Sessao autenticada com sucesso.',
+    stage: result?.stage || null,
     started_at: sessionAt,
     finished_at: null,
     created_at: sessionAt,

@@ -354,6 +354,8 @@ export type RibeiraoSessionStatus =
   | 'erro_login'
   | 'login_error'
   | 'portal_unavailable'
+  | 'portal_unreachable'
+  | 'browser_launch_error'
   | 'sessao_expirada'
   | 'expired'
   | 'error'
@@ -387,6 +389,7 @@ export interface RibeiraoSession {
   status: RibeiraoSessionStatus;
   message?: string;
   error_code?: string | null;
+  stage?: string | null;
   started_at?: string;
   finished_at?: string | null;
   created_at?: string;

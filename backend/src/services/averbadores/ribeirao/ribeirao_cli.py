@@ -11,7 +11,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
-from playwright.async_api import async_playwright
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError, async_playwright
+
+
+class RibeiraoLoginError(RuntimeError):
+    def __init__(self, code: str, message: str, stage: str | None = None):
+        self.code = str(code or "UNKNOWN_LOGIN_ERROR").upper()
+        self.stage = str(stage or "").strip() or None
+        self.message = str(message or "")
+        super().__init__(f"{self.code}: {self.message}")
 
 
 def _read_json_stdin() -> dict:
@@ -140,8 +148,8 @@ LOGIN_ERROR_CODES = {
 }
 
 
-def _typed_login_error(code: str, message: str) -> RuntimeError:
-    return RuntimeError(f"{code}: {message}")
+def _typed_login_error(code: str, message: str, stage: str | None = None) -> RibeiraoLoginError:
+    return RibeiraoLoginError(code, message, stage)
 
 
 def _split_typed_login_error(message: str | None) -> tuple[str | None, str]:
@@ -251,8 +259,8 @@ async def _capture_login_snapshot(connector: PortalSecundarioLegacyConnector) ->
               captchaFound: Boolean(captchaSelector),
               captchaSelector,
               errorText,
-              bodySnippet: bodyText.slice(0, 260),
-              bodyNormalized: bodyNormalized.slice(0, 260),
+              bodySnippet: bodyText.slice(0, 500),
+              bodyNormalized: bodyNormalized.slice(0, 500),
               loginPageVisible: Boolean(loginSelector) && bodyNormalized.includes("login"),
             };
         }""",
@@ -288,6 +296,31 @@ def _log_login_snapshot(snapshot: dict, login: str, password: str, stage: str) -
         print(f"[RIBEIRAO_LOGIN] seletor senha usado: {snapshot.get('passwordSelector')}", file=sys.stderr, flush=True)
     if snapshot.get('buttonSelector'):
         print(f"[RIBEIRAO_LOGIN] seletor login button usado: {snapshot.get('buttonSelector')}", file=sys.stderr, flush=True)
+
+
+def _log_login_flow(
+    snapshot: dict,
+    stage: str,
+    login: str,
+    password: str,
+    *,
+    click_executed: bool = False,
+    final_code: str = "",
+    certificate_alert: bool = False,
+) -> None:
+    body_sample = str(snapshot.get("bodySnippet") or "")[:500]
+    print(f"[LOGIN_FLOW] stage: {stage}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] current_url: {snapshot.get('url') or ''}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] title: {snapshot.get('title') or ''}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] body_text_sample: {body_sample}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] txtLogin encontrado: {bool(snapshot.get('loginFound'))}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] botao_proxima encontrado: {bool(snapshot.get('buttonFound'))}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] clique_proxima executado: {bool(click_executed)}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] campo_senha encontrado: {bool(snapshot.get('passwordFound'))}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] alerta_certificado encontrado: {bool(certificate_alert)}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] error_code final: {str(final_code or '').upper()}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] login mascarado: {_mask_login(login)}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] senha informada: {bool(password)}", file=sys.stderr, flush=True)
 
 
 def _classify_login_issue(code: str | None, message: str, snapshot: dict | None = None) -> tuple[str, str]:
@@ -458,8 +491,19 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
             await dialog.dismiss()
         except Exception:
             pass
+    print("[LOGIN_FLOW] goto iniciando", file=sys.stderr, flush=True)
+    try:
+        await connector.page.goto(
+            connector.settings.pdc_portal_url,
+            wait_until="domcontentloaded",
+            timeout=max(45000, connector.settings.timeout_ms),
+        )
+    except PlaywrightTimeoutError as exc:
+        raise _typed_login_error("LOGIN_TIMEOUT", "O portal nao respondeu apos abrir a URL inicial.", stage="goto") from exc
+    except Exception as exc:
+        raise _typed_login_error("PORTAL_UNREACHABLE", "Nao foi possivel abrir o portal da Prefeitura.", stage="goto") from exc
+    print("[LOGIN_FLOW] goto concluído", file=sys.stderr, flush=True)
 
-    await connector.page.goto(connector.settings.pdc_portal_url, wait_until="domcontentloaded", timeout=max(45000, connector.settings.timeout_ms))
     await connector.page.wait_for_timeout(800)
     try:
         await connector.page.locator("#entendi-cookies").click(timeout=2000)
@@ -471,102 +515,140 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
 
     connector.page.on("dialog", on_dialog)
     try:
-        await connector._open_login_entry()
-        await connector._open_login_administrativo()
+        try:
+            await connector._open_login_entry()
+        except Exception as exc:
+            raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "Nao foi possivel localizar a entrada de login do portal.", stage="open_login_entry") from exc
+        snapshot = await _capture_login_snapshot(connector)
+        _log_login_snapshot(snapshot, login, password, "open-login-entry")
+        _log_login_flow(snapshot, "open-login-entry", login, password, final_code="PENDING")
+
+        try:
+            await connector._open_login_administrativo()
+        except Exception as exc:
+            raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "Nao foi possivel abrir a tela de login do portal.", stage="open_login_administrativo") from exc
+        snapshot = await _capture_login_snapshot(connector)
+        _log_login_snapshot(snapshot, login, password, "open-login-administrativo")
+        _log_login_flow(snapshot, "open-login-administrativo", login, password, final_code="PENDING")
 
         if not login:
-            raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "Login ausente para a sessao Ribeirao.")
+            raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "Login ausente para a sessao Ribeirao.", stage="login_missing")
 
         snapshot = await _capture_login_snapshot(connector)
         _log_login_snapshot(snapshot, login, password, "abertura")
+        _log_login_flow(snapshot, "abertura", login, password, final_code="PENDING")
         if not snapshot.get("loginFound"):
-            raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "O sistema nao encontrou os campos de login do portal. O layout pode ter mudado.")
-        if not await connector._fill_login_user(login):
+            raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "O sistema nao encontrou os campos de login do portal. O layout pode ter mudado.", stage="login_fields")
+        try:
+            filled_login = await connector._fill_login_user(login)
+        except Exception as exc:
+            raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "Nao consegui preencher o login.", stage="fill_login") from exc
+        if not filled_login:
             try:
                 await connector.page.locator("#txtLogin").fill(login, timeout=3000)
             except Exception as exc:
-                raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "Nao consegui preencher o login.") from exc
+                raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "Nao consegui preencher o login.", stage="fill_login") from exc
 
         snapshot = await _capture_login_snapshot(connector)
         _log_login_snapshot(snapshot, login, password, "login-preenchido")
+        _log_login_flow(snapshot, "login-preenchido", login, password, final_code="PENDING")
         if not snapshot.get("buttonFound"):
-            raise _typed_login_error("LOGIN_BUTTON_NOT_FOUND", "O sistema nao encontrou o botao de login do portal.")
-        if not await connector._click_login_submit():
+            raise _typed_login_error("LOGIN_BUTTON_NOT_FOUND", "O sistema nao encontrou o botao de login do portal.", stage="button_login")
+        try:
+            clicked_login = await connector._click_login_submit()
+        except Exception as exc:
+            raise _typed_login_error("LOGIN_BUTTON_NOT_FOUND", "Nao consegui acionar o botao de login.", stage="button_login") from exc
+        if not clicked_login:
             try:
                 await connector.page.keyboard.press("Enter")
-            except Exception:
-                raise _typed_login_error("LOGIN_BUTTON_NOT_FOUND", "Nao consegui acionar o botao de login.")
+            except Exception as exc:
+                raise _typed_login_error("LOGIN_BUTTON_NOT_FOUND", "Nao consegui acionar o botao de login.", stage="button_login") from exc
 
-        print(f"[RIBEIRAO_LOGIN] clique em login executado", file=sys.stderr, flush=True)
+        print("[RIBEIRAO_LOGIN] clique em login executado", file=sys.stderr, flush=True)
         await connector.page.wait_for_timeout(1500)
         snapshot = await _capture_login_snapshot(connector)
         _log_login_snapshot(snapshot, login, password, "apos-primeiro-clique")
+        _log_login_flow(snapshot, "apos-primeiro-clique", login, password, click_executed=True, final_code="PENDING", certificate_alert=bool(dialog_messages))
 
         if dialog_messages:
             joined = " | ".join(dialog_messages).lower()
             if "certificado" in joined or "login-identific" in joined or "nao encontrado" in joined or "n?o encontrado" in joined:
-                raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticacao manual por certificado digital.")
+                raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticacao manual por certificado digital.", stage="alerta_certificado")
 
         if snapshot.get("captchaFound"):
-            raise _typed_login_error("CAPTCHA_REQUIRED", "O portal solicitou validacao manual.")
+            raise _typed_login_error("CAPTCHA_REQUIRED", "O portal solicitou validacao manual.", stage="captcha")
         if snapshot.get("errorText"):
             code, typed_message = _classify_login_issue(None, snapshot.get("errorText") or '', snapshot)
             if code in {"LOGIN_REJECTED", "CAPTCHA_REQUIRED", "MANUAL_AUTH_REQUIRED"}:
-                raise _typed_login_error(code, typed_message)
+                raise _typed_login_error(code, typed_message, stage="erro_texto_portal")
 
         if snapshot.get("passwordFound"):
             if not password:
-                raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "O portal exibiu senha, mas a senha nao foi informada.")
-            if not await connector._fill_login_password(password):
+                raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "O portal exibiu senha, mas a senha nao foi informada.", stage="senha_ausente")
+            try:
+                filled_password = await connector._fill_login_password(password)
+            except Exception as exc:
+                raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "Nao consegui preencher a senha.", stage="fill_password") from exc
+            if not filled_password:
                 try:
                     await connector.page.locator("#txtSenha").fill(password, timeout=3000)
                 except Exception as exc:
-                    raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "Nao consegui preencher a senha.") from exc
+                    raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "Nao consegui preencher a senha.", stage="fill_password") from exc
 
             snapshot = await _capture_login_snapshot(connector)
             _log_login_snapshot(snapshot, login, password, "senha-preenchida")
+            _log_login_flow(snapshot, "senha-preenchida", login, password, final_code="PENDING")
             if not snapshot.get("buttonFound"):
-                raise _typed_login_error("LOGIN_BUTTON_NOT_FOUND", "O sistema nao encontrou o botao de login do portal.")
-            if not await connector._click_login_submit():
+                raise _typed_login_error("LOGIN_BUTTON_NOT_FOUND", "O sistema nao encontrou o botao de login do portal.", stage="button_password")
+            try:
+                clicked_password = await connector._click_login_submit()
+            except Exception as exc:
+                raise _typed_login_error("LOGIN_BUTTON_NOT_FOUND", "Nao consegui acionar o botao de login.", stage="button_password") from exc
+            if not clicked_password:
                 try:
                     await connector.page.keyboard.press("Enter")
                 except Exception as exc:
-                    raise _typed_login_error("LOGIN_BUTTON_NOT_FOUND", "Nao consegui acionar o botao de login.") from exc
+                    raise _typed_login_error("LOGIN_BUTTON_NOT_FOUND", "Nao consegui acionar o botao de login.", stage="button_password") from exc
 
-            print(f"[RIBEIRAO_LOGIN] clique em login executado", file=sys.stderr, flush=True)
+            print("[RIBEIRAO_LOGIN] clique em login executado", file=sys.stderr, flush=True)
             await connector.page.wait_for_timeout(1500)
             snapshot = await _capture_login_snapshot(connector)
             _log_login_snapshot(snapshot, login, password, "apos-segundo-clique")
+            _log_login_flow(snapshot, "apos-segundo-clique", login, password, click_executed=True, final_code="PENDING", certificate_alert=bool(dialog_messages))
         else:
             await connector.page.wait_for_timeout(2500)
             snapshot = await _capture_login_snapshot(connector)
             _log_login_snapshot(snapshot, login, password, "apos-espera-sem-senha")
+            _log_login_flow(snapshot, "apos-espera-sem-senha", login, password, click_executed=True, final_code="PENDING", certificate_alert=bool(dialog_messages))
 
         if dialog_messages:
             joined = " | ".join(dialog_messages).lower()
             if "certificado" in joined or "login-identific" in joined or "nao encontrado" in joined or "n?o encontrado" in joined:
-                raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticacao manual por certificado digital.")
+                raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticacao manual por certificado digital.", stage="alerta_certificado")
 
         if snapshot.get("captchaFound"):
-            raise _typed_login_error("CAPTCHA_REQUIRED", "O portal solicitou validacao manual.")
+            raise _typed_login_error("CAPTCHA_REQUIRED", "O portal solicitou validacao manual.", stage="captcha")
         if snapshot.get("successFound") or snapshot.get("operacionalFound") or snapshot.get("consultaMargemFound"):
             pass
         elif snapshot.get("loginPageVisible") or snapshot.get("loginFound"):
             if snapshot.get("errorText"):
                 code, typed_message = _classify_login_issue(None, snapshot.get("errorText") or '', snapshot)
                 if code == "LOGIN_REJECTED":
-                    raise _typed_login_error(code, typed_message)
+                    raise _typed_login_error(code, typed_message, stage="erro_texto_portal")
                 if code in {"MANUAL_AUTH_REQUIRED", "CAPTCHA_REQUIRED"}:
-                    raise _typed_login_error(code, typed_message)
+                    raise _typed_login_error(code, typed_message, stage="erro_texto_portal")
             if snapshot.get("host") and "login-identific" in str(snapshot.get("host") or '').lower():
-                raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticacao manual por certificado digital.")
-            raise _typed_login_error("LOGIN_STILL_ON_SAME_PAGE", "O portal permaneceu na tela de login sem confirmar autenticacao.")
+                raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticacao manual por certificado digital.", stage="certificado")
+            raise _typed_login_error("LOGIN_STILL_ON_SAME_PAGE", "O portal permaneceu na tela de login sem confirmar autenticacao.", stage="mesma_tela")
         else:
             if snapshot.get("host") and ("login-identific" in str(snapshot.get("host") or '').lower() or 'certificadodigital' in str(snapshot.get("url") or '').lower()):
-                raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticacao manual por certificado digital.")
-            raise _typed_login_error("PORTAL_CHANGED", "O layout do portal mudou e o fluxo de login nao foi reconhecido.")
+                raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticacao manual por certificado digital.", stage="certificado")
+            raise _typed_login_error("PORTAL_CHANGED", "O layout do portal mudou e o fluxo de login nao foi reconhecido.", stage="portal_alterado")
 
-        await connector._select_profile_access()
+        try:
+            await connector._select_profile_access()
+        except Exception as exc:
+            raise _typed_login_error("PORTAL_CHANGED", "Nao foi possivel selecionar o perfil de acesso no portal.", stage="select_profile_access") from exc
         consulta_url = str(connector.settings.pdc_portal_url or "")
         if "Login.aspx" in consulta_url:
             consulta_url = consulta_url.replace("/Login.aspx", "/Margem/ConsultaMargem.aspx")
@@ -574,17 +656,28 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
             consulta_url = consulta_url.replace("/Inicial/Inicial.aspx", "/Margem/ConsultaMargem.aspx")
         elif "ConsultaMargem.aspx" not in consulta_url:
             consulta_url = "https://saec.consiglog.com.br/Margem/ConsultaMargem.aspx"
-        await connector.page.goto(
-            consulta_url,
-            wait_until="domcontentloaded",
-            timeout=max(45000, connector.settings.timeout_ms),
-        )
+        print("[LOGIN_FLOW] consulta_margem goto iniciando", file=sys.stderr, flush=True)
+        try:
+            await connector.page.goto(
+                consulta_url,
+                wait_until="domcontentloaded",
+                timeout=max(45000, connector.settings.timeout_ms),
+            )
+        except PlaywrightTimeoutError as exc:
+            raise _typed_login_error("LOGIN_TIMEOUT", "O portal nao respondeu ao abrir Consulta de Margem.", stage="goto_consulta") from exc
+        except Exception as exc:
+            raise _typed_login_error("LOGIN_OK_NAVIGATION_FAILED", "Nao foi possivel abrir Consulta de Margem.", stage="goto_consulta") from exc
+        print("[LOGIN_FLOW] consulta_margem goto concluído", file=sys.stderr, flush=True)
         await connector.page.wait_for_timeout(1200)
-        await connector._prepare_consulta_context()
+        try:
+            await connector._prepare_consulta_context()
+        except Exception as exc:
+            raise _typed_login_error("LOGIN_OK_NAVIGATION_FAILED", "Login aceito, mas nao foi possivel preparar a tela de Consulta de Margem.", stage="prepare_consulta") from exc
         if not await connector._wait_any(connector.settings.pdc_selector_cpf_input, 5000):
-            raise _typed_login_error("LOGIN_OK_NAVIGATION_FAILED", "Login aceito, mas nao foi possivel abrir Consulta de Margem.")
+            raise _typed_login_error("LOGIN_OK_NAVIGATION_FAILED", "Login aceito, mas nao foi possivel abrir Consulta de Margem.", stage="cpf_input")
         final_snapshot = await _capture_login_snapshot(connector)
         _log_login_snapshot(final_snapshot, login, password, "consulta-preparada")
+        _log_login_flow(final_snapshot, "consulta-preparada", login, password, click_executed=True, final_code="OK", certificate_alert=bool(dialog_messages))
     finally:
         try:
             connector.page.remove_listener("dialog", on_dialog)
@@ -677,10 +770,17 @@ async def start_session(payload: dict) -> dict:
         _write_status(session_id, "conectado", "Sessao autenticada com sucesso.")
         return {"status": "conectado", "session_id": session_id}
     except Exception as exc:
+        traceback.print_exc(file=sys.stderr)
         message = str(exc)
-        code, clean_message = _split_typed_login_error(message)
+        code = getattr(exc, "code", None)
+        stage = getattr(exc, "stage", None)
+        if not code:
+            code, message = _split_typed_login_error(message)
+        clean_message = message
         status = "erro_login"
         extra = {"error_code": code} if code else None
+        if stage:
+            extra = {**(extra or {}), "stage": stage}
 
         if code == "MANUAL_AUTH_REQUIRED":
             status = "aguardando_validacao_manual"
@@ -690,9 +790,9 @@ async def start_session(payload: dict) -> dict:
             status = "erro_login"
         elif code == "LOGIN_REJECTED":
             status = "erro_login"
-        elif code in {"LOGIN_FIELDS_NOT_FOUND", "LOGIN_BUTTON_NOT_FOUND", "LOGIN_TIMEOUT", "LOGIN_STILL_ON_SAME_PAGE", "PORTAL_CHANGED", "UNKNOWN_LOGIN_ERROR"}:
+        elif code in {"LOGIN_FIELDS_NOT_FOUND", "LOGIN_BUTTON_NOT_FOUND", "LOGIN_TIMEOUT", "LOGIN_STILL_ON_SAME_PAGE", "PORTAL_CHANGED", "UNKNOWN_LOGIN_ERROR", "PORTAL_UNREACHABLE"}:
             status = "erro_login"
-        elif "browser" in message.lower() or "x server" in message.lower() or "$display" in message.lower():
+        elif not code and not stage and ("browser" in message.lower() or "x server" in message.lower() or "$display" in message.lower()):
             status = "browser_launch_error"
             clean_message = "Erro ao iniciar navegador de consulta no servidor. Verifique configuracao do Playwright/Chromium em producao."
             code = code or "BROWSER_LAUNCH_ERROR"
@@ -704,6 +804,7 @@ async def start_session(payload: dict) -> dict:
             "status": status,
             "session_id": session_id,
             "code": code,
+            "stage": stage,
             "message": clean_message or message,
         }
     finally:
@@ -769,8 +870,15 @@ async def query_cpf(payload: dict) -> dict:
     except Exception as exc:
         traceback.print_exc(file=sys.stderr)
         message = str(exc)
-        code, clean_message = _split_typed_login_error(message)
+        code = getattr(exc, "code", None)
+        stage = getattr(exc, "stage", None)
+        if not code:
+            code, message = _split_typed_login_error(message)
+        clean_message = message
         status = "erro"
+        extra = {"error_code": code} if code else None
+        if stage:
+            extra = {**(extra or {}), "stage": stage}
         if code == "MANUAL_AUTH_REQUIRED":
             status = "aguardando_validacao_manual"
         elif code == "CAPTCHA_REQUIRED":
@@ -779,22 +887,23 @@ async def query_cpf(payload: dict) -> dict:
             status = "login_error"
         elif code == "LOGIN_OK_NAVIGATION_FAILED":
             status = "login_error"
-        elif code == "LOGIN_FIELDS_NOT_FOUND" or code == "LOGIN_BUTTON_NOT_FOUND" or code == "LOGIN_TIMEOUT" or code == "LOGIN_STILL_ON_SAME_PAGE" or code == "PORTAL_CHANGED" or code == "UNKNOWN_LOGIN_ERROR":
+        elif code == "LOGIN_FIELDS_NOT_FOUND" or code == "LOGIN_BUTTON_NOT_FOUND" or code == "LOGIN_TIMEOUT" or code == "LOGIN_STILL_ON_SAME_PAGE" or code == "PORTAL_CHANGED" or code == "UNKNOWN_LOGIN_ERROR" or code == "PORTAL_UNREACHABLE":
             status = "login_error"
         elif "sessao" in message.lower() and "expir" in message.lower():
             status = "session_expired"
-        elif "browser" in message.lower() or "x server" in message.lower() or "$display" in message.lower():
+        elif not code and not stage and ("browser" in message.lower() or "x server" in message.lower() or "$display" in message.lower()):
             status = "browser_launch_error"
             clean_message = "Erro ao iniciar navegador de consulta no servidor. Verifique configuracao do Playwright/Chromium em producao."
             code = code or "BROWSER_LAUNCH_ERROR"
 
-        _write_status(session_id, status, clean_message or message, {"error_code": code} if code else None)
+        _write_status(session_id, status, clean_message or message, extra)
         return {
             "ok": False,
             "cpf": cpf,
             "session_id": session_id,
             "status": status,
             "code": code or ("BROWSER_LAUNCH_ERROR" if status == "browser_launch_error" else None),
+            "stage": stage,
             "message": clean_message or message,
         }
     finally:
@@ -835,21 +944,25 @@ async def main_async() -> None:
     except Exception as exc:
         session_id = str(payload.get("session_id") or payload.get("sessionId") or "1")
         message = str(exc)
-        code = None
+        code = getattr(exc, "code", None)
+        stage = getattr(exc, "stage", None)
         if action == "start_session":
             status = "erro_login"
-        elif "captcha" in message.lower():
+        elif not code and "captcha" in message.lower():
             status = "captcha_required"
-        elif "login" in message.lower():
+        elif not code and "login" in message.lower():
             status = "login_error"
-        elif "browser" in message.lower() or "x server" in message.lower() or "$display" in message.lower() or "headed browser" in message.lower():
+        elif not code and not stage and ("browser" in message.lower() or "x server" in message.lower() or "$display" in message.lower() or "headed browser" in message.lower()):
             status = "browser_launch_error"
             code = "BROWSER_LAUNCH_ERROR"
             message = "Erro ao iniciar navegador de consulta no servidor. Verifique configuracao do Playwright/Chromium em producao."
         else:
             status = "erro"
         try:
-            _write_status(session_id, status, message)
+            extra = {"error_code": code} if code else None
+            if stage:
+                extra = {**(extra or {}), "stage": stage}
+            _write_status(session_id, status, message, extra)
         except Exception:
             pass
         result = {
@@ -857,6 +970,7 @@ async def main_async() -> None:
             "session_id": session_id,
             "status": status,
             "code": code,
+            "stage": stage,
             "message": message,
         }
 

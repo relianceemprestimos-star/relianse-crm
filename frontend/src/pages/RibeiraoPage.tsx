@@ -306,8 +306,21 @@ export default function RibeiraoPage() {
       }
       await loadHistory();
     } catch (error) {
-      setSession(null);
-      window.localStorage.removeItem(ROLE_SESSION_KEY);
+      const errorData = error instanceof ApiError ? (error.data as any) : null;
+      const fallbackSession = errorData?.session || (errorData?.session_id ? {
+        id: Number(errorData.session_id),
+        user_id: getAccessSession()?.id || 0,
+        status: String(errorData.status || errorData.code || 'erro').toLowerCase(),
+        message: errorData.message || (error instanceof Error ? error.message : ''),
+        error_code: String(errorData.code || '').toUpperCase() || null,
+        stage: errorData.stage || null,
+      } : null);
+      if (fallbackSession) {
+        setSession(fallbackSession as RibeiraoSession);
+      } else {
+        setSession(null);
+        window.localStorage.removeItem(ROLE_SESSION_KEY);
+      }
       toast.error(getFriendlyRibeiraoError(error, 'Falha ao iniciar sessão.'));
     } finally {
       setSessionLoading(false);
@@ -569,6 +582,16 @@ export default function RibeiraoPage() {
               <div className="rounded-2xl border border-border bg-bg/60 p-4 text-sm text-slate-300">
                 <p className="font-semibold text-white">Status da sessão</p>
                 <p className="mt-2 text-slate-400">{getSessionDisplayMessage(session)}</p>
+                {session?.error_code || session?.stage ? (
+                  <div className="mt-3 rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3 text-xs text-slate-300">
+                    <p>
+                      Código técnico: <span className="font-semibold text-white">{session?.error_code || 'N/A'}</span>
+                    </p>
+                    <p className="mt-1">
+                      Etapa: <span className="font-semibold text-white">{session?.stage || 'N/A'}</span>
+                    </p>
+                  </div>
+                ) : null}
                 {session?.id ? <p className="mt-2 text-xs text-slate-500">Sessão #{session.id}</p> : null}
               </div>
 
@@ -1447,6 +1470,9 @@ function getSessionBlockingMessage(session?: RibeiraoSession | null) {
     if (errorCode === 'PORTAL_CHANGED') {
       return 'O layout do portal mudou e o fluxo de login não foi reconhecido.';
     }
+    if (errorCode === 'PORTAL_UNREACHABLE') {
+      return 'Não foi possível acessar o portal da Prefeitura no momento.';
+    }
     if (errorCode === 'LOGIN_REJECTED') {
       return 'O portal recusou o login/senha informados.';
     }
@@ -1497,7 +1523,16 @@ function getSessionDisplayMessage(session?: RibeiraoSession | null) {
   if (errorCode === 'PORTAL_CHANGED') {
     return 'O layout do portal mudou e o fluxo de login não foi reconhecido.';
   }
-  if (errorCode === 'LOGIN_REJECTED' || status === 'erro_login' || status === 'login_error') {
+  if (errorCode === 'PORTAL_UNREACHABLE') {
+    return 'Não foi possível acessar o portal da Prefeitura no momento.';
+  }
+  if (errorCode === 'LOGIN_REJECTED') {
+    return 'O portal recusou o login/senha informados.';
+  }
+  if (status === 'portal_unreachable' || status === 'portal_unavailable') {
+    return 'Não foi possível acessar o portal da Prefeitura no momento.';
+  }
+  if (status === 'erro_login' || status === 'login_error') {
     return 'O portal recusou o login/senha informados.';
   }
   if (status === 'sessao_expirada' || status === 'expired') {
@@ -1538,6 +1573,9 @@ function getFriendlyRibeiraoError(error: unknown, fallback: string) {
   }
   if (code === 'LOGIN_ERROR' || code === 'LOGIN_REJECTED') {
     return 'O portal recusou o login/senha informados.';
+  }
+  if (code === 'PORTAL_UNREACHABLE') {
+    return 'Não foi possível acessar o portal da Prefeitura no momento.';
   }
   if (code === 'LOGIN_FIELDS_NOT_FOUND') {
     return 'O sistema não encontrou os campos de login do portal. O layout pode ter mudado.';
