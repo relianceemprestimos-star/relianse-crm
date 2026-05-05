@@ -67,6 +67,16 @@ class MargemConsultaService:
             return True
         return requested
 
+    def _log_playwright_diagnostics(self, stage: str) -> None:
+        executable_path = ""
+        try:
+            executable_path = str(getattr(getattr(self.playwright, "chromium", None), "executable_path", "") or "")
+        except Exception:
+            executable_path = ""
+        print(f"[PLAYWRIGHT] stage: {stage}", file=sys.stderr, flush=True)
+        print(f"[PLAYWRIGHT] executablePath: {executable_path}", file=sys.stderr, flush=True)
+        print(f"[PLAYWRIGHT] headless efetivo: {self._resolve_headless()}", file=sys.stderr, flush=True)
+
     @staticmethod
     def _is_transient_navigation_error(error_text: str) -> bool:
         text = (error_text or "").lower()
@@ -788,10 +798,12 @@ class MargemConsultaService:
     async def start(self) -> None:
         self.logger.info("Iniciando navegador e sessao do portal")
         self.playwright = await async_playwright().start()
+        self._log_playwright_diagnostics("margem_consulta_start")
         self.browser = await self.playwright.chromium.launch(
             headless=self._resolve_headless(),
             args=self._browser_launch_args(),
         )
+        print("[PLAYWRIGHT] chromium launch ok true", file=sys.stderr, flush=True)
         self.context = await self.browser.new_context()
         self.page = await self.context.new_page()
         self.logger.info("Realizando login no portal")

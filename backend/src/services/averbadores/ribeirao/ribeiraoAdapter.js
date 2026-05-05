@@ -87,7 +87,9 @@ export function runRibeiraoCommand(payload, { timeoutMs = 180000 } = {}) {
       stdout += chunk.toString('utf8');
     });
     child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString('utf8');
+      const text = chunk.toString('utf8');
+      stderr += text;
+      process.stderr.write(text);
     });
     child.on('error', (error) => {
       clearTimeout(timeout);
@@ -149,12 +151,18 @@ export function startRibeiraoSessionBackground(payload) {
     }
   };
 
-  const child = spawn(PYTHON_BIN, ['-u', getRibeiraoCliPath(), '--payload-file', payloadPath], {
-    cwd: process.cwd(),
-    env: buildEnv(),
-    stdio: ['ignore', 'ignore', 'ignore'],
-    windowsHide: true,
-  });
+    const child = spawn(PYTHON_BIN, ['-u', getRibeiraoCliPath(), '--payload-file', payloadPath], {
+      cwd: process.cwd(),
+      env: buildEnv(),
+      stdio: ['ignore', 'ignore', 'pipe'],
+      windowsHide: true,
+    });
+
+    if (child.stderr) {
+      child.stderr.on('data', (chunk) => {
+        process.stderr.write(chunk.toString('utf8'));
+      });
+    }
 
   child.on('error', (error) => {
     writeFallbackStatus('erro_login', error instanceof Error ? error.message : 'Falha ao iniciar worker Ribeirao.');

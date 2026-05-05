@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+import traceback
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -112,6 +113,17 @@ def _browser_launch_error_message(exc: Exception) -> tuple[str, str] | None:
             "Erro ao iniciar navegador de consulta no servidor. Verifique configuracao do Playwright/Chromium em producao.",
         )
     return None
+
+
+def _log_playwright_diagnostics(playwright, headless: bool, stage: str) -> None:
+    executable_path = ""
+    try:
+        executable_path = str(getattr(getattr(playwright, "chromium", None), "executable_path", "") or "")
+    except Exception:
+        executable_path = ""
+    print(f"[PLAYWRIGHT] stage: {stage}", file=sys.stderr, flush=True)
+    print(f"[PLAYWRIGHT] executablePath: {executable_path}", file=sys.stderr, flush=True)
+    print(f"[PLAYWRIGHT] headless efetivo: {bool(headless)}", file=sys.stderr, flush=True)
 
 
 LOGIN_ERROR_CODES = {
@@ -634,15 +646,19 @@ async def start_session(payload: dict) -> dict:
     print(f"[RIBEIRAO] NODE_ENV: {os.getenv('NODE_ENV', '')}", file=sys.stderr, flush=True)
     print(f"[RIBEIRAO] RIBEIRAO_HEADLESS: {os.getenv('RIBEIRAO_HEADLESS', '')}", file=sys.stderr, flush=True)
     print(f"[RIBEIRAO] headless efetivo: {settings.headless}", file=sys.stderr, flush=True)
+    _log_playwright_diagnostics(connector.playwright, settings.headless, "start_session")
 
     try:
         connector.browser = await connector.playwright.chromium.launch(**browser_launch_kwargs)
+        print("[PLAYWRIGHT] chromium launch ok true", file=sys.stderr, flush=True)
         if connector.session_state_path and connector.session_state_path.exists():
             connector.context = await connector.browser.new_context(storage_state=str(connector.session_state_path))
         else:
             connector.context = await connector.browser.new_context(viewport={"width": 1440, "height": 1100})
         connector.page = await connector.context.new_page()
     except Exception as exc:
+        traceback.print_exc(file=sys.stderr)
+        print("[PLAYWRIGHT] chromium launch ok false", file=sys.stderr, flush=True)
         code_message = _browser_launch_error_message(exc)
         code = code_message[0] if code_message else "ERRO"
         message = code_message[1] if code_message else str(exc)
@@ -728,11 +744,13 @@ async def query_cpf(payload: dict) -> dict:
         print(f"[RIBEIRAO] RIBEIRAO_HEADLESS: {os.getenv('RIBEIRAO_HEADLESS', '')}", file=sys.stderr, flush=True)
         print(f"[RIBEIRAO] headless efetivo: {settings.headless}", file=sys.stderr, flush=True)
         connector.playwright = await async_playwright().start()
+        _log_playwright_diagnostics(connector.playwright, settings.headless, "query_cpf")
         connector.browser = await connector.playwright.chromium.launch(
             headless=settings.headless,
             slow_mo=int(payload.get("slow_mo") or 0),
             args=_chromium_launch_args(),
         )
+        print("[PLAYWRIGHT] chromium launch ok true", file=sys.stderr, flush=True)
         connector.context = await connector.browser.new_context(viewport={"width": 1440, "height": 1100})
         connector.page = await connector.context.new_page()
         await _open_login_browser(connector, login, password)
@@ -749,6 +767,7 @@ async def query_cpf(payload: dict) -> dict:
                 pass
         return {"ok": True, "cpf": cpf, "rawResult": raw, "session_id": session_id}
     except Exception as exc:
+        traceback.print_exc(file=sys.stderr)
         message = str(exc)
         code, clean_message = _split_typed_login_error(message)
         status = "erro"

@@ -169,6 +169,8 @@ class ManualAuthManager:
 
         connector = PortalSecundarioLegacyConnector(lote_id=0, credencial=credencial_payload)
         connector.playwright = await async_playwright().start()
+        print(f"[PLAYWRIGHT] executablePath: {getattr(getattr(connector.playwright, 'chromium', None), 'executable_path', '') or ''}", file=sys.stderr, flush=True)
+        print("[PLAYWRIGHT] headless efetivo: true", file=sys.stderr, flush=True)
         connector.browser = await connector.playwright.chromium.launch(
             headless=True,
             args=[
@@ -178,6 +180,7 @@ class ManualAuthManager:
                 "--disable-gpu",
             ],
         )
+        print("[PLAYWRIGHT] chromium launch ok true", file=sys.stderr, flush=True)
         connector.context = await connector.browser.new_context()
         connector.page = await connector.context.new_page()
 
