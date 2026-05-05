@@ -1,1 +1,1 @@
-export const BUILD_VERSION = 'ribeirao-headless-fix-2026-05-04-01';
+export const BUILD_VERSION = 'ribeirao-login-flow-fix-c0f8490';
