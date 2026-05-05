@@ -1463,7 +1463,7 @@ function getSessionBlockingMessage(session?: RibeiraoSession | null) {
       ? 'O portal não respondeu após tentar login.'
       : 'O portal permaneceu na tela de login sem confirmar autenticação.';
   }
-  if (['PORTAL_CHANGED', 'LOGIN_OK_NAVIGATION_FAILED', 'LOGIN_REJECTED', 'UNKNOWN_LOGIN_ERROR', 'DNS_RESOLUTION_FAILED'].includes(errorCode) || session.status === 'erro_login' || session.status === 'login_error') {
+  if (['PORTAL_CHANGED', 'LOGIN_OK_NAVIGATION_FAILED', 'LOGIN_REJECTED', 'UNKNOWN_LOGIN_ERROR', 'DNS_RESOLUTION_FAILED', 'CHROMIUM_DNS_FAILED'].includes(errorCode) || session.status === 'erro_login' || session.status === 'login_error') {
     if (errorCode === 'LOGIN_OK_NAVIGATION_FAILED') {
       return 'Login aceito, mas não foi possível abrir Consulta de Margem.';
     }
@@ -1526,6 +1526,9 @@ function getSessionDisplayMessage(session?: RibeiraoSession | null) {
   if (errorCode === 'DNS_RESOLUTION_FAILED') {
     return 'Não foi possível resolver o endereço do portal no servidor. Verifique DNS da VPS/container.';
   }
+  if (errorCode === 'CHROMIUM_DNS_FAILED') {
+    return 'O navegador interno do servidor não conseguiu resolver o portal, mesmo com DNS do container funcionando.';
+  }
   if (errorCode === 'PORTAL_CHANGED') {
     return 'O layout do portal mudou e o fluxo de login não foi reconhecido.';
   }
@@ -1585,6 +1588,9 @@ function getFriendlyRibeiraoError(error: unknown, fallback: string) {
   }
   if (code === 'DNS_RESOLUTION_FAILED') {
     return 'Não foi possível resolver o endereço do portal no servidor. Verifique DNS da VPS/container.';
+  }
+  if (code === 'CHROMIUM_DNS_FAILED') {
+    return 'O navegador interno do servidor não conseguiu resolver o portal, mesmo com DNS do container funcionando.';
   }
   if (code === 'LOGIN_FIELDS_NOT_FOUND') {
     return 'O sistema não encontrou os campos de login do portal. O layout pode ter mudado.';

@@ -82,8 +82,8 @@ def _has_graphical_display() -> bool:
     return bool(os.getenv("DISPLAY") or os.getenv("WAYLAND_DISPLAY"))
 
 
-def _chromium_launch_args() -> list[str]:
-    return [
+def _chromium_launch_args(host: str | None = None, resolved_ips: list[str] | None = None) -> list[str]:
+    args = [
         "--no-sandbox",
         "--disable-setuid-sandbox",
         "--disable-dev-shm-usage",
@@ -91,6 +91,11 @@ def _chromium_launch_args() -> list[str]:
         "--disable-features=UseDnsHttpsSvcb,AsyncDns,UseChromeOSDirectVideoDecoder",
         "--disable-quic",
     ]
+    safe_host = str(host or "").strip()
+    safe_ips = [str(ip).strip() for ip in (resolved_ips or []) if str(ip).strip()]
+    if safe_host and safe_ips:
+        args.append(f"--host-resolver-rules=MAP {safe_host} {safe_ips[0]}")
+    return args
 
 
 def _resolve_headless(payload: dict | None = None) -> bool:
@@ -149,6 +154,7 @@ LOGIN_ERROR_CODES = {
     "LOGIN_OK_NAVIGATION_FAILED",
     "MANUAL_AUTH_REQUIRED",
     "DNS_RESOLUTION_FAILED",
+    "CHROMIUM_DNS_FAILED",
 }
 
 
@@ -350,8 +356,8 @@ def _resolve_dns_host(host: str) -> tuple[bool, list[str], str]:
     except Exception as exc:
         dns_error = str(exc)
 
-    print(f"[LOGIN_FLOW] dns_resolve_ok: {dns_ok}", file=sys.stderr, flush=True)
-    print(f"[LOGIN_FLOW] dns_resolved_ips: {resolved_ips}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] dns_resolve_ok {str(dns_ok).lower()}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] dns_resolved_ips {' '.join(resolved_ips) if resolved_ips else '[]'}", file=sys.stderr, flush=True)
     print(f"[LOGIN_FLOW] dns_error: {dns_error}", file=sys.stderr, flush=True)
     return dns_ok, resolved_ips, dns_error
 
@@ -423,16 +429,18 @@ async def _goto_login_with_fallback(
     *,
     stage_label: str,
     timeout_ms: int,
-) -> tuple[dict, object | None, bool, bool, list[str], str]:
+) -> tuple[dict, object | None, bool, bool, list[str], str, bool]:
     print(f"[LOGIN_FLOW] {stage_label} goto iniciando", file=sys.stderr, flush=True)
     host = _safe_host(target_url)
     dns_ok, dns_ips, dns_error = _resolve_dns_host(host)
     if host and not dns_ok:
-        return await _capture_login_fallback_snapshot(connector), None, False, dns_ok, dns_ips, dns_error
+        return await _capture_login_fallback_snapshot(connector), None, False, dns_ok, dns_ips, dns_error, False
 
     response = None
     last_exc: Exception | None = None
     chromium_dns_failure = False
+    chromium_args = _chromium_launch_args(host, dns_ips)
+    print(f"[LOGIN_FLOW] chromium_args usados: {chromium_args}", file=sys.stderr, flush=True)
     for wait_until, timeout in (
         ("domcontentloaded", timeout_ms),
         ("commit", max(timeout_ms, 60000)),
@@ -479,11 +487,11 @@ async def _goto_login_with_fallback(
         print("[LOGIN_FLOW] DNS ok no sistema, falha no Chromium", file=sys.stderr, flush=True)
     if snapshot.get("loginFound"):
         print(f"[LOGIN_FLOW] {stage_label} goto concluído", file=sys.stderr, flush=True)
-        return snapshot, response, True, dns_ok, dns_ips, dns_error
+        return snapshot, response, True, dns_ok, dns_ips, dns_error, chromium_dns_failure
 
     if last_exc is not None:
         print(f"[LOGIN_FLOW] {stage_label} goto excecao final: {last_exc}", file=sys.stderr, flush=True)
-    return snapshot, response, False, dns_ok, dns_ips, dns_error if dns_error else ("DNS ok no sistema, falha no Chromium" if chromium_dns_failure else "")
+    return snapshot, response, False, dns_ok, dns_ips, dns_error if dns_error else ("chromium_dns_failed" if chromium_dns_failure else ""), chromium_dns_failure
 
 
 def _classify_login_issue(code: str | None, message: str, snapshot: dict | None = None) -> tuple[str, str]:
@@ -506,6 +514,8 @@ def _classify_login_issue(code: str | None, message: str, snapshot: dict | None 
             return 'LOGIN_OK_NAVIGATION_FAILED', raw_message or 'Login aceito, mas n?o foi poss?vel abrir Consulta de Margem.'
         if code_upper == 'DNS_RESOLUTION_FAILED':
             return 'DNS_RESOLUTION_FAILED', raw_message or 'N?o foi poss?vel resolver o endere?o do portal no servidor. Verifique DNS da VPS/container.'
+        if code_upper == 'CHROMIUM_DNS_FAILED':
+            return 'CHROMIUM_DNS_FAILED', raw_message or 'O navegador interno do servidor n?o conseguiu resolver o portal, mesmo com DNS do container funcionando.'
         if code_upper == 'LOGIN_FIELDS_NOT_FOUND':
             return 'LOGIN_FIELDS_NOT_FOUND', raw_message or 'O sistema n?o encontrou os campos de login do portal. O layout pode ter mudado.'
         if code_upper == 'LOGIN_BUTTON_NOT_FOUND':
@@ -657,7 +667,7 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
         except Exception:
             pass
     timeout_ms = max(60000, connector.settings.timeout_ms)
-    snapshot, response, login_found, dns_ok, dns_ips, dns_error = await _goto_login_with_fallback(
+    snapshot, response, login_found, dns_ok, dns_ips, dns_error, chromium_dns_failed = await _goto_login_with_fallback(
         connector,
         connector.settings.pdc_portal_url,
         stage_label="goto",
@@ -666,11 +676,18 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
     if login_found:
         _log_login_snapshot(snapshot, login, password, "goto")
         _log_login_flow(snapshot, "goto", login, password, final_code="PENDING")
-    elif not dns_ok or "DNS ok no sistema, falha no Chromium" in str(dns_error or ""):
+    elif not dns_ok:
         print("[LOGIN_FLOW] error_code final: DNS_RESOLUTION_FAILED", file=sys.stderr, flush=True)
         raise _typed_login_error(
             "DNS_RESOLUTION_FAILED",
             "Não foi possível resolver o endereço do portal no servidor. Verifique DNS da VPS/container.",
+            stage="goto",
+        )
+    elif chromium_dns_failed or "chromium_dns_failed" in str(dns_error or "").lower():
+        print("[LOGIN_FLOW] error_code final: CHROMIUM_DNS_FAILED", file=sys.stderr, flush=True)
+        raise _typed_login_error(
+            "CHROMIUM_DNS_FAILED",
+            "O navegador interno do servidor não conseguiu resolver o portal, mesmo com DNS do container funcionando.",
             stage="goto",
         )
     elif not snapshot.get("bodySnippet") and not snapshot.get("inputCount"):
@@ -911,18 +928,40 @@ async def start_session(payload: dict) -> dict:
     timeout_seconds = int(payload.get("timeout_seconds") or 900)
 
     connector = _build_connector(payload, settings)
+    portal_host = _safe_host(connector.settings.pdc_portal_url)
+    dns_ok, dns_ips, dns_error = _resolve_dns_host(portal_host)
+    chromium_args = _chromium_launch_args(portal_host, dns_ips)
     connector.playwright = await async_playwright().start()
     browser_launch_kwargs = {
         "headless": settings.headless,
         "slow_mo": int(payload.get("slow_mo") or 0),
-        "args": _chromium_launch_args(),
+        "args": chromium_args,
     }
 
     print(f"[RIBEIRAO] BUILD: {os.getenv('RIBEIRAO_BUILD_VERSION', '')}", file=sys.stderr, flush=True)
     print(f"[RIBEIRAO] NODE_ENV: {os.getenv('NODE_ENV', '')}", file=sys.stderr, flush=True)
     print(f"[RIBEIRAO] RIBEIRAO_HEADLESS: {os.getenv('RIBEIRAO_HEADLESS', '')}", file=sys.stderr, flush=True)
     print(f"[RIBEIRAO] headless efetivo: {settings.headless}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] dns_resolve_ok {str(dns_ok).lower()}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] dns_resolved_ips {' '.join(dns_ips) if dns_ips else '[]'}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] dns_error: {dns_error}", file=sys.stderr, flush=True)
+    print(f"[LOGIN_FLOW] chromium_args usados: {chromium_args}", file=sys.stderr, flush=True)
     _log_playwright_diagnostics(connector.playwright, settings.headless, "start_session")
+
+    if portal_host and not dns_ok:
+        _write_status(
+            session_id,
+            "login_error",
+            "Não foi possível resolver o endereço do portal no servidor. Verifique DNS da VPS/container.",
+            {"error_code": "DNS_RESOLUTION_FAILED"},
+        )
+        return {
+            "status": "login_error",
+            "session_id": session_id,
+            "code": "DNS_RESOLUTION_FAILED",
+            "stage": "goto",
+            "message": "Não foi possível resolver o endereço do portal no servidor. Verifique DNS da VPS/container.",
+        }
 
     try:
         connector.browser = await connector.playwright.chromium.launch(**browser_launch_kwargs)
@@ -973,7 +1012,7 @@ async def start_session(payload: dict) -> dict:
             status = "erro_login"
         elif code == "LOGIN_REJECTED":
             status = "erro_login"
-        elif code in {"LOGIN_FIELDS_NOT_FOUND", "LOGIN_BUTTON_NOT_FOUND", "LOGIN_TIMEOUT", "LOGIN_STILL_ON_SAME_PAGE", "PORTAL_CHANGED", "UNKNOWN_LOGIN_ERROR", "PORTAL_UNREACHABLE", "DNS_RESOLUTION_FAILED"}:
+        elif code in {"LOGIN_FIELDS_NOT_FOUND", "LOGIN_BUTTON_NOT_FOUND", "LOGIN_TIMEOUT", "LOGIN_STILL_ON_SAME_PAGE", "PORTAL_CHANGED", "UNKNOWN_LOGIN_ERROR", "PORTAL_UNREACHABLE", "DNS_RESOLUTION_FAILED", "CHROMIUM_DNS_FAILED"}:
             status = "erro_login"
         elif not code and not stage and ("browser" in message.lower() or "x server" in message.lower() or "$display" in message.lower()):
             status = "browser_launch_error"
@@ -1027,14 +1066,27 @@ async def query_cpf(payload: dict) -> dict:
         print(f"[RIBEIRAO] NODE_ENV: {os.getenv('NODE_ENV', '')}", file=sys.stderr, flush=True)
         print(f"[RIBEIRAO] RIBEIRAO_HEADLESS: {os.getenv('RIBEIRAO_HEADLESS', '')}", file=sys.stderr, flush=True)
         print(f"[RIBEIRAO] headless efetivo: {settings.headless}", file=sys.stderr, flush=True)
+        portal_host = _safe_host(connector.settings.pdc_portal_url)
+        dns_ok, dns_ips, dns_error = _resolve_dns_host(portal_host)
+        chromium_args = _chromium_launch_args(portal_host, dns_ips)
         connector.playwright = await async_playwright().start()
         _log_playwright_diagnostics(connector.playwright, settings.headless, "query_cpf")
         connector.browser = await connector.playwright.chromium.launch(
             headless=settings.headless,
             slow_mo=int(payload.get("slow_mo") or 0),
-            args=_chromium_launch_args(),
+            args=chromium_args,
         )
         print("[PLAYWRIGHT] chromium launch ok true", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] dns_resolve_ok {str(dns_ok).lower()}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] dns_resolved_ips {' '.join(dns_ips) if dns_ips else '[]'}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] dns_error: {dns_error}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] chromium_args usados: {chromium_args}", file=sys.stderr, flush=True)
+        if portal_host and not dns_ok:
+            raise _typed_login_error(
+                "DNS_RESOLUTION_FAILED",
+                "Não foi possível resolver o endereço do portal no servidor. Verifique DNS da VPS/container.",
+                stage="goto",
+            )
         connector.context = await connector.browser.new_context(viewport={"width": 1440, "height": 1100})
         connector.page = await connector.context.new_page()
         await _open_login_browser(connector, login, password)
@@ -1070,7 +1122,7 @@ async def query_cpf(payload: dict) -> dict:
             status = "login_error"
         elif code == "LOGIN_OK_NAVIGATION_FAILED":
             status = "login_error"
-        elif code == "LOGIN_FIELDS_NOT_FOUND" or code == "LOGIN_BUTTON_NOT_FOUND" or code == "LOGIN_TIMEOUT" or code == "LOGIN_STILL_ON_SAME_PAGE" or code == "PORTAL_CHANGED" or code == "UNKNOWN_LOGIN_ERROR" or code == "PORTAL_UNREACHABLE" or code == "DNS_RESOLUTION_FAILED":
+        elif code == "LOGIN_FIELDS_NOT_FOUND" or code == "LOGIN_BUTTON_NOT_FOUND" or code == "LOGIN_TIMEOUT" or code == "LOGIN_STILL_ON_SAME_PAGE" or code == "PORTAL_CHANGED" or code == "UNKNOWN_LOGIN_ERROR" or code == "PORTAL_UNREACHABLE" or code == "DNS_RESOLUTION_FAILED" or code == "CHROMIUM_DNS_FAILED":
             status = "login_error"
         elif "sessao" in message.lower() and "expir" in message.lower():
             status = "session_expired"
