@@ -189,9 +189,12 @@ export function normalizeRibeiraoQueryResult(rawResult, cpf, sessionId, userId, 
                         ? RIBEIRAO_QUERY_STATUSES.WITHOUT_MARGIN
                         : RIBEIRAO_QUERY_STATUSES.ERROR;
 
-  const rawNome = selectFirstDefined([payload.nome_portal, payload.nome, payload.name, rawResult?.nome]);
-  const rawMatricula = selectFirstDefined([payload.matricula, rawResult?.matricula]);
-  const rawOrgao = selectFirstDefined([payload.orgao, payload.orgao_nome, payload.convenio, rawResult?.orgao]);
+  const firstClientMatch = Array.isArray(clientMatches) ? clientMatches.find(Boolean) || {} : {};
+  const rawNome = selectFirstDefined([payload.nome_portal, payload.nome, payload.name, rawResult?.nome, firstClientMatch.name]);
+  const rawMatricula = selectFirstDefined([payload.matricula, rawResult?.matricula, firstClientMatch.matricula]);
+  const rawOrgao = selectFirstDefined([payload.orgao, payload.orgao_nome, payload.convenio, rawResult?.orgao, firstClientMatch.orgao]);
+  const rawCargo = selectFirstDefined([payload.cargo, payload.funcao, payload.cargo_funcao, rawResult?.cargo, firstClientMatch.cargo]);
+  const rawVinculo = selectFirstDefined([payload.vinculo, payload.regime, payload.tipo_vinculo, rawResult?.vinculo, firstClientMatch.vinculo]);
   const mensagem = selectFirstDefined([
     rawResult?.detalhe_erro,
     rawResult?.error_msg,
@@ -226,6 +229,8 @@ export function normalizeRibeiraoQueryResult(rawResult, cpf, sessionId, userId, 
     nome: rawNome,
     matricula: rawMatricula,
     orgao: rawOrgao,
+    cargo: rawCargo,
+    vinculo: rawVinculo,
     margem_emprestimo_total: emprestimoGross,
     margem_emprestimo_disponivel: emprestimoNet,
     margem_cartao_total: cartaoGross,
@@ -265,6 +270,8 @@ export function formatRibeiraoSummary(result) {
     nome: result.nome,
     matricula: result.matricula,
     orgao: result.orgao,
+    cargo: result.cargo,
+    vinculo: result.vinculo,
     best_product_type: result.best_product_type,
     best_product_label: labelForProductType(result.best_product_type),
     best_net_margin: result.best_net_margin,

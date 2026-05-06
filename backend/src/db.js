@@ -753,6 +753,8 @@ function initSchema(database) {
       nome TEXT,
       matricula TEXT,
       orgao TEXT,
+      cargo TEXT,
+      vinculo TEXT,
       consulta_status TEXT NOT NULL DEFAULT 'erro',
       mensagem TEXT,
       best_product_type TEXT NOT NULL DEFAULT '',
@@ -872,6 +874,8 @@ function initSchema(database) {
     'margem_emprestimo_disponivel REAL',
     'margem_cartao_total REAL',
     'margem_cartao_disponivel REAL',
+    'cargo TEXT',
+    'vinculo TEXT',
   ]);
 
   ensureColumns(database, 'ribeirao_query_batches', [
@@ -2890,7 +2894,7 @@ export function getDashboardData(params = {}) {
         COUNT(*) AS total_clients,
         SUM(CASE WHEN status_atendimento IN ('novo_na_fila', 'aguardando_retorno') THEN 1 ELSE 0 END) AS queue_clients,
         SUM(CASE WHEN status_atendimento = 'em_atendimento' THEN 1 ELSE 0 END) AS active_clients,
-        SUM(CASE WHEN status_atendimento = 'finalizado' AND date(updated_at) = date('now') THEN 1 ELSE 0 END) AS finished_today,
+        SUM(CASE WHEN status_atendimento = 'finalizado' AND date(c.updated_at) = date('now') THEN 1 ELSE 0 END) AS finished_today,
         SUM(CASE WHEN status_atendimento = 'aguardando_retorno' THEN 1 ELSE 0 END) AS scheduled_returns,
         SUM(CASE WHEN status_atendimento = 'convertido' THEN 1 ELSE 0 END) AS converted,
         SUM(CASE WHEN status_atendimento = 'sem_interesse' THEN 1 ELSE 0 END) AS no_interest

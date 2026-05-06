@@ -36,6 +36,19 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function one(database, sql, params = []) {
+  const statement = database.prepare(sql);
+  if (statement && typeof statement.get === 'function') {
+    return statement.get(...params);
+  }
+  if (params.length && typeof statement.bind === 'function') {
+    statement.bind(params);
+  }
+  const row = statement.step() ? statement.getAsObject() : null;
+  statement.free();
+  return row;
+}
+
 function randomDelay(minSeconds = 3, maxSeconds = 8) {
   const min = Math.max(0, Number(minSeconds || 0));
   const max = Math.max(min, Number(maxSeconds || min));
@@ -402,7 +415,28 @@ async function processBatch(batchId, {
       }
 
       const standardized = queryResult.standardized;
-      const query = queryResult.query;
+      let query = queryResult.query;
+      let queryId = Number(query?.id || 0);
+      if (!queryId) {
+        const database = getDb();
+        const recoveredQuery = one(
+          database,
+          `
+            SELECT *
+            FROM ribeirao_margin_queries
+            WHERE user_id = ?
+              AND session_id = ?
+              AND cpf = ?
+            ORDER BY id DESC
+            LIMIT 1
+          `,
+          [userId, sessionId, cpf]
+        );
+        if (recoveredQuery?.id) {
+          query = recoveredQuery;
+          queryId = Number(recoveredQuery.id);
+        }
+      }
       console.log(
         `[RIBEIRAO_BATCH] resultado parseado: ${JSON.stringify({
           cpf: query?.cpf_masked || maskBatchCpfLog(cpf),
@@ -413,11 +447,11 @@ async function processBatch(batchId, {
           margem_cartao_disponivel: standardized.margem_cartao_disponivel ?? null,
         })}`
       );
-      if (query?.id) {
+      if (queryId) {
         const database = getDb();
         database
           .prepare('UPDATE ribeirao_margin_queries SET batch_id = ? WHERE id = ?')
-          .run(batchId, query.id);
+          .run(batchId, queryId);
       }
 
       const matchedClient = Array.isArray(queryResult.client_matches)
@@ -427,9 +461,9 @@ async function processBatch(batchId, {
           })
         : null;
 
-      if (matchedClient && query?.id) {
+      if (matchedClient && queryId) {
         applyRibeiraoResultToClient({
-          queryId: query.id,
+          queryId,
           clientId: matchedClient.id,
           baseId: matchedClient.base_id || normalizedBaseId || null,
           userId,
@@ -534,7 +568,7 @@ export async function startRibeiraoBatch({
   const batchId = batch.id;
   activeBatchJobs.set(batchId, { paused: false, cancelled: false, running: false, waitingCaptcha: false });
 
-  return await processBatch(batchId, {
+  void processBatch(batchId, {
     userId,
     sessionId,
     login,
@@ -545,7 +579,10 @@ export async function startRibeiraoBatch({
     sourceFileName,
     delaySecondsMin,
     delaySecondsMax,
+  }).catch((error) => {
+    console.error('[RIBEIRAO_BATCH] erro no processamento em segundo plano:', error);
   });
+  return getRibeiraoBatchById(batchId);
 }
 
 export function getRibeiraoBatchStatus(batchId) {
@@ -588,10 +625,12 @@ function buildRibeiraoBatchExportRows(batchId) {
   const rows = getRibeiraoBatchResults(batchId);
   const marginByProduct = (row, productType) => row.margins?.find((margin) => margin.product_type === productType) || null;
   return rows.map((row) => ({
-    cpf: row.cpf_masked || row.cpf || '',
+    cpf: row.cpf || '',
     nome: row.nome || '',
     matricula: row.matricula || '',
     orgao: row.orgao || '',
+    cargo: row.cargo || '',
+    vinculo: row.vinculo || '',
     base: row.base_name || '',
     client_id: row.client_id || '',
     status: row.consulta_status_label || row.consulta_status || '',
@@ -613,6 +652,8 @@ export function exportRibeiraoBatchResultsCsv(batchId) {
     'Nome',
     'Matricula',
     'Orgao',
+    'Cargo',
+    'Vinculo',
     'Base',
     'Cliente ID',
     'Status',
@@ -642,6 +683,8 @@ export function exportRibeiraoBatchResultsCsv(batchId) {
         row.nome,
         row.matricula,
         row.orgao,
+        row.cargo,
+        row.vinculo,
         row.base,
         row.client_id,
         row.status,
@@ -669,6 +712,8 @@ export function exportRibeiraoBatchResultsXlsx(batchId) {
     'Nome',
     'Matricula',
     'Orgao',
+    'Cargo',
+    'Vinculo',
     'Base',
     'Cliente ID',
     'Status',
@@ -686,6 +731,8 @@ export function exportRibeiraoBatchResultsXlsx(batchId) {
     row.nome,
     row.matricula,
     row.orgao,
+    row.cargo,
+    row.vinculo,
     row.base,
     row.client_id,
     row.status,

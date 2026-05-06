@@ -680,7 +680,7 @@ export default function RibeiraoPage() {
               <div>
                 <p className="text-sm text-slate-400">Resultado da consulta</p>
                 <h3 className="text-xl font-bold text-white">
-                  {currentResult?.nome || currentResult?.cpf_masked || 'Nenhum resultado carregado'}
+                  {currentResult?.nome || currentResult?.cpf || 'Nenhum resultado carregado'}
                 </h3>
               </div>
               {currentResult ? <Badge tone={queryTone(currentResult.consulta_status)}>{currentResult.consulta_status_label || currentResult.consulta_status}</Badge> : null}
@@ -689,10 +689,12 @@ export default function RibeiraoPage() {
             {currentResult ? (
               <div className="mt-5 space-y-5">
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                  <InfoLine label="CPF" value={currentResult.cpf_masked || currentResult.cpf} />
+                  <InfoLine label="CPF" value={currentResult.cpf || '-'} />
                   <InfoLine label="Nome" value={currentResult.nome || '-'} />
                   <InfoLine label="Matrícula" value={currentResult.matricula || '-'} />
                   <InfoLine label="Órgão / Convênio" value={currentResult.orgao || '-'} />
+                  <InfoLine label="Cargo" value={currentResult.cargo || '-'} />
+                  <InfoLine label="Vínculo" value={currentResult.vinculo || '-'} />
                 </div>
 
                 <div className="space-y-3">
@@ -1094,7 +1096,7 @@ export default function RibeiraoPage() {
                   <table className="min-w-[1700px] text-left text-sm">
                     <thead className="bg-bg/80 text-slate-400">
                       <tr>
-                        {['CPF', 'Nome', 'Status consulta', 'Melhor produto', 'Melhor margem líquida', 'Empréstimo total', 'Empréstimo disponível', 'Cartão total', 'Cartão disponível', 'Mensagem', 'Data/hora', 'Ação'].map((column) => (
+                        {['CPF', 'Nome', 'Matrícula', 'Cargo', 'Vínculo', 'Status consulta', 'Melhor produto', 'Melhor margem líquida', 'Empréstimo total', 'Empréstimo disponível', 'Cartão total', 'Cartão disponível', 'Mensagem', 'Data/hora', 'Ação'].map((column) => (
                           <th key={column} className="px-5 py-4 font-medium">
                             {column}
                           </th>
@@ -1104,11 +1106,14 @@ export default function RibeiraoPage() {
                     <tbody>
                       {batchResults.map((item) => (
                         <tr key={item.id} className="border-t border-border/80">
-                          <td className="px-5 py-4 text-slate-300">{item.cpf_masked || item.cpf}</td>
+                          <td className="px-5 py-4 text-slate-300">{item.cpf || '-'}</td>
                           <td className="px-5 py-4">
                             <p className="font-semibold text-white">{item.nome || '-'}</p>
                             <p className="mt-1 text-xs text-slate-500">{item.orgao || item.matricula || '-'}</p>
                           </td>
+                          <td className="px-5 py-4 text-slate-300">{item.matricula || '-'}</td>
+                          <td className="px-5 py-4 text-slate-300">{item.cargo || '-'}</td>
+                          <td className="px-5 py-4 text-slate-300">{item.vinculo || '-'}</td>
                           <td className="px-5 py-4">
                             <Badge tone={queryTone(item.consulta_status)}>{item.consulta_status_label || item.consulta_status}</Badge>
                           </td>
@@ -1276,7 +1281,7 @@ export default function RibeiraoPage() {
                     {history.map((item) => (
                       <tr key={item.id} className="border-t border-border/80">
                         <td className="px-5 py-4 text-slate-300">{item.created_at_formatted || item.created_at || '-'}</td>
-                        <td className="px-5 py-4 text-slate-300">{item.cpf_masked || item.cpf}</td>
+                        <td className="px-5 py-4 text-slate-300">{item.cpf || '-'}</td>
                         <td className="px-5 py-4">
                           <p className="font-semibold text-white">{item.nome || '-'}</p>
                           <p className="mt-1 text-xs text-slate-500">{item.orgao || item.matricula || '-'}</p>

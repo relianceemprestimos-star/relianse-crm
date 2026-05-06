@@ -142,7 +142,54 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
                     const notFound = /CPF\\/?MATRICULA NAO ENCONTRADO|CPF NAO ENCONTRADO|MATRICULA NAO ENCONTRADA/.test(bodyText);
                     const tables = Array.from(document.querySelectorAll("table"));
                     const rows = [];
+                    const pageText = clean(document.body?.innerText || document.body?.textContent || "");
+                    const metadata = {};
                     let tableFound = false;
+
+                    const setMeta = (key, value) => {
+                      const text = clean(value);
+                      if (text && !metadata[key]) metadata[key] = text;
+                    };
+                    const normalizeKey = (value) => normalize(value).replace(/[^A-Z0-9]/g, "");
+                    const metaKeyFromLabel = (label) => {
+                      const key = normalizeKey(label);
+                      if (!key) return "";
+                      if (key.includes("NOME") || key.includes("SERVIDOR")) return "nome_portal";
+                      if (key.includes("MATRICULA")) return "matricula";
+                      if (key.includes("ORGAO") || key.includes("CONVENIO") || key.includes("SECRETARIA")) return "orgao";
+                      if (key.includes("CARGO") || key.includes("FUNCAO")) return "cargo";
+                      if (key.includes("VINCULO") || key.includes("REGIME") || key.includes("TIPO")) return "vinculo";
+                      return "";
+                    };
+                    const captureMetadataCells = (cells) => {
+                      for (let index = 0; index < cells.length; index += 1) {
+                        const key = metaKeyFromLabel(cells[index]);
+                        if (!key) continue;
+                        const current = clean(cells[index]);
+                        const inline = current.split(/:\\s*/).slice(1).join(":").trim();
+                        const next = clean(cells[index + 1] || "");
+                        const value = inline || next;
+                        if (value && !metaKeyFromLabel(value) && !normalize(value).includes("MARGEM")) {
+                          setMeta(key, value);
+                        }
+                      }
+                    };
+                    const captureMetadataFromText = () => {
+                      const fields = [
+                        ["nome_portal", /(?:NOME|SERVIDOR)\\s*:?\\s*([^\\n\\r|;]+)/i],
+                        ["matricula", /MATR[ÍI]CULA\\s*:?\\s*([^\\n\\r|;]+)/i],
+                        ["orgao", /(?:[ÓO]RG[ÃA]O|CONV[ÊE]NIO|SECRETARIA)\\s*:?\\s*([^\\n\\r|;]+)/i],
+                        ["cargo", /(?:CARGO|FUN[ÇC][ÃA]O)\\s*:?\\s*([^\\n\\r|;]+)/i],
+                        ["vinculo", /(?:V[ÍI]NCULO|REGIME|TIPO)\\s*:?\\s*([^\\n\\r|;]+)/i],
+                      ];
+                      for (const [key, pattern] of fields) {
+                        const match = pageText.match(pattern);
+                        if (match?.[1]) setMeta(key, match[1]);
+                      }
+                      const normalizedPage = normalize(pageText);
+                      if (!metadata.vinculo && normalizedPage.includes("TEMPORARIO")) setMeta("vinculo", "Temporario");
+                      if (!metadata.vinculo && normalizedPage.includes("EFETIVO")) setMeta("vinculo", "Efetivo");
+                    };
 
                     const mapHeader = (cells) => {
                       const headerMap = { service: 0, total: 1, reserved: 2, available: 3 };
@@ -191,6 +238,8 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
                       if (!tableRows.length) {
                         continue;
                       }
+
+                      tableRows.forEach(captureMetadataCells);
 
                       const hasDetailsTitle = tableText.includes("DETALHES DA MARGEM");
                       const hasMarginRow = tableRows.some((cells) =>
@@ -260,7 +309,9 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
                       }
                     }
 
-                    return { notFound, tableFound, rows, bodyText, tableCount: tables.length };
+                    captureMetadataFromText();
+
+                    return { notFound, tableFound, rows, metadata, bodyText, tableCount: tables.length };
                 }"""
             )
             return data if isinstance(data, dict) else {"notFound": False, "tableFound": False, "rows": [], "bodyText": ""}
@@ -563,6 +614,78 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
             except Exception:
                 continue
         return False
+
+    async def _click_search_submit_precise(self) -> tuple[bool, str]:
+        candidate_selectors = [
+            "#body_pesquisarButton",
+            "input#body_pesquisarButton",
+            "input[name='ctl00$body$pesquisarButton']",
+            "input[value='Pesquisar']",
+            "button:has-text('Pesquisar')",
+            "input[value='Consultar']",
+            "button:has-text('Consultar')",
+        ]
+        for selector in candidate_selectors:
+            try:
+                locator = self.page.locator(selector).first
+                await locator.wait_for(state="visible", timeout=2000)
+                await locator.click(timeout=2600)
+                return True, f"{selector}:click"
+            except Exception:
+                try:
+                    await self.page.click(selector, timeout=2600, force=True)
+                    return True, f"{selector}:force"
+                except Exception:
+                    try:
+                        js_ok = await self.page.evaluate(
+                            """(sel) => {
+                                const el = document.querySelector(sel);
+                                if (!el) return false;
+                                if (typeof el.click === "function") {
+                                    el.click();
+                                    return true;
+                                }
+                                return false;
+                            }""",
+                            selector,
+                        )
+                        if js_ok:
+                            return True, f"{selector}:js"
+                    except Exception:
+                        pass
+        try:
+            await self.page.locator("#body_cpfTextBox").first.press("Enter", timeout=2000)
+            return True, "#body_cpfTextBox:enter"
+        except Exception:
+            pass
+        try:
+            await self.page.keyboard.press("Enter")
+            return True, "page:enter"
+        except Exception:
+            return False, ""
+
+    async def _wait_for_consulta_result(self) -> None:
+        deadline = max(10000, self.settings.timeout_ms // 2)
+        end_time = asyncio.get_running_loop().time() + (deadline / 1000.0)
+        while asyncio.get_running_loop().time() < end_time:
+            try:
+                current_url = str(self.page.url or "")
+            except Exception:
+                current_url = ""
+            if "ConsultaMargemDados.aspx" in current_url:
+                return
+            try:
+                body_text = await self.page.locator("body").inner_text(timeout=1200)
+            except Exception:
+                body_text = ""
+            normalized_body = self._normalize_text(body_text)
+            if "DETALHES DA MARGEM" in normalized_body:
+                return
+            if "CPF/MATRICULA NAO ENCONTRADO" in normalized_body or "CPF NAO ENCONTRADO" in normalized_body:
+                return
+            if await self._wait_any(self.settings.pdc_selector_result_ready, 800):
+                return
+            await self.page.wait_for_timeout(500)
 
     async def _is_login_submit_disabled(self) -> bool | None:
         selectors = self._selector_options(self.settings.pdc_selector_login_submit)
@@ -1123,18 +1246,17 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
         if not filled:
             raise RuntimeError("Nao encontrei campo CPF do servidor para pesquisa.")
 
-        clicked_search = await self._click_any(self.settings.pdc_selector_search_submit)
-        if not clicked_search:
-            try:
-                await self.page.keyboard.press("Enter")
-                clicked_search = True
-            except Exception:
-                clicked_search = False
+        clicked_search, search_method = await self._click_search_submit_precise()
         if not clicked_search:
             raise RuntimeError("Nao consegui acionar a pesquisa do CPF.")
+        print(
+            f"[RIBEIRAO_BATCH] search submit acionado: {search_method}",
+            file=sys.stderr,
+            flush=True,
+        )
 
-        await self.page.wait_for_timeout(self.settings.intervalo_entre_consultas_ms)
-        await self._wait_any(self.settings.pdc_selector_result_ready, max(7000, self.settings.timeout_ms // 2))
+        await self.page.wait_for_timeout(max(1200, self.settings.intervalo_entre_consultas_ms))
+        await self._wait_for_consulta_result()
 
         try:
             page_url = self.page.url or ""
@@ -1161,6 +1283,7 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
             raise RuntimeError("CPF_NOT_FOUND: CPF/Matricula nao encontrado.")
 
         table_rows = extracted_table.get("rows") or []
+        metadata = extracted_table.get("metadata") or {}
         table_found = bool(extracted_table.get("tableFound"))
         print(
             f"[RIBEIRAO_BATCH] quantidade de linhas encontradas: {len(table_rows)}",
@@ -1318,7 +1441,11 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
             margem_cartao=cartao_disponivel,
             margem_cartao_beneficio="",
             payload_extra={
-                "nome_portal": "",
+                "nome_portal": metadata.get("nome_portal") or "",
+                "matricula": metadata.get("matricula") or "",
+                "orgao": metadata.get("orgao") or "",
+                "cargo": metadata.get("cargo") or "",
+                "vinculo": metadata.get("vinculo") or "",
                 "margem_emprestimo_total": emprestimo_total or "",
                 "margem_emprestimo_disponivel": emprestimo_disponivel or "",
                 "margem_cartao_total": cartao_total or "",

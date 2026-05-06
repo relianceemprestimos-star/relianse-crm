@@ -408,6 +408,8 @@ export interface RibeiraoQueryResult {
   nome?: string;
   matricula?: string;
   orgao?: string;
+  cargo?: string;
+  vinculo?: string;
   consulta_status: RibeiraoQueryStatus;
   consulta_status_label?: string;
   mensagem?: string;

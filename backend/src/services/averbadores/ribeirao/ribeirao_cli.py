@@ -63,6 +63,23 @@ def _safe_host(url: str) -> str:
         return ""
 
 
+def _is_user_already_logged_message(*values: object) -> bool:
+    normalized = " | ".join(_normalize_ribeirao_text(value) for value in values if value).strip()
+    if not normalized:
+        return False
+    return any(
+        term in normalized
+        for term in [
+            "usuario ja logado",
+            "usuario já logado",
+            "deseja desconectar seu usuario dos outros terminais",
+            "deseja desconectar seu usuário dos outros terminais",
+            "desconectar seu usuario dos outros terminais",
+            "desconectar seu usuário dos outros terminais",
+        ]
+    )
+
+
 def _is_placeholder_url(url: str) -> bool:
     normalized = str(url or "").strip().lower()
     return not normalized or "exemplo.local" in normalized or "example.local" in normalized
@@ -205,6 +222,63 @@ def _login_scopes(connector: PortalSecundarioLegacyConnector):
     except Exception:
         pass
     return scopes
+
+
+async def _click_ok_popup(connector: PortalSecundarioLegacyConnector) -> bool:
+    candidate_selectors = [
+        "#ucAjaxModalPopup1_btnConfirmarPopup",
+        "input[name='ucAjaxModalPopup1$btnConfirmarPopup']",
+        "input[value='OK']",
+        "button:has-text('OK')",
+    ]
+    for scope in _login_scopes(connector):
+        for selector in candidate_selectors:
+            try:
+                await scope.locator(selector).first.click(timeout=2000)
+                return True
+            except Exception:
+                pass
+            try:
+                await scope.locator(selector).first.click(timeout=2000, force=True)
+                return True
+            except Exception:
+                pass
+            try:
+                clicked = await scope.evaluate(
+                    """(selector) => {
+                        try {
+                            const el = document.querySelector(selector);
+                            if (!el) return false;
+                            el.click();
+                            return true;
+                        } catch (_) {
+                            return false;
+                        }
+                    }""",
+                    selector,
+                )
+                if clicked:
+                    return True
+            except Exception:
+                pass
+    try:
+        if await connector.page.evaluate(
+            """() => {
+                try {
+                    if (typeof __doPostBack === 'function') {
+                        __doPostBack('ucAjaxModalPopup1$btnConfirmarPopup', '');
+                        return true;
+                    }
+                    return false;
+                } catch (_) {
+                    return false;
+                }
+            }"""
+        ):
+            return True
+    except Exception:
+        pass
+    return False
 
 
 async def _probe_login_surface(
@@ -1811,17 +1885,76 @@ async def _retry_login_post_click(
             return False
 
     async def _click_ok_popup() -> bool:
+        candidate_selectors = [
+            "#ucAjaxModalPopup1_btnConfirmarPopup",
+            "input[name='ucAjaxModalPopup1$btnConfirmarPopup']",
+            "input[value='OK']",
+            "button:has-text('OK')",
+        ]
         for scope in _login_scopes(connector):
-            try:
-                await scope.locator("#ucAjaxModalPopup1_btnConfirmarPopup").first.click(timeout=2000)
-                return True
-            except Exception:
-                continue
+            for selector in candidate_selectors:
+                try:
+                    await scope.locator(selector).first.click(timeout=2000)
+                    return True
+                except Exception:
+                    continue
+                try:
+                    await scope.locator(selector).first.click(timeout=2000, force=True)
+                    return True
+                except Exception:
+                    continue
+                try:
+                    clicked = await scope.evaluate(
+                        """(selector) => {
+                            try {
+                                const el = document.querySelector(selector);
+                                if (!el) return false;
+                                el.click();
+                                return true;
+                            } catch (_) {
+                                return false;
+                            }
+                        }""",
+                        selector,
+                    )
+                    if clicked:
+                        return True
+                except Exception:
+                    continue
         try:
-            await connector.page.click("#ucAjaxModalPopup1_btnConfirmarPopup", timeout=2000)
-            return True
+            if await connector.page.evaluate(
+                """() => {
+                    try {
+                        if (typeof __doPostBack === 'function') {
+                            __doPostBack('ucAjaxModalPopup1$btnConfirmarPopup', '');
+                            return true;
+                        }
+                        return false;
+                    } catch (_) {
+                        return false;
+                    }
+                }"""
+            ):
+                return True
         except Exception:
+            pass
+        return False
+
+    def _is_user_already_logged_message(*values: object) -> bool:
+        normalized = " | ".join(_normalize_ribeirao_text(value) for value in values if value).strip()
+        if not normalized:
             return False
+        return any(
+            term in normalized
+            for term in [
+                "usuario ja logado",
+                "usuario já logado",
+                "deseja desconectar seu usuario dos outros terminais",
+                "deseja desconectar seu usuário dos outros terminais",
+                "desconectar seu usuario dos outros terminais",
+                "desconectar seu usuário dos outros terminais",
+            ]
+        )
 
     async def _run_method(method_name: str) -> bool:
         if method_name == "locator_click":
@@ -1899,7 +2032,7 @@ async def _retry_login_post_click(
                 raise _typed_login_error("LOGIN_REJECTED", "O portal recusou o login/senha informados.", stage="popup_login")
             if (last_modal or {}).get("popupOkFound") and any(term in popup_text for term in ["ok", "confirm", "confirmar", "aviso", "mensagem", "informacao", "informação"]):
                 print(f"[LOGIN_FLOW] popup OK button found: {last_modal.get('popupOkSelector') or '#ucAjaxModalPopup1_btnConfirmarPopup'}", file=sys.stderr, flush=True)
-                await _click_ok_popup()
+                await _click_ok_popup(connector)
                 await connector.page.wait_for_timeout(1200)
                 last_snapshot = await _capture_login_snapshot(connector)
                 last_modal = await _capture_login_modal_state(connector)
@@ -2555,24 +2688,34 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
             print(f"[LOGIN_FLOW] mensagens do portal depois do clique: {snapshot.get('errorText') or ''}", file=sys.stderr, flush=True)
 
             last_modal = await _capture_login_modal_state(connector)
-            modal_text = str((last_modal or {}).get('popupText') or (last_modal or {}).get('messageLabelText') or '').strip().lower()
-            user_already_logged = any(term in modal_text for term in [
-                'usu?rio j? logado',
-                'usuario j? logado',
-                'usuario ja logado',
-                'usu?rio ja logado',
-                'desconectar seu usu?rio dos outros terminais',
-                'desconectar seu usuario dos outros terminais',
-            ])
+            modal_text = str((last_modal or {}).get('popupText') or (last_modal or {}).get('messageLabelText') or '').strip()
+            user_already_logged = _is_user_already_logged_message(
+                modal_text,
+                snapshot.get('errorText') or '',
+                snapshot.get('bodySnippet') or '',
+            )
             print(f"[LOGIN_FLOW] usuario_ja_logado_detectado: {str(user_already_logged).lower()}", file=sys.stderr, flush=True)
             if user_already_logged:
-                clicked_confirm = await _click_ok_popup()
+                clicked_confirm = await _click_ok_popup(connector)
                 print(f"[LOGIN_FLOW] clicou_confirmar_desconectar: {str(clicked_confirm).lower()}", file=sys.stderr, flush=True)
-                await connector.page.wait_for_timeout(1500)
+                await connector.page.wait_for_timeout(2500)
                 snapshot = await _capture_login_snapshot(connector)
                 last_modal = await _capture_login_modal_state(connector)
                 print(f"[LOGIN_FLOW] url depois confirmar desconectar: {snapshot.get('url') or ''}", file=sys.stderr, flush=True)
                 print(f"[LOGIN_FLOW] sucesso apos confirmar desconectar: {str(bool(snapshot.get('successFound') or snapshot.get('operacionalFound') or snapshot.get('consultaMargemFound'))).lower()}", file=sys.stderr, flush=True)
+                confirm_body = _normalize_ribeirao_text(snapshot.get("bodySnippet") or "")
+                confirm_url = str(snapshot.get("url") or "").lower()
+                if "loginselecao.aspx" in confirm_url or "selecione o convenio" in confirm_body or "convenio sigla acao" in confirm_body:
+                    selection_snapshot, selection_debug, selection_ok = await _handle_convenio_selection(
+                        connector,
+                        login,
+                        password,
+                        timeout_ms,
+                        snapshot,
+                    )
+                    snapshot = selection_snapshot
+                    if selection_ok:
+                        print(f"[LOGIN_FLOW] convenios processados com sucesso: {str(bool(snapshot.get('successFound') or snapshot.get('operacionalFound') or snapshot.get('consultaMargemFound'))).lower()}", file=sys.stderr, flush=True)
                 if not (snapshot.get('successFound') or snapshot.get('operacionalFound') or snapshot.get('consultaMargemFound')):
                     raise _typed_login_error(
                         'USER_ALREADY_LOGGED_CONFIRM_FAILED',
@@ -2659,6 +2802,39 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
                 retry_message = f"{retry_message} Detalhes do portal: {retry_popup_text[:250]}"
             if retry_method_label:
                 retry_message = f"{retry_message} Metodo tentado: {retry_method_label}."
+            if _is_user_already_logged_message(
+                retry_popup_text,
+                snapshot.get("errorText") or "",
+                snapshot.get("bodySnippet") or "",
+            ):
+                clicked_confirm = await _click_ok_popup(connector)
+                print(f"[LOGIN_FLOW] clicou_confirmar_desconectar: {str(clicked_confirm).lower()}", file=sys.stderr, flush=True)
+                await connector.page.wait_for_timeout(2500)
+                snapshot = await _capture_login_snapshot(connector)
+                last_modal = await _capture_login_modal_state(connector)
+                print(f"[LOGIN_FLOW] url depois confirmar desconectar: {snapshot.get('url') or ''}", file=sys.stderr, flush=True)
+                print(f"[LOGIN_FLOW] sucesso apos confirmar desconectar: {str(bool(snapshot.get('successFound') or snapshot.get('operacionalFound') or snapshot.get('consultaMargemFound'))).lower()}", file=sys.stderr, flush=True)
+                confirm_body = _normalize_ribeirao_text(snapshot.get("bodySnippet") or "")
+                confirm_url = str(snapshot.get("url") or "").lower()
+                if "loginselecao.aspx" in confirm_url or "selecione o convenio" in confirm_body or "convenio sigla acao" in confirm_body:
+                    selection_snapshot, selection_debug, selection_ok = await _handle_convenio_selection(
+                        connector,
+                        login,
+                        password,
+                        timeout_ms,
+                        snapshot,
+                    )
+                    snapshot = selection_snapshot
+                    if selection_ok:
+                        print(f"[LOGIN_FLOW] convenios processados com sucesso: {str(bool(snapshot.get('successFound') or snapshot.get('operacionalFound') or snapshot.get('consultaMargemFound'))).lower()}", file=sys.stderr, flush=True)
+                if snapshot.get("successFound") or snapshot.get("operacionalFound") or snapshot.get("consultaMargemFound"):
+                    pass
+                else:
+                    raise _typed_login_error(
+                        "USER_ALREADY_LOGGED_CONFIRM_FAILED",
+                        "O portal informou que o usuario ja estava logado, mas nao foi possivel confirmar a desconexao automatica.",
+                        stage="confirmar_usuario_logado",
+                    )
             if dialog_messages:
                 joined_dialogs = " | ".join(dialog_messages).strip()
                 if joined_dialogs:
@@ -3066,9 +3242,61 @@ async def query_cpf(payload: dict) -> dict:
                 "Não foi possível resolver o endereço do portal no servidor. Verifique DNS da VPS/container.",
                 stage="goto",
             )
-        connector.context = await connector.browser.new_context(viewport={"width": 1440, "height": 1100})
+        if connector.session_state_path and connector.session_state_path.exists():
+            connector.context = await connector.browser.new_context(
+                storage_state=str(connector.session_state_path),
+                viewport={"width": 1440, "height": 1100},
+            )
+            print(f"[RIBEIRAO_QUERY] storage_state reutilizado: true", file=sys.stderr, flush=True)
+        else:
+            connector.context = await connector.browser.new_context(viewport={"width": 1440, "height": 1100})
+            print(f"[RIBEIRAO_QUERY] storage_state reutilizado: false", file=sys.stderr, flush=True)
         connector.page = await connector.context.new_page()
-        await _open_login_browser(connector, login, password)
+        reused_session = False
+        if connector.session_state_path and connector.session_state_path.exists():
+            portal_url = str(connector.settings.pdc_portal_url or "")
+            consulta_url = portal_url
+            if "Login.aspx" in consulta_url:
+                consulta_url = consulta_url.replace("/Login.aspx", "/Margem/ConsultaMargem.aspx")
+            elif "Inicial/Inicial.aspx" in consulta_url:
+                consulta_url = consulta_url.replace("/Inicial/Inicial.aspx", "/Margem/ConsultaMargem.aspx")
+            elif "ConsultaMargem.aspx" not in consulta_url:
+                consulta_url = "https://saec.consiglog.com.br/Margem/ConsultaMargem.aspx"
+            try:
+                print("[RIBEIRAO_QUERY] tentativa de reutilizar sessao existente", file=sys.stderr, flush=True)
+                await connector.page.goto(
+                    consulta_url,
+                    wait_until="domcontentloaded",
+                    timeout=max(60000, connector.settings.timeout_ms),
+                )
+                await connector.page.wait_for_timeout(1200)
+                reuse_snapshot = await _capture_login_snapshot(connector)
+                print(f"[RIBEIRAO_QUERY] reuse url: {reuse_snapshot.get('url') or ''}", file=sys.stderr, flush=True)
+                print(f"[RIBEIRAO_QUERY] reuse body_text_sample: {reuse_snapshot.get('bodySnippet') or ''}", file=sys.stderr, flush=True)
+                reuse_url = str(reuse_snapshot.get("url") or "").lower()
+                reuse_body = _normalize_ribeirao_text(reuse_snapshot.get("bodySnippet") or "")
+                if "loginselecao.aspx" in reuse_url or "selecione o convenio" in reuse_body or "convenio sigla acao" in reuse_body:
+                    selection_snapshot, selection_debug, selection_ok = await _handle_convenio_selection(
+                        connector,
+                        login,
+                        password,
+                        max(60000, connector.settings.timeout_ms),
+                        reuse_snapshot,
+                    )
+                    reuse_snapshot = selection_snapshot
+                    print(f"[RIBEIRAO_QUERY] reuse convenio targetFound: {str(bool(selection_debug.get('targetFound'))).lower()}", file=sys.stderr, flush=True)
+                    print(f"[RIBEIRAO_QUERY] reuse convenio actionFound: {str(bool(selection_debug.get('actionFound'))).lower()}", file=sys.stderr, flush=True)
+                    if selection_ok:
+                        print("[RIBEIRAO_QUERY] sessao reutilizada avancou via selecao de convenio", file=sys.stderr, flush=True)
+                await connector._prepare_consulta_context()
+                if await connector._wait_any(connector.settings.pdc_selector_cpf_input, 5000):
+                    reused_session = True
+                    print("[RIBEIRAO_QUERY] sessao reutilizada com sucesso", file=sys.stderr, flush=True)
+            except Exception as exc:
+                print(f"[RIBEIRAO_QUERY] sessao reutilizada falhou: {exc}", file=sys.stderr, flush=True)
+
+        if not reused_session:
+            await _open_login_browser(connector, login, password)
         connector.is_ready = True
         result = await connector.consultar_cliente(cpf)
         raw = _serialize_result(result)

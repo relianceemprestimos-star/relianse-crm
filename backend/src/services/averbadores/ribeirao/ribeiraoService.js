@@ -93,10 +93,12 @@ function serializeQueryRow(row) {
     base_id: row.base_id,
     cpf: row.cpf,
     cpf_masked: row.cpf_masked,
-    nome: row.nome || summary.nome || '',
-    matricula: row.matricula || summary.matricula || '',
-    orgao: row.orgao || summary.orgao || '',
-    consulta_status: row.consulta_status || summary.consulta_status,
+      nome: row.nome || summary.nome || '',
+      matricula: row.matricula || summary.matricula || '',
+      orgao: row.orgao || summary.orgao || '',
+      cargo: row.cargo || summary.cargo || '',
+      vinculo: row.vinculo || summary.vinculo || '',
+      consulta_status: row.consulta_status || summary.consulta_status,
     consulta_status_label: row.consulta_status_label || summary.consulta_status_label,
     mensagem: row.mensagem || summary.mensagem || '',
     best_product_type: row.best_product_type || summary.best_product_type || '',
@@ -692,6 +694,8 @@ export async function queryRibeiraoCpf({ userId, sessionId, cpf, login, password
         nome,
         matricula,
         orgao,
+        cargo,
+        vinculo,
         consulta_status,
         mensagem,
         best_product_type,
@@ -702,7 +706,7 @@ export async function queryRibeiraoCpf({ userId, sessionId, cpf, login, password
         margem_cartao_disponivel,
         raw_result_json,
         created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     [
       userId,
@@ -714,6 +718,8 @@ export async function queryRibeiraoCpf({ userId, sessionId, cpf, login, password
       normalized.nome || '',
       normalized.matricula || '',
       normalized.orgao || '',
+      normalized.cargo || '',
+      normalized.vinculo || '',
       normalized.consultaStatus,
       normalized.mensagem || '',
       normalized.best_product_type || '',
