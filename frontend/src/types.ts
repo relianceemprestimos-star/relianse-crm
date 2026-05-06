@@ -173,6 +173,7 @@ export interface PhoneLookupJob {
 export interface PhoneLookupHistoryItem {
   id: number;
   client_id?: number | null;
+  cpf?: string;
   cpf_masked: string;
   name: string;
   source: string;

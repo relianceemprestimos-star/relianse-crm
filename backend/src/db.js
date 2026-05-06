@@ -622,6 +622,7 @@ function phoneLookupLogDto(row) {
   return {
     id: Number(row.id),
     client_id: row.client_id === null || row.client_id === undefined ? null : Number(row.client_id),
+    cpf: row.cpf || row.client_cpf || '',
     cpf_masked: row.cpf_masked || '',
     name: row.name || '',
     source: row.source || 'Nova Vida',
@@ -842,6 +843,7 @@ function initSchema(database) {
     CREATE TABLE IF NOT EXISTS phone_lookup_logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       client_id INTEGER,
+      cpf TEXT NOT NULL DEFAULT '',
       cpf_masked TEXT NOT NULL DEFAULT '',
       name TEXT NOT NULL DEFAULT '',
       source TEXT NOT NULL DEFAULT 'Nova Vida',
@@ -1033,6 +1035,7 @@ function initSchema(database) {
 
   ensureColumns(database, 'phone_lookup_logs', [
     'client_id INTEGER',
+    'cpf TEXT NOT NULL DEFAULT \'\'',
     'cpf_masked TEXT NOT NULL DEFAULT \'\'',
     'name TEXT NOT NULL DEFAULT \'\'',
     'source TEXT NOT NULL DEFAULT \'Nova Vida\'',
@@ -2989,14 +2992,15 @@ export function saveClientLookupPhones({ clientId, userId, phones = [], source =
   return { client: getClientById(Number(clientId))?.client || null, phones: listClientPhones(Number(clientId)), saved };
 }
 
-export function logPhoneLookupRecord({ clientId = null, cpfMasked = '', name = '', source = 'Nova Vida', status = '', phonesFoundCount = 0, errorMessage = '' }) {
+export function logPhoneLookupRecord({ clientId = null, cpf = '', cpfMasked = '', name = '', source = 'Nova Vida', status = '', phonesFoundCount = 0, errorMessage = '' }) {
   const database = getDb();
   const result = database
     .prepare(
-      'INSERT INTO phone_lookup_logs (client_id, cpf_masked, name, source, status, phones_found_count, error_message, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO phone_lookup_logs (client_id, cpf, cpf_masked, name, source, status, phones_found_count, error_message, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
     .run(
       clientId === null || clientId === undefined ? null : Number(clientId),
+      String(cpf || ''),
       String(cpfMasked || ''),
       String(name || ''),
       String(source || 'Nova Vida'),
@@ -3015,7 +3019,7 @@ export function listPhoneLookupLogs(params = {}) {
   return queryAll(
     database,
     `
-      SELECT l.*, c.name AS client_name
+      SELECT l.*, c.name AS client_name, c.cpf AS client_cpf
       FROM phone_lookup_logs l
       LEFT JOIN clients c ON c.id = l.client_id
       ORDER BY datetime(l.created_at) DESC, l.id DESC

@@ -269,7 +269,7 @@ export default function PhoneLookupPage() {
                 <tr key={item.id} className="border-t border-border/80">
                   <td className="px-5 py-4 text-slate-300">{item.created_at_formatted || item.created_at}</td>
                   <td className="px-5 py-4 font-semibold text-white">{item.client_name || item.name || '-'}</td>
-                  <td className="px-5 py-4 text-slate-300">{item.cpf_masked || '-'}</td>
+                  <td className="px-5 py-4 text-slate-300">{item.cpf || item.cpf_masked || '-'}</td>
                   <td className="px-5 py-4">
                     <Badge tone={item.status === 'success' || item.status === 'saved' ? 'success' : item.status === 'requires_manual_login' || item.status === 'failed' ? 'danger' : 'neutral'}>
                       {item.status}

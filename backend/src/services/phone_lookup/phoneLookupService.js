@@ -127,6 +127,7 @@ export async function searchPhones({ cpf = '', name = '', clientId = null } = {}
   const result = await searchPhoneNovaVida({ cpf: searchCpf, name: searchName });
   logPhoneLookupRecord({
     clientId: client?.id ?? null,
+    cpf: searchCpf,
     cpfMasked: searchCpf ? maskCpf(searchCpf) : '',
     name: result.name || searchName,
     source: 'Nova Vida',
@@ -167,6 +168,7 @@ export function savePhonesToClient({ clientId, phones = [], userId }) {
   }
   logPhoneLookupRecord({
     clientId: Number(clientId),
+    cpf: saved.client?.cpf || '',
     cpfMasked: '',
     name: saved.client?.name || '',
     source: 'Nova Vida',

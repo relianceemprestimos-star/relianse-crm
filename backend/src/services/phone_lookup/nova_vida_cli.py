@@ -342,10 +342,6 @@ def extract_phones_from_page(page) -> list[dict[str, Any]]:
 def try_generic_search(page, cpf: str, name: str) -> dict[str, Any]:
     data = collect_page(page)
     nav = find_search_navigation(page)
-    candidates = page.locator(
-        "input[type=text], input[type=search], input:not([type]), textarea"
-    )
-    count = candidates.count()
     query = clean_digits(cpf) or name
 
     if not query:
@@ -357,6 +353,52 @@ def try_generic_search(page, cpf: str, name: str) -> dict[str, Any]:
             "page": data,
             "navigationCandidates": nav,
         }
+
+    if page.locator("#documento").count() > 0:
+        page.fill("#documento", query, timeout=10000)
+        try:
+            with page.expect_navigation(wait_until="domcontentloaded", timeout=20000):
+                page.locator("#buscaDashboard button[type=submit], #buscaDashboard input[type=submit]").first.click(timeout=10000)
+        except Exception:
+            page.wait_for_timeout(8000)
+
+        page_data = collect_page(page)
+        body = str(page_data.get("bodySample") or "").lower()
+        if "documento inválido" in body or "documento invalido" in body:
+            return {
+                "status": "not_found",
+                "code": "NOVA_VIDA_INVALID_DOCUMENT",
+                "message": "O Nova Vida informou documento invalido.",
+                "phones": [],
+                "page": page_data,
+                "searchInput": {"id": "documento", "name": "documento"},
+            }
+
+        phones = extract_phones_from_page(page)
+        if phones:
+            return {
+                "status": "success",
+                "code": "",
+                "message": "Telefones encontrados no Nova Vida.",
+                "phones": phones,
+                "searchInput": {"id": "documento", "name": "documento"},
+                "page": page_data,
+            }
+
+        if "/pf/cadastro" in str(page.url).lower():
+            return {
+                "status": "not_found",
+                "code": "NOVA_VIDA_NO_PHONES_FOUND",
+                "message": "Cadastro encontrado no Nova Vida, mas nenhum telefone foi localizado.",
+                "phones": [],
+                "searchInput": {"id": "documento", "name": "documento"},
+                "page": page_data,
+            }
+
+    candidates = page.locator(
+        "input[type=text], input[type=search], input:not([type]), textarea"
+    )
+    count = candidates.count()
 
     for index in range(min(count, 25)):
         locator = candidates.nth(index)
