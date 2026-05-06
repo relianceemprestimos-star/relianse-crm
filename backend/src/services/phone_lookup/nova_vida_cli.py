@@ -190,7 +190,7 @@ def storage_state_path() -> Path:
 
 
 def launch_browser(playwright):
-    headless = bool_env("NOVA_VIDA_HEADLESS", True)
+    headless = True if os.getenv("NODE_ENV") == "production" else bool_env("NOVA_VIDA_HEADLESS", True)
     return playwright.chromium.launch(
         headless=headless,
         args=[
