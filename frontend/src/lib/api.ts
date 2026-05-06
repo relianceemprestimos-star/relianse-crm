@@ -21,6 +21,8 @@ import type {
   UploadAnalysis,
   RibeiraoDiagnostics,
   ClientPhone,
+  ClientAddress,
+  ClientEnrichmentData,
   PhoneLookupJob,
   PhoneLookupHistoryItem,
 } from '../types';
@@ -358,15 +360,34 @@ export const api = {
   getPhoneLookupJobs: (filters: Record<string, string | number | undefined | null> = {}) =>
     request<{ jobs: PhoneLookupJob[]; stats: Record<string, number> }>(`/api/phone-lookup/jobs${buildQuery(filters)}`),
   searchPhones: (payload: { cpf?: string; name?: string; client_id?: number | string | null }) =>
-    request<{ status: string; source: string; client_id?: number | null; cpf: string; name: string; phones: ClientPhone[]; message?: string; code?: string }>(
+    request<{
+      status: string;
+      source: string;
+      client_id?: number | null;
+      cpf: string;
+      name: string;
+      full_name?: string;
+      birth_date?: string;
+      age?: number | null;
+      gender?: string;
+      mother_name?: string;
+      father_name?: string;
+      email?: string;
+      emails?: string[];
+      addresses?: ClientAddress[];
+      raw_data?: Record<string, unknown>;
+      phones: ClientPhone[];
+      message?: string;
+      code?: string;
+    }>(
       '/api/phone-lookup/search',
       {
         method: 'POST',
         body: JSON.stringify(payload),
       }
     ),
-  savePhonesToClient: (payload: { client_id: number | string; phones: Array<Partial<ClientPhone> & { number?: string; normalized?: string }> }) =>
-    request<{ client: Client; phones: ClientPhone[]; saved: number }>('/api/phone-lookup/save-to-client', {
+  savePhonesToClient: (payload: { client_id: number | string; phones: Array<Partial<ClientPhone> & { number?: string; normalized?: string }>; enrichment?: Record<string, unknown> }) =>
+    request<{ client: Client; phones: ClientPhone[]; saved: number; enrichment?: ClientEnrichmentData | null }>('/api/phone-lookup/save-to-client', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),

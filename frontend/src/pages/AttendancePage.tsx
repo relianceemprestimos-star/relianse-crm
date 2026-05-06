@@ -539,6 +539,51 @@ export default function AttendancePage() {
                   </div>
                 </div>
               </div>
+
+              <div className="mt-4 rounded-2xl border border-border bg-bg/60 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Dados Nova Vida</p>
+                    <p className="mt-1 text-sm text-slate-300">Dados cadastrais enriquecidos pela última consulta autorizada.</p>
+                  </div>
+                  <Badge tone={client.nova_vida_data ? 'success' : 'neutral'}>{client.nova_vida_lookup_status || 'never_searched'}</Badge>
+                </div>
+                {client.nova_vida_data ? (
+                  <div className="mt-4 space-y-4">
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <InfoLine label="Última consulta" value={client.nova_vida_data.searched_at_formatted || client.nova_vida_last_lookup_at_formatted || '-'} />
+                      <InfoLine label="Nome Nova Vida" value={client.nova_vida_data.full_name || '-'} />
+                      <InfoLine label="Nascimento" value={client.nova_vida_data.birth_date || '-'} />
+                      <InfoLine label="Idade" value={client.nova_vida_data.age === null || client.nova_vida_data.age === undefined ? '-' : String(client.nova_vida_data.age)} />
+                      <InfoLine label="Sexo" value={client.nova_vida_data.gender || '-'} />
+                      <InfoLine label="Nome da mãe" value={client.nova_vida_data.mother_name || '-'} />
+                      <InfoLine label="Nome do pai" value={client.nova_vida_data.father_name || '-'} />
+                      <InfoLine label="E-mail" value={client.nova_vida_data.email || client.nova_vida_data.emails?.[0] || '-'} />
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Endereços</p>
+                      <div className="mt-2 space-y-2">
+                        {client.nova_vida_data.addresses?.length ? (
+                          client.nova_vida_data.addresses.map((address, index) => (
+                            <div key={`${address.address_full}-${index}`} className="rounded-2xl border border-border bg-bg/70 p-3 text-sm text-slate-300">
+                              <p className="font-semibold text-white">{address.address_full || '-'}</p>
+                              <p className="mt-1 text-xs text-slate-500">
+                                {[address.street, address.number, address.complement, address.district, address.city, address.state, address.zipcode].filter(Boolean).join(' • ')}
+                              </p>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="rounded-2xl border border-dashed border-border bg-white/3 p-4 text-sm text-slate-500">Nenhum endereço salvo.</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-4 rounded-2xl border border-dashed border-border bg-white/3 p-4 text-sm text-slate-500">
+                    Nenhuma consulta cadastral Nova Vida salva ainda.
+                  </div>
+                )}
+              </div>
             </Card>
 
             <Card className="p-6">

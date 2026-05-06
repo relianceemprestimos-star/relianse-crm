@@ -10,6 +10,7 @@ import {
   listPhoneLookupLogs,
   listPhoneLookupJobs,
   logPhoneLookupRecord,
+  saveClientEnrichmentData,
   saveClientLookupPhones,
   updatePhoneLookupJob,
 } from '../../db.js';
@@ -115,7 +116,7 @@ export function queuePhoneLookupForMarginClients({ userId, filters = {}, force =
   return result;
 }
 
-export async function searchPhones({ cpf = '', name = '', clientId = null } = {}) {
+export async function searchPhones({ cpf = '', name = '', clientId = null, userId = null } = {}) {
   const clientDetails = clientId ? getClientById(Number(clientId)) : null;
   const client = clientDetails?.client || null;
   const searchCpf = cleanDigits(cpf || client?.cpf || '');
@@ -133,6 +134,8 @@ export async function searchPhones({ cpf = '', name = '', clientId = null } = {}
     source: 'Nova Vida',
     status: result.status,
     phonesFoundCount: result.phones?.length || 0,
+    hasAddress: Boolean(result.addresses?.length),
+    hasBirthDate: Boolean(result.birth_date),
     errorMessage: result.status === 'success' ? '' : result.message || result.code || '',
   });
   logLookup('manual_search_finished', {
@@ -142,12 +145,41 @@ export async function searchPhones({ cpf = '', name = '', clientId = null } = {}
     phonesFound: result.phones?.length || 0,
   });
 
+  if (client?.id) {
+    if (result.status === 'success' && result.phones?.length) {
+      saveClientLookupPhones({
+        clientId: client.id,
+        userId,
+        source: 'Nova Vida',
+        phones: result.phones || [],
+        searchedAt: nowIso(),
+      });
+    }
+    saveClientEnrichmentData({
+      clientId: client.id,
+      userId,
+      source: 'Nova Vida',
+      data: { ...result, status: result.status },
+      searchedAt: nowIso(),
+    });
+  }
+
   return {
     status: result.status,
     source: result.source || 'Nova Vida',
     client_id: client?.id ?? null,
     cpf: searchCpf,
     name: result.name || searchName,
+    full_name: result.full_name || result.name || searchName,
+    birth_date: result.birth_date || '',
+    age: result.age ?? null,
+    gender: result.gender || '',
+    mother_name: result.mother_name || '',
+    father_name: result.father_name || '',
+    email: result.email || '',
+    emails: result.emails || [],
+    addresses: result.addresses || [],
+    raw_data: result.raw_data || result.raw || {},
     phones: result.phones || [],
     message: result.message || '',
     code: result.code || '',
@@ -155,7 +187,7 @@ export async function searchPhones({ cpf = '', name = '', clientId = null } = {}
   };
 }
 
-export function savePhonesToClient({ clientId, phones = [], userId }) {
+export function savePhonesToClient({ clientId, phones = [], enrichment = null, userId }) {
   const saved = saveClientLookupPhones({
     clientId: Number(clientId),
     userId,
@@ -166,6 +198,15 @@ export function savePhonesToClient({ clientId, phones = [], userId }) {
   if (!saved) {
     return { error: 'Cliente nao encontrado.', status: 404 };
   }
+  const enrichmentSaved = enrichment
+    ? saveClientEnrichmentData({
+        clientId: Number(clientId),
+        userId,
+        data: enrichment,
+        source: 'Nova Vida',
+        searchedAt: nowIso(),
+      })
+    : null;
   logPhoneLookupRecord({
     clientId: Number(clientId),
     cpf: saved.client?.cpf || '',
@@ -175,7 +216,7 @@ export function savePhonesToClient({ clientId, phones = [], userId }) {
     status: 'saved',
     phonesFoundCount: saved.saved || 0,
   });
-  return saved;
+  return { ...saved, enrichment: enrichmentSaved };
 }
 
 export async function processPhoneLookupJob(jobId, { userId } = {}) {
@@ -214,6 +255,21 @@ export async function processPhoneLookupJob(jobId, { userId } = {}) {
         userId,
         source: 'Nova Vida',
         phones: result.phones || [],
+        searchedAt: nowIso(),
+      });
+      saveClientEnrichmentData({
+        clientId: details.client.id,
+        userId,
+        source: 'Nova Vida',
+        data: { ...result, status: finalStatus },
+        searchedAt: nowIso(),
+      });
+    } else {
+      saveClientEnrichmentData({
+        clientId: details.client.id,
+        userId,
+        source: 'Nova Vida',
+        data: { cpf: details.client.cpf, full_name: details.client.name, status: finalStatus, raw_data: result.raw_data || result.raw || {} },
         searchedAt: nowIso(),
       });
     }

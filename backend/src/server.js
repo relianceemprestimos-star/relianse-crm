@@ -554,15 +554,33 @@ app.get('/api/clients/export', requirePrivilegedRole, (req, res) => {
   const rows = (data.clients || []).map((client) => {
     const phones = client.phones || [];
     const primary = phones.find((phone) => phone.is_primary) || phones[0] || null;
+    const enrichment = client.nova_vida_data || {};
+    const address = enrichment.addresses?.[0] || {};
     return {
       CPF: client.cpf || '',
       Nome: client.name || '',
+      data_nascimento: enrichment.birth_date || '',
+      idade: enrichment.age ?? '',
+      sexo: enrichment.gender || '',
+      nome_mae: enrichment.mother_name || '',
+      nome_pai: enrichment.father_name || '',
+      email_nova_vida: enrichment.email || enrichment.emails?.[0] || '',
+      endereco_completo: address.address_full || enrichment.address_full || '',
+      rua: address.street || enrichment.street || '',
+      numero: address.number || enrichment.number || '',
+      complemento: address.complement || enrichment.complement || '',
+      bairro: address.district || enrichment.district || '',
+      cidade: address.city || enrichment.city || '',
+      uf: address.state || enrichment.state || '',
+      cep: address.zipcode || enrichment.zipcode || '',
       Telefone: client.phone || '',
       telefone_principal: primary?.normalized_phone || primary?.phone_number || client.phone || '',
       telefones_encontrados: phones.map((phone) => phone.normalized_phone || phone.phone_number).filter(Boolean).join('; '),
       origem_telefone: primary?.source || '',
+      origem_dados: enrichment.source || primary?.source || '',
       qualidade_telefone: primary?.quality || '',
       data_busca_telefone: primary?.searched_at_formatted || primary?.searched_at || '',
+      data_consulta_nova_vida: enrichment.searched_at_formatted || enrichment.searched_at || client.nova_vida_last_lookup_at || '',
       Status: client.status_label || client.status_atendimento || client.status || '',
       Consulta: client.consulta_status_label || client.consulta_status || '',
       Campanha: client.campaign_name || '',
@@ -791,6 +809,7 @@ app.post('/api/phone-lookup/search', async (req, res) => {
       cpf: req.body?.cpf,
       name: req.body?.name,
       clientId: req.body?.client_id || req.body?.clientId || null,
+      userId: getAuthenticatedUserId(req),
     });
     if (result.error) {
       return res.status(result.status || 400).json({ message: result.error });
@@ -806,6 +825,7 @@ app.post('/api/phone-lookup/save-to-client', (req, res) => {
   const result = savePhonesToClient({
     clientId: req.body?.client_id || req.body?.clientId,
     phones: Array.isArray(req.body?.phones) ? req.body.phones : [],
+    enrichment: req.body?.enrichment || req.body?.data || null,
     userId,
   });
   if (result.error) {

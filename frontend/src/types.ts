@@ -135,7 +135,49 @@ export interface Client {
   deals?: unknown[];
   interactions?: unknown[];
   phones?: ClientPhone[];
+  nova_vida_data?: ClientEnrichmentData | null;
+  nova_vida_last_lookup_at?: string;
+  nova_vida_last_lookup_at_formatted?: string;
+  nova_vida_lookup_status?: string;
   phone_lookup_job?: PhoneLookupJob | null;
+}
+
+export interface ClientAddress {
+  address_full?: string;
+  street?: string;
+  number?: string;
+  complement?: string;
+  district?: string;
+  city?: string;
+  state?: string;
+  zipcode?: string;
+}
+
+export interface ClientEnrichmentData {
+  id?: number;
+  client_id?: number | null;
+  source?: string;
+  cpf?: string;
+  full_name?: string;
+  birth_date?: string;
+  age?: number | null;
+  gender?: string;
+  mother_name?: string;
+  father_name?: string;
+  email?: string;
+  emails?: string[];
+  address_full?: string;
+  street?: string;
+  number?: string;
+  complement?: string;
+  district?: string;
+  city?: string;
+  state?: string;
+  zipcode?: string;
+  addresses?: ClientAddress[];
+  raw_data?: Record<string, unknown>;
+  searched_at?: string;
+  searched_at_formatted?: string;
 }
 
 export interface ClientPhone {
@@ -179,6 +221,8 @@ export interface PhoneLookupHistoryItem {
   source: string;
   status: string;
   phones_found_count: number;
+  has_address?: boolean;
+  has_birth_date?: boolean;
   error_message?: string;
   created_at: string;
   created_at_formatted?: string;

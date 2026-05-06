@@ -3,7 +3,7 @@ import { Copy, PhoneCall, Save, Search } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 import { api } from '../lib/api';
-import type { Client, PhoneLookupHistoryItem } from '../types';
+import type { Client, ClientAddress, PhoneLookupHistoryItem } from '../types';
 import { Badge, Button, Card, Input, SectionHeader } from '../components/ui';
 
 type ResultPhone = {
@@ -23,6 +23,16 @@ type LookupResult = {
   client_id?: number | null;
   cpf: string;
   name: string;
+  full_name?: string;
+  birth_date?: string;
+  age?: number | null;
+  gender?: string;
+  mother_name?: string;
+  father_name?: string;
+  email?: string;
+  emails?: string[];
+  addresses?: ClientAddress[];
+  raw_data?: Record<string, unknown>;
   phones: ResultPhone[];
   message?: string;
   code?: string;
@@ -65,6 +75,8 @@ export default function PhoneLookupPage() {
   }, [clientSearch]);
 
   const resultPhones = useMemo(() => result?.phones || [], [result]);
+  const resultAddresses = useMemo(() => result?.addresses || [], [result]);
+  const resultEmails = useMemo(() => result?.emails || (result?.email ? [result.email] : []), [result]);
 
   async function loadHistory() {
     const response = await api.getPhoneLookupHistory({ limit: 20 });
@@ -119,6 +131,7 @@ export default function PhoneLookupPage() {
       const saved = await api.savePhonesToClient({
         client_id: selectedClient.id,
         phones: resultPhones,
+        enrichment: result || undefined,
       });
       toast.success(`${saved.saved} telefone(s) salvo(s) no cliente.`);
       await loadHistory();
@@ -215,7 +228,23 @@ export default function PhoneLookupPage() {
 
           {result?.message ? <p className="mt-4 rounded-2xl border border-border bg-bg/70 p-4 text-sm text-slate-300">{result.message}</p> : null}
 
-          <div className="mt-5 space-y-3">
+          {result ? (
+            <div className="mt-5 grid gap-3 text-sm md:grid-cols-2">
+              <LookupLine label="Nome" value={result.full_name || result.name || '-'} />
+              <LookupLine label="CPF" value={result.cpf || '-'} />
+              <LookupLine label="Nascimento" value={result.birth_date || '-'} />
+              <LookupLine label="Idade" value={result.age === null || result.age === undefined ? '-' : String(result.age)} />
+              <LookupLine label="Sexo" value={result.gender || '-'} />
+              <LookupLine label="Nome da mãe" value={result.mother_name || '-'} />
+              <LookupLine label="Nome do pai" value={result.father_name || '-'} />
+              <LookupLine label="E-mail principal" value={result.email || resultEmails[0] || '-'} />
+            </div>
+          ) : null}
+
+          <div className="mt-6">
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Telefones</p>
+          </div>
+          <div className="mt-3 space-y-3">
             {resultPhones.length ? (
               resultPhones.map((phone, index) => (
                 <div key={`${phone.normalized || phone.normalized_phone || phone.number}-${index}`} className="rounded-2xl border border-border bg-bg/60 p-4">
@@ -241,6 +270,38 @@ export default function PhoneLookupPage() {
               </div>
             )}
           </div>
+
+          <div className="mt-6">
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Endereços</p>
+            <div className="mt-3 space-y-3">
+              {resultAddresses.length ? (
+                resultAddresses.map((address, index) => (
+                  <div key={`${address.address_full}-${index}`} className="rounded-2xl border border-border bg-bg/60 p-4 text-sm text-slate-300">
+                    <p className="font-semibold text-white">{address.address_full || '-'}</p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {[address.street, address.number, address.complement, address.district, address.city, address.state, address.zipcode].filter(Boolean).join(' • ')}
+                    </p>
+                  </div>
+                ))
+              ) : (
+                <div className="rounded-2xl border border-dashed border-border bg-white/3 p-4 text-sm text-slate-500">Nenhum endereço retornado.</div>
+              )}
+            </div>
+          </div>
+
+          <div className="mt-6">
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">E-mails</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {resultEmails.length ? resultEmails.map((email) => <Badge key={email} tone="neutral">{email}</Badge>) : <span className="text-sm text-slate-500">Nenhum e-mail retornado.</span>}
+            </div>
+          </div>
+
+          {result?.raw_data ? (
+            <details className="mt-6 rounded-2xl border border-border bg-bg/60 p-4 text-sm text-slate-400">
+              <summary className="cursor-pointer font-semibold text-white">Ver detalhes técnicos</summary>
+              <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap text-xs">{JSON.stringify(result.raw_data, null, 2)}</pre>
+            </details>
+          ) : null}
         </Card>
       </div>
 
@@ -257,7 +318,7 @@ export default function PhoneLookupPage() {
           <table className="min-w-[900px] text-left text-sm">
             <thead className="bg-bg/80 text-slate-400">
               <tr>
-                {['Data', 'Cliente', 'CPF', 'Status', 'Telefones', 'Erro'].map((header) => (
+                {['Data', 'Cliente', 'CPF', 'Status', 'Telefones', 'Nascimento', 'Endereço', 'Erro'].map((header) => (
                   <th key={header} className="px-5 py-4 font-medium">
                     {header}
                   </th>
@@ -276,6 +337,8 @@ export default function PhoneLookupPage() {
                     </Badge>
                   </td>
                   <td className="px-5 py-4 text-slate-300">{item.phones_found_count}</td>
+                  <td className="px-5 py-4 text-slate-300">{item.has_birth_date ? 'Sim' : '-'}</td>
+                  <td className="px-5 py-4 text-slate-300">{item.has_address ? 'Sim' : '-'}</td>
                   <td className="px-5 py-4 text-slate-400">{item.error_message || '-'}</td>
                 </tr>
               ))}
@@ -283,6 +346,15 @@ export default function PhoneLookupPage() {
           </table>
         </div>
       </Card>
+    </div>
+  );
+}
+
+function LookupLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-border bg-bg/60 p-3">
+      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{label}</p>
+      <p className="mt-1 font-semibold text-white">{value}</p>
     </div>
   );
 }

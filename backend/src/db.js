@@ -490,6 +490,9 @@ function clientDto(database, row, margins = [], interactions = [], returns = [],
     status_label: statusLabel(row.status_atendimento || row.status),
     created_at: row.created_at,
     updated_at: row.updated_at,
+    nova_vida_last_lookup_at: row.nova_vida_last_lookup_at || '',
+    nova_vida_last_lookup_at_formatted: formatDateTime(row.nova_vida_last_lookup_at),
+    nova_vida_lookup_status: row.nova_vida_lookup_status || 'never_searched',
     created_at_formatted: formatDateTime(row.created_at),
     updated_at_formatted: formatDateTime(row.updated_at),
     best_product_type: best.product_type || '',
@@ -532,6 +535,7 @@ function clientDto(database, row, margins = [], interactions = [], returns = [],
     current_margin: best.net_margin ?? null,
     current_margin_formatted: formatMoney(best.net_margin),
     phones: getClientPhonesInternal(database, row.id),
+    nova_vida_data: getClientLatestEnrichmentInternal(database, row.id),
     phone_lookup_job: getLatestPhoneLookupJobInternal(database, row.id),
   };
 }
@@ -594,6 +598,38 @@ function phoneDto(row) {
   };
 }
 
+function enrichmentDto(row) {
+  if (!row) return null;
+  return {
+    id: Number(row.id),
+    client_id: row.client_id === null || row.client_id === undefined ? null : Number(row.client_id),
+    source: row.source || 'Nova Vida',
+    cpf: row.cpf || '',
+    full_name: row.full_name || '',
+    birth_date: row.birth_date || '',
+    age: row.age === null || row.age === undefined || row.age === '' ? null : Number(row.age),
+    gender: row.gender || '',
+    mother_name: row.mother_name || '',
+    father_name: row.father_name || '',
+    email: row.email || '',
+    emails: safeJsonParse(row.emails_json, []),
+    address_full: row.address_full || '',
+    street: row.street || '',
+    number: row.number || '',
+    complement: row.complement || '',
+    district: row.district || '',
+    city: row.city || '',
+    state: row.state || '',
+    zipcode: row.zipcode || '',
+    addresses: safeJsonParse(row.addresses_json, []),
+    raw_data: safeJsonParse(row.raw_data, {}),
+    searched_at: row.searched_at || '',
+    searched_at_formatted: formatDateTime(row.searched_at),
+    created_at: row.created_at || '',
+    updated_at: row.updated_at || '',
+  };
+}
+
 function phoneLookupJobDto(row) {
   if (!row) {
     return null;
@@ -628,6 +664,8 @@ function phoneLookupLogDto(row) {
     source: row.source || 'Nova Vida',
     status: row.status || '',
     phones_found_count: Number(row.phones_found_count || 0),
+    has_address: Number(row.has_address || 0) === 1,
+    has_birth_date: Number(row.has_birth_date || 0) === 1,
     error_message: row.error_message || '',
     created_at: row.created_at || '',
     created_at_formatted: formatDateTime(row.created_at),
@@ -646,6 +684,22 @@ function getClientPhonesInternal(database, clientId) {
     `,
     [clientId]
   ).map(phoneDto);
+}
+
+function getClientLatestEnrichmentInternal(database, clientId) {
+  return enrichmentDto(
+    queryOne(
+      database,
+      `
+        SELECT *
+        FROM client_enrichment_data
+        WHERE client_id = ?
+        ORDER BY datetime(searched_at) DESC, id DESC
+        LIMIT 1
+      `,
+      [clientId]
+    )
+  );
 }
 
 function getLatestPhoneLookupJobInternal(database, clientId) {
@@ -849,8 +903,39 @@ function initSchema(database) {
       source TEXT NOT NULL DEFAULT 'Nova Vida',
       status TEXT NOT NULL DEFAULT '',
       phones_found_count INTEGER NOT NULL DEFAULT 0,
+      has_address INTEGER NOT NULL DEFAULT 0,
+      has_birth_date INTEGER NOT NULL DEFAULT 0,
       error_message TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL,
+      FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS client_enrichment_data (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_id INTEGER,
+      source TEXT NOT NULL DEFAULT 'Nova Vida',
+      cpf TEXT NOT NULL DEFAULT '',
+      full_name TEXT NOT NULL DEFAULT '',
+      birth_date TEXT,
+      age INTEGER,
+      gender TEXT NOT NULL DEFAULT '',
+      mother_name TEXT NOT NULL DEFAULT '',
+      father_name TEXT NOT NULL DEFAULT '',
+      email TEXT NOT NULL DEFAULT '',
+      address_full TEXT NOT NULL DEFAULT '',
+      street TEXT NOT NULL DEFAULT '',
+      number TEXT NOT NULL DEFAULT '',
+      complement TEXT NOT NULL DEFAULT '',
+      district TEXT NOT NULL DEFAULT '',
+      city TEXT NOT NULL DEFAULT '',
+      state TEXT NOT NULL DEFAULT '',
+      zipcode TEXT NOT NULL DEFAULT '',
+      emails_json TEXT NOT NULL DEFAULT '[]',
+      addresses_json TEXT NOT NULL DEFAULT '[]',
+      raw_data TEXT NOT NULL DEFAULT '{}',
+      searched_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
       FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL
     );
 
@@ -1041,8 +1126,37 @@ function initSchema(database) {
     'source TEXT NOT NULL DEFAULT \'Nova Vida\'',
     'status TEXT NOT NULL DEFAULT \'\'',
     'phones_found_count INTEGER NOT NULL DEFAULT 0',
+    'has_address INTEGER NOT NULL DEFAULT 0',
+    'has_birth_date INTEGER NOT NULL DEFAULT 0',
     'error_message TEXT NOT NULL DEFAULT \'\'',
     'created_at TEXT NOT NULL',
+  ]);
+
+  ensureColumns(database, 'client_enrichment_data', [
+    'client_id INTEGER',
+    'source TEXT NOT NULL DEFAULT \'Nova Vida\'',
+    'cpf TEXT NOT NULL DEFAULT \'\'',
+    'full_name TEXT NOT NULL DEFAULT \'\'',
+    'birth_date TEXT',
+    'age INTEGER',
+    'gender TEXT NOT NULL DEFAULT \'\'',
+    'mother_name TEXT NOT NULL DEFAULT \'\'',
+    'father_name TEXT NOT NULL DEFAULT \'\'',
+    'email TEXT NOT NULL DEFAULT \'\'',
+    'address_full TEXT NOT NULL DEFAULT \'\'',
+    'street TEXT NOT NULL DEFAULT \'\'',
+    'number TEXT NOT NULL DEFAULT \'\'',
+    'complement TEXT NOT NULL DEFAULT \'\'',
+    'district TEXT NOT NULL DEFAULT \'\'',
+    'city TEXT NOT NULL DEFAULT \'\'',
+    'state TEXT NOT NULL DEFAULT \'\'',
+    'zipcode TEXT NOT NULL DEFAULT \'\'',
+    'emails_json TEXT NOT NULL DEFAULT \'[]\'',
+    'addresses_json TEXT NOT NULL DEFAULT \'[]\'',
+    'raw_data TEXT NOT NULL DEFAULT \'{}\'',
+    'searched_at TEXT NOT NULL',
+    'created_at TEXT NOT NULL',
+    'updated_at TEXT NOT NULL',
   ]);
 
   ensureColumns(database, 'users', [
@@ -1053,6 +1167,11 @@ function initSchema(database) {
     'is_active INTEGER NOT NULL DEFAULT 1',
     'last_login_at TEXT',
     'updated_at TEXT NOT NULL DEFAULT \'\'',
+  ]);
+
+  ensureColumns(database, 'clients', [
+    'nova_vida_last_lookup_at TEXT',
+    'nova_vida_lookup_status TEXT NOT NULL DEFAULT \'never_searched\'',
   ]);
 
   ensureColumns(database, 'ribeirao_margin_queries', [
@@ -1074,6 +1193,7 @@ function initSchema(database) {
   database.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_client_phones_unique ON client_phones(client_id, normalized_phone, source)');
   database.exec('CREATE INDEX IF NOT EXISTS idx_phone_lookup_jobs_status ON phone_lookup_jobs(status, created_at)');
   database.exec('CREATE INDEX IF NOT EXISTS idx_phone_lookup_logs_created ON phone_lookup_logs(created_at)');
+  database.exec('CREATE INDEX IF NOT EXISTS idx_client_enrichment_client ON client_enrichment_data(client_id, searched_at)');
 }
 
 function ensureColumns(database, table, columns) {
@@ -2992,11 +3112,84 @@ export function saveClientLookupPhones({ clientId, userId, phones = [], source =
   return { client: getClientById(Number(clientId))?.client || null, phones: listClientPhones(Number(clientId)), saved };
 }
 
-export function logPhoneLookupRecord({ clientId = null, cpf = '', cpfMasked = '', name = '', source = 'Nova Vida', status = '', phonesFoundCount = 0, errorMessage = '' }) {
+export function saveClientEnrichmentData({ clientId = null, userId = null, data = {}, source = 'Nova Vida', searchedAt = nowIso() }) {
+  const database = getDb();
+  const normalizedClientId = clientId === null || clientId === undefined || clientId === '' ? null : Number(clientId);
+  const client = normalizedClientId ? queryOne(database, 'SELECT id, name, cpf, email FROM clients WHERE id = ?', [normalizedClientId]) : null;
+  const addresses = Array.isArray(data.addresses) ? data.addresses : [];
+  const firstAddress = addresses[0] || {};
+  const emails = Array.isArray(data.emails) ? data.emails : data.email ? [data.email] : [];
+  const now = nowIso();
+  const result = database
+    .prepare(
+      `
+        INSERT INTO client_enrichment_data (
+          client_id, source, cpf, full_name, birth_date, age, gender, mother_name, father_name, email,
+          address_full, street, number, complement, district, city, state, zipcode,
+          emails_json, addresses_json, raw_data, searched_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `
+    )
+    .run(
+      normalizedClientId,
+      String(source || 'Nova Vida'),
+      String(data.cpf || client?.cpf || ''),
+      String(data.full_name || data.name || client?.name || ''),
+      data.birth_date || null,
+      data.age === null || data.age === undefined || data.age === '' ? null : Number(data.age),
+      String(data.gender || ''),
+      String(data.mother_name || ''),
+      String(data.father_name || ''),
+      String(data.email || emails[0] || ''),
+      String(firstAddress.address_full || ''),
+      String(firstAddress.street || ''),
+      String(firstAddress.number || ''),
+      String(firstAddress.complement || ''),
+      String(firstAddress.district || ''),
+      String(firstAddress.city || ''),
+      String(firstAddress.state || ''),
+      String(firstAddress.zipcode || ''),
+      JSON.stringify(emails),
+      JSON.stringify(addresses),
+      JSON.stringify(data.raw_data || data.raw || {}),
+      searchedAt,
+      now,
+      now
+    );
+
+  if (client) {
+    const updates = ['nova_vida_last_lookup_at = ?', 'nova_vida_lookup_status = ?', 'updated_at = ?'];
+    const values = [searchedAt, data.status || 'success', now];
+    if (!client.name && (data.full_name || data.name)) {
+      updates.push('name = ?');
+      values.push(String(data.full_name || data.name));
+    }
+    if (!client.email && (data.email || emails[0])) {
+      updates.push('email = ?');
+      values.push(String(data.email || emails[0]));
+    }
+    values.push(normalizedClientId);
+    database.prepare(`UPDATE clients SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+
+    if (userId) {
+      insertInteraction(database, {
+        clientId: normalizedClientId,
+        userId: Number(userId),
+        type: 'nova_vida_enrichment',
+        note: `Dados cadastrais consultados na fonte ${source}.`,
+      });
+    }
+  }
+
+  persistDb();
+  return enrichmentDto(queryOne(database, 'SELECT * FROM client_enrichment_data WHERE id = ?', [Number(result.lastInsertRowid || 0)]));
+}
+
+export function logPhoneLookupRecord({ clientId = null, cpf = '', cpfMasked = '', name = '', source = 'Nova Vida', status = '', phonesFoundCount = 0, hasAddress = false, hasBirthDate = false, errorMessage = '' }) {
   const database = getDb();
   const result = database
     .prepare(
-      'INSERT INTO phone_lookup_logs (client_id, cpf, cpf_masked, name, source, status, phones_found_count, error_message, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO phone_lookup_logs (client_id, cpf, cpf_masked, name, source, status, phones_found_count, has_address, has_birth_date, error_message, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
     .run(
       clientId === null || clientId === undefined ? null : Number(clientId),
@@ -3006,6 +3199,8 @@ export function logPhoneLookupRecord({ clientId = null, cpf = '', cpfMasked = ''
       String(source || 'Nova Vida'),
       String(status || ''),
       Number(phonesFoundCount || 0),
+      hasAddress ? 1 : 0,
+      hasBirthDate ? 1 : 0,
       String(errorMessage || ''),
       nowIso()
     );

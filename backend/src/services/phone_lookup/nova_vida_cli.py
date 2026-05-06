@@ -113,6 +113,54 @@ def phone_quality(raw_label: str = "") -> str:
     return str(raw_label or "").strip()
 
 
+def normalize_birth_date(value: str) -> str:
+    match = re.search(r"(\d{2})/(\d{2})/(\d{4})", value or "")
+    if not match:
+        return ""
+    day, month, year = match.groups()
+    return f"{year}-{month}-{day}"
+
+
+def parse_address_parts(address_full: str) -> dict[str, Any]:
+    text = re.sub(r"\s+", " ", address_full or "").strip()
+    zipcode = ""
+    state = ""
+    city = ""
+    before_city = text
+    city_match = re.search(r"\s-\s([^-/]+?)\s*/\s*([A-Z]{2})\s-\s(\d{5}-?\d{3})$", text)
+    if city_match:
+        before_city = text[: city_match.start()].strip()
+        city = city_match.group(1).strip()
+        state = city_match.group(2).strip()
+        zipcode = clean_digits(city_match.group(3))
+
+    parts = [part.strip() for part in before_city.split(",")]
+    street = parts[0] if parts else ""
+    number = parts[1] if len(parts) > 1 else ""
+    remainder = " ".join(parts[2:]).strip() if len(parts) > 2 else ""
+    district = ""
+    complement = remainder
+    if remainder:
+        words = remainder.split()
+        if len(words) >= 2:
+            district = " ".join(words[-2:])
+            complement = " ".join(words[:-2]).strip()
+        else:
+            district = remainder
+            complement = ""
+
+    return {
+        "address_full": text,
+        "street": street,
+        "number": number,
+        "complement": complement,
+        "district": district,
+        "city": city,
+        "state": state,
+        "zipcode": zipcode,
+    }
+
+
 def collect_page(page) -> dict[str, Any]:
     return page.evaluate(
         """() => {
@@ -339,6 +387,136 @@ def extract_phones_from_page(page) -> list[dict[str, Any]]:
     return phones
 
 
+def extract_tables(page) -> list[str]:
+    return page.evaluate(
+        """() => Array.from(document.querySelectorAll("table"))
+          .map((table) => (table.innerText || "").replace(/\\s+/g, " ").trim())
+          .filter(Boolean)
+          .slice(0, 30)"""
+    )
+
+
+def extract_emails_from_text(text: str) -> list[str]:
+    seen: set[str] = set()
+    emails: list[str] = []
+    for email in re.findall(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+", text or ""):
+        lowered = email.lower()
+        if lowered not in seen:
+            seen.add(lowered)
+            emails.append(email)
+    return emails
+
+
+def parse_addresses_from_text(text: str) -> list[dict[str, Any]]:
+    chunk = ""
+    match = re.search(r"Endereços\s+(.+?)(?:\s+mail\s+E-mails|\s+Indicadores|\s+Score|\Z)", text or "", re.I)
+    if match:
+        chunk = match.group(1)
+    else:
+        chunk = text or ""
+    chunk = re.sub(r"\b(query_stats|cottage|person_search|call|location_on)\b", " | ", chunk)
+    candidates = [re.sub(r"\s+", " ", item).strip(" |") for item in chunk.split("|")]
+    addresses: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if not candidate or "/" not in candidate or not re.search(r"\b[A-Z]{2}\b\s*-\s*\d{5}-?\d{3}", candidate):
+            continue
+        parsed = parse_address_parts(candidate)
+        key = parsed["address_full"].lower()
+        if key and key not in seen:
+            seen.add(key)
+            addresses.append(parsed)
+    return addresses
+
+
+def parse_personal_data(page) -> dict[str, Any]:
+    data = page.evaluate(
+        """() => ({
+          url: location.href,
+          title: document.title,
+          body: (document.body ? document.body.innerText : "").replace(/\\s+/g, " ").trim()
+        })"""
+    )
+    body = str(data.get("body") or "")
+    tables = extract_tables(page)
+    all_text = " ".join([body, *tables])
+
+    cpf = ""
+    cpf_match = re.search(r"\bCPF\s+(\d{3}\.?\d{3}\.?\d{3}-?\d{2})", body, re.I)
+    if cpf_match:
+        cpf = clean_digits(cpf_match.group(1))
+
+    full_name = ""
+    name_source = body
+    for marker in ("save print contact_page Cadastro ", "contact_page Cadastro ", "Cadastro "):
+        if marker in body:
+            name_source = body.split(marker)[-1]
+            break
+    name_match = re.search(r"^(.+?)\s+CPF\s+", name_source, re.I)
+    if name_match:
+        full_name = re.sub(r"\s+", " ", name_match.group(1)).strip()
+
+    gender = ""
+    gender_match = re.search(r"Gênero de identificação\s+(.+?)\s+RG\s+", body, re.I)
+    if gender_match:
+        gender = gender_match.group(1).strip()
+
+    age = None
+    age_match = re.search(r"Idade\s+(\d+)\s+anos", body, re.I)
+    if age_match:
+        age = int(age_match.group(1))
+
+    birth_date = ""
+    birth_match = re.search(r"Nascimento\s+(\d{2}/\d{2}/\d{4})", body, re.I)
+    if birth_match:
+        birth_date = normalize_birth_date(birth_match.group(1))
+
+    mother_name = ""
+    mother_match = re.search(r"Mãe\s+(.+?)\s+Pai\s+", body, re.I)
+    if mother_match:
+        mother_name = mother_match.group(1).strip()
+
+    father_name = ""
+    father_match = re.search(r"Pai\s+(.+?)(?:\s+call\s+Telefones|\s+Telefones\s+fixos)", body, re.I)
+    if father_match:
+        father_name = father_match.group(1).strip()
+
+    emails = extract_emails_from_text(all_text)
+    addresses = parse_addresses_from_text(all_text)
+
+    extra: dict[str, Any] = {}
+    for label, pattern in {
+        "registration_status": r"Situação Cadastral\s+(.+?)\s+Idade\s+",
+        "generation": r"Persona\s+(.+?)\s+done\s+Situação",
+        "rg": r"RG\s+(.+?)\s+face_",
+        "sign": r"Signo\s+(.+?)\s+Mãe\s+",
+        "credit_score": r"Score de crédito NV\s+(.+?)\s+Score Digital",
+    }.items():
+        match = re.search(pattern, body, re.I)
+        if match:
+            extra[label] = match.group(1).strip()
+
+    return {
+        "cpf": cpf,
+        "full_name": full_name,
+        "birth_date": birth_date,
+        "age": age,
+        "gender": gender,
+        "mother_name": mother_name,
+        "father_name": father_name,
+        "email": emails[0] if emails else "",
+        "emails": emails,
+        "addresses": addresses,
+        "extra": extra,
+        "raw_data": {
+            "url": data.get("url"),
+            "title": data.get("title"),
+            "body_sample": sample_text(body, 5000),
+            "tables": tables,
+        },
+    }
+
+
 def try_generic_search(page, cpf: str, name: str) -> dict[str, Any]:
     data = collect_page(page)
     nav = find_search_navigation(page)
@@ -375,12 +553,14 @@ def try_generic_search(page, cpf: str, name: str) -> dict[str, Any]:
             }
 
         phones = extract_phones_from_page(page)
+        enrichment = parse_personal_data(page)
         if phones:
             return {
                 "status": "success",
                 "code": "",
                 "message": "Telefones encontrados no Nova Vida.",
                 "phones": phones,
+                **enrichment,
                 "searchInput": {"id": "documento", "name": "documento"},
                 "page": page_data,
             }
@@ -391,6 +571,7 @@ def try_generic_search(page, cpf: str, name: str) -> dict[str, Any]:
                 "code": "NOVA_VIDA_NO_PHONES_FOUND",
                 "message": "Cadastro encontrado no Nova Vida, mas nenhum telefone foi localizado.",
                 "phones": [],
+                **enrichment,
                 "searchInput": {"id": "documento", "name": "documento"},
                 "page": page_data,
             }
