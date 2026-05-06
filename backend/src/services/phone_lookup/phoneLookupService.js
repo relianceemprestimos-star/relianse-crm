@@ -6,12 +6,15 @@ import {
   enqueuePhoneLookupForMarginClients,
   getClientById,
   getPhoneLookupJobById,
+  listClients,
+  listPhoneLookupLogs,
   listPhoneLookupJobs,
+  logPhoneLookupRecord,
   saveClientLookupPhones,
   updatePhoneLookupJob,
 } from '../../db.js';
 import { cleanDigits } from '../../utils.js';
-import { getNovaVidaDiagnostics, lookupPhoneNovaVida } from './novaVidaProvider.js';
+import { getNovaVidaDiagnostics, lookupPhoneNovaVida, searchPhoneNovaVida } from './novaVidaProvider.js';
 
 function nowIso() {
   return new Date().toISOString();
@@ -100,6 +103,66 @@ export function queuePhoneLookupForMarginClients({ userId, filters = {}, force =
   return result;
 }
 
+export async function searchPhones({ cpf = '', name = '', clientId = null } = {}) {
+  const clientDetails = clientId ? getClientById(Number(clientId)) : null;
+  const client = clientDetails?.client || null;
+  const searchCpf = cleanDigits(cpf || client?.cpf || '');
+  const searchName = String(name || client?.name || '').trim();
+  if (!searchCpf && !searchName) {
+    return { error: 'Informe CPF ou nome para buscar telefone.', status: 400 };
+  }
+
+  const result = await searchPhoneNovaVida({ cpf: searchCpf, name: searchName });
+  logPhoneLookupRecord({
+    clientId: client?.id ?? null,
+    cpfMasked: searchCpf ? maskCpf(searchCpf) : '',
+    name: result.name || searchName,
+    source: 'Nova Vida',
+    status: result.status,
+    phonesFoundCount: result.phones?.length || 0,
+    errorMessage: result.status === 'success' ? '' : result.message || result.code || '',
+  });
+  logLookup('manual_search_finished', {
+    clientId: client?.id ?? null,
+    cpf: searchCpf ? maskCpf(searchCpf) : '',
+    status: result.status,
+    phonesFound: result.phones?.length || 0,
+  });
+
+  return {
+    status: result.status,
+    source: result.source || 'Nova Vida',
+    client_id: client?.id ?? null,
+    cpf: searchCpf,
+    name: result.name || searchName,
+    phones: result.phones || [],
+    message: result.message || '',
+    code: result.code || '',
+  };
+}
+
+export function savePhonesToClient({ clientId, phones = [], userId }) {
+  const saved = saveClientLookupPhones({
+    clientId: Number(clientId),
+    userId,
+    phones,
+    source: 'Nova Vida',
+    searchedAt: nowIso(),
+  });
+  if (!saved) {
+    return { error: 'Cliente nao encontrado.', status: 404 };
+  }
+  logPhoneLookupRecord({
+    clientId: Number(clientId),
+    cpfMasked: '',
+    name: saved.client?.name || '',
+    source: 'Nova Vida',
+    status: 'saved',
+    phonesFoundCount: saved.saved || 0,
+  });
+  return saved;
+}
+
 export async function processPhoneLookupJob(jobId, { userId } = {}) {
   const job = getPhoneLookupJobById(Number(jobId));
   if (!job) {
@@ -185,3 +248,4 @@ export async function runPhoneLookupWorker({ max = Number(process.env.PHONE_LOOK
 }
 
 export { listPhoneLookupJobs };
+export { listPhoneLookupLogs };

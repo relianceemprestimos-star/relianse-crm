@@ -22,6 +22,7 @@ import type {
   RibeiraoDiagnostics,
   ClientPhone,
   PhoneLookupJob,
+  PhoneLookupHistoryItem,
 } from '../types';
 import { clearAuthSession, getAccessSession, getAuthToken } from './session';
 
@@ -356,6 +357,21 @@ export const api = {
     }),
   getPhoneLookupJobs: (filters: Record<string, string | number | undefined | null> = {}) =>
     request<{ jobs: PhoneLookupJob[]; stats: Record<string, number> }>(`/api/phone-lookup/jobs${buildQuery(filters)}`),
+  searchPhones: (payload: { cpf?: string; name?: string; client_id?: number | string | null }) =>
+    request<{ status: string; source: string; client_id?: number | null; cpf: string; name: string; phones: ClientPhone[]; message?: string; code?: string }>(
+      '/api/phone-lookup/search',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }
+    ),
+  savePhonesToClient: (payload: { client_id: number | string; phones: Array<Partial<ClientPhone> & { number?: string; normalized?: string }> }) =>
+    request<{ client: Client; phones: ClientPhone[]; saved: number }>('/api/phone-lookup/save-to-client', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  getPhoneLookupHistory: (filters: Record<string, string | number | undefined | null> = {}) =>
+    request<{ rows: PhoneLookupHistoryItem[] }>(`/api/phone-lookup/history${buildQuery(filters)}`),
   uploadSpreadsheet: (
     file: File,
     mode: 'preview' | 'import',

@@ -170,6 +170,20 @@ export interface PhoneLookupJob {
   client_name?: string;
 }
 
+export interface PhoneLookupHistoryItem {
+  id: number;
+  client_id?: number | null;
+  cpf_masked: string;
+  name: string;
+  source: string;
+  status: string;
+  phones_found_count: number;
+  error_message?: string;
+  created_at: string;
+  created_at_formatted?: string;
+  client_name?: string;
+}
+
 export interface DashboardData {
   stats: Record<string, number>;
   productStats?: Array<{

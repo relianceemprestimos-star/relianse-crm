@@ -14,6 +14,7 @@ import ReportsPage from './pages/ReportsPage';
 import WhatsAppPage from './pages/WhatsAppPage';
 import SettingsPage from './pages/SettingsPage';
 import RibeiraoPage from './pages/RibeiraoPage';
+import PhoneLookupPage from './pages/PhoneLookupPage';
 import UsersPage from './pages/UsersPage';
 import LoginPage from './pages/LoginPage';
 
@@ -37,6 +38,7 @@ export default function App() {
             <Route path="/bases" element={<BasesPage />} />
             <Route path="/relatorios" element={<ReportsPage />} />
             <Route path="/consulta-ribeirao" element={<RibeiraoPage />} />
+            <Route path="/consulta-telefones" element={<PhoneLookupPage />} />
             <Route path="/usuarios" element={<UsersPage />} />
             <Route path="/configuracoes" element={<SettingsPage />} />
           </Route>

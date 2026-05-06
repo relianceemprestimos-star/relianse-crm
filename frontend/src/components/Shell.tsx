@@ -14,6 +14,7 @@ import {
   Layers3,
   LogOut,
   MessagesSquare,
+  PhoneCall,
   Settings,
   Users,
   Zap,
@@ -40,6 +41,7 @@ const navItems: NavItem[] = [
   { to: '/relatorios', label: 'Relatorios', icon: Zap, allowedRoles: ['gerencial'] },
   { to: '/whatsapp', label: 'WhatsApp Web', icon: MessagesSquare, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/consulta-ribeirao', label: 'Consulta Ribeirão', icon: Landmark, allowedRoles: ['gerencial'] },
+  { to: '/consulta-telefones', label: 'Consulta de Telefones', icon: PhoneCall, allowedRoles: ['gerencial'] },
   { to: '/usuarios', label: 'Usuários', icon: Users, allowedRoles: ['gerencial'] },
   { to: '/configuracoes', label: 'Configurações', icon: Settings, allowedRoles: ['gerencial'] },
 ];
@@ -55,6 +57,7 @@ const pageTitles: Record<string, string> = {
   '/relatorios': 'Relatorios e acompanhamento',
   '/whatsapp': 'WhatsApp Web',
   '/consulta-ribeirao': 'Consulta Ribeirão',
+  '/consulta-telefones': 'Consulta de Telefones',
   '/usuarios': 'Usuários',
   '/configuracoes': 'Configurações',
 };

@@ -72,11 +72,14 @@ import {
 import { normalizePhoneToBrazilInternational } from './utils.js';
 import {
   getPhoneLookupDiagnostics,
+  listPhoneLookupLogs,
   listPhoneLookupJobs,
   processPhoneLookupJob,
   queuePhoneLookupForClient,
   queuePhoneLookupForMarginClients,
   runPhoneLookupWorker,
+  savePhonesToClient,
+  searchPhones,
 } from './services/phone_lookup/phoneLookupService.js';
 
 dotenv.config();
@@ -767,6 +770,39 @@ app.post('/api/clients/:id/phone-lookup', async (req, res) => {
 
 app.get('/api/phone-lookup/diagnostics', (_req, res) => {
   return res.json({ diagnostics: getPhoneLookupDiagnostics() });
+});
+
+app.post('/api/phone-lookup/search', async (req, res) => {
+  try {
+    const result = await searchPhones({
+      cpf: req.body?.cpf,
+      name: req.body?.name,
+      clientId: req.body?.client_id || req.body?.clientId || null,
+    });
+    if (result.error) {
+      return res.status(result.status || 400).json({ message: result.error });
+    }
+    return res.json(result);
+  } catch (error) {
+    return res.status(500).json({ message: error instanceof Error ? error.message : 'Falha ao consultar telefones.' });
+  }
+});
+
+app.post('/api/phone-lookup/save-to-client', (req, res) => {
+  const userId = getAuthenticatedUserId(req);
+  const result = savePhonesToClient({
+    clientId: req.body?.client_id || req.body?.clientId,
+    phones: Array.isArray(req.body?.phones) ? req.body.phones : [],
+    userId,
+  });
+  if (result.error) {
+    return res.status(result.status || 400).json({ message: result.error });
+  }
+  return res.json(result);
+});
+
+app.get('/api/phone-lookup/history', (req, res) => {
+  return res.json({ rows: listPhoneLookupLogs(req.query || {}) });
 });
 
 app.get('/api/phone-lookup/jobs', (req, res) => {

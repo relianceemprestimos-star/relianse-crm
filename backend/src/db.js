@@ -586,6 +586,7 @@ function phoneDto(row) {
     is_primary: Number(row.is_primary || 0) === 1,
     status: row.status || 'active',
     raw_label: row.raw_label || '',
+    raw_data: row.raw_data ? safeJsonParse(row.raw_data, {}) : {},
     searched_at: row.searched_at || '',
     searched_at_formatted: formatDateTime(row.searched_at),
     created_at: row.created_at || '',
@@ -613,6 +614,23 @@ function phoneLookupJobDto(row) {
     updated_at: row.updated_at || '',
     client_name: row.client_name || row.name || '',
     client_phone: row.client_phone || '',
+  };
+}
+
+function phoneLookupLogDto(row) {
+  if (!row) return null;
+  return {
+    id: Number(row.id),
+    client_id: row.client_id === null || row.client_id === undefined ? null : Number(row.client_id),
+    cpf_masked: row.cpf_masked || '',
+    name: row.name || '',
+    source: row.source || 'Nova Vida',
+    status: row.status || '',
+    phones_found_count: Number(row.phones_found_count || 0),
+    error_message: row.error_message || '',
+    created_at: row.created_at || '',
+    created_at_formatted: formatDateTime(row.created_at),
+    client_name: row.client_name || '',
   };
 }
 
@@ -814,10 +832,24 @@ function initSchema(database) {
       is_primary INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'active',
       raw_label TEXT NOT NULL DEFAULT '',
+      raw_data TEXT NOT NULL DEFAULT '{}',
       searched_at TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS phone_lookup_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_id INTEGER,
+      cpf_masked TEXT NOT NULL DEFAULT '',
+      name TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT 'Nova Vida',
+      status TEXT NOT NULL DEFAULT '',
+      phones_found_count INTEGER NOT NULL DEFAULT 0,
+      error_message TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL
     );
 
     CREATE TABLE IF NOT EXISTS phone_lookup_jobs (
@@ -980,6 +1012,7 @@ function initSchema(database) {
     'is_primary INTEGER NOT NULL DEFAULT 0',
     'status TEXT NOT NULL DEFAULT \'active\'',
     'raw_label TEXT NOT NULL DEFAULT \'\'',
+    'raw_data TEXT NOT NULL DEFAULT \'{}\'',
     'searched_at TEXT',
     'created_at TEXT NOT NULL',
     'updated_at TEXT NOT NULL',
@@ -996,6 +1029,17 @@ function initSchema(database) {
     'finished_at TEXT',
     'created_at TEXT NOT NULL',
     'updated_at TEXT NOT NULL',
+  ]);
+
+  ensureColumns(database, 'phone_lookup_logs', [
+    'client_id INTEGER',
+    'cpf_masked TEXT NOT NULL DEFAULT \'\'',
+    'name TEXT NOT NULL DEFAULT \'\'',
+    'source TEXT NOT NULL DEFAULT \'Nova Vida\'',
+    'status TEXT NOT NULL DEFAULT \'\'',
+    'phones_found_count INTEGER NOT NULL DEFAULT 0',
+    'error_message TEXT NOT NULL DEFAULT \'\'',
+    'created_at TEXT NOT NULL',
   ]);
 
   ensureColumns(database, 'users', [
@@ -1026,6 +1070,7 @@ function initSchema(database) {
   database.exec('CREATE INDEX IF NOT EXISTS idx_client_phones_client ON client_phones(client_id)');
   database.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_client_phones_unique ON client_phones(client_id, normalized_phone, source)');
   database.exec('CREATE INDEX IF NOT EXISTS idx_phone_lookup_jobs_status ON phone_lookup_jobs(status, created_at)');
+  database.exec('CREATE INDEX IF NOT EXISTS idx_phone_lookup_logs_created ON phone_lookup_logs(created_at)');
 }
 
 function ensureColumns(database, table, columns) {
@@ -2880,8 +2925,8 @@ export function saveClientLookupPhones({ clientId, userId, phones = [], source =
 
   const insertPhone = database.prepare(`
     INSERT INTO client_phones (
-      client_id, phone_number, normalized_phone, type, source, quality, is_whatsapp, is_primary, status, raw_label, searched_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      client_id, phone_number, normalized_phone, type, source, quality, is_whatsapp, is_primary, status, raw_label, raw_data, searched_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(client_id, normalized_phone, source) DO UPDATE SET
       phone_number = excluded.phone_number,
       type = excluded.type,
@@ -2889,6 +2934,7 @@ export function saveClientLookupPhones({ clientId, userId, phones = [], source =
       is_whatsapp = excluded.is_whatsapp,
       status = excluded.status,
       raw_label = excluded.raw_label,
+      raw_data = excluded.raw_data,
       searched_at = excluded.searched_at,
       updated_at = excluded.updated_at
   `);
@@ -2915,6 +2961,7 @@ export function saveClientLookupPhones({ clientId, userId, phones = [], source =
       0,
       String(phone.status || 'active'),
       String(phone.raw_label || ''),
+      JSON.stringify(phone.raw_data || phone.raw || {}),
       searchedAt,
       nowIso(),
       nowIso()
@@ -2940,6 +2987,41 @@ export function saveClientLookupPhones({ clientId, userId, phones = [], source =
 
   persistDb();
   return { client: getClientById(Number(clientId))?.client || null, phones: listClientPhones(Number(clientId)), saved };
+}
+
+export function logPhoneLookupRecord({ clientId = null, cpfMasked = '', name = '', source = 'Nova Vida', status = '', phonesFoundCount = 0, errorMessage = '' }) {
+  const database = getDb();
+  const result = database
+    .prepare(
+      'INSERT INTO phone_lookup_logs (client_id, cpf_masked, name, source, status, phones_found_count, error_message, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    )
+    .run(
+      clientId === null || clientId === undefined ? null : Number(clientId),
+      String(cpfMasked || ''),
+      String(name || ''),
+      String(source || 'Nova Vida'),
+      String(status || ''),
+      Number(phonesFoundCount || 0),
+      String(errorMessage || ''),
+      nowIso()
+    );
+  persistDb();
+  return phoneLookupLogDto(queryOne(database, 'SELECT * FROM phone_lookup_logs WHERE id = ?', [Number(result.lastInsertRowid || 0)]));
+}
+
+export function listPhoneLookupLogs(params = {}) {
+  const database = getDb();
+  const limit = Math.min(Math.max(Number(params.limit || 50), 1), 300);
+  return queryAll(
+    database,
+    `
+      SELECT l.*, c.name AS client_name
+      FROM phone_lookup_logs l
+      LEFT JOIN clients c ON c.id = l.client_id
+      ORDER BY datetime(l.created_at) DESC, l.id DESC
+      LIMIT ${limit}
+    `
+  ).map(phoneLookupLogDto);
 }
 
 export function createPhoneLookupJob({ clientId, userId, source = 'Nova Vida' }) {

@@ -82,3 +82,11 @@ export async function lookupPhoneNovaVida(client) {
       'Credenciais configuradas. Falta mapear o fluxo real de pesquisa do Nova Vida com Playwright/API antes de consultar clientes reais automaticamente.',
   };
 }
+
+export async function searchPhoneNovaVida({ cpf = '', name = '' } = {}) {
+  return lookupPhoneNovaVida({
+    cpf,
+    name,
+    phones: [],
+  });
+}
