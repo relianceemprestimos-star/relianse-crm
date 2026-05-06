@@ -1,8 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 
 import { cleanDigits } from '../../utils.js';
 import { dedupePhones } from './phoneNormalizer.js';
+
+const execFileAsync = promisify(execFile);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function configuredUrl() {
   return String(process.env.NOVA_VIDA_URL || '').trim().replace(/\/$/, '');
@@ -16,8 +22,51 @@ function hasCredentials() {
   );
 }
 
+function configuredClient() {
+  return String(process.env.NOVA_VIDA_CLIENT || process.env.NOVA_VIDA_CUSTOMER || process.env.NOVA_VIDA_TENANT || '').trim();
+}
+
 function getFixturePath() {
   return String(process.env.NOVA_VIDA_FIXTURE_PATH || '').trim();
+}
+
+function getPythonBin() {
+  return String(process.env.PYTHON_BIN || process.env.PYTHON || 'python').trim();
+}
+
+function safeMessage(value) {
+  return String(value || '')
+    .replace(String(process.env.NOVA_VIDA_PASSWORD || ''), '[senha]')
+    .slice(0, 500);
+}
+
+async function runNovaVidaCli(args = []) {
+  const scriptPath = path.join(__dirname, 'nova_vida_cli.py');
+  try {
+    const { stdout, stderr } = await execFileAsync(getPythonBin(), [scriptPath, ...args], {
+      cwd: path.resolve(__dirname, '../../../..'),
+      timeout: Number(process.env.NOVA_VIDA_TIMEOUT_MS || 90000),
+      maxBuffer: 1024 * 1024 * 4,
+      env: {
+        ...process.env,
+        NOVA_VIDA_HEADLESS: String(process.env.NOVA_VIDA_HEADLESS ?? 'true'),
+      },
+    });
+    const text = String(stdout || '').trim().split(/\r?\n/).filter(Boolean).at(-1) || '{}';
+    const parsed = JSON.parse(text);
+    if (stderr) {
+      parsed.stderr = safeMessage(stderr);
+    }
+    return parsed;
+  } catch (error) {
+    return {
+      source: 'Nova Vida',
+      status: 'failed',
+      code: 'NOVA_VIDA_WORKER_ERROR',
+      phones: [],
+      message: safeMessage(error instanceof Error ? error.message : 'Erro ao executar worker Nova Vida.'),
+    };
+  }
 }
 
 function readFixture(client) {
@@ -40,9 +89,24 @@ export function getNovaVidaDiagnostics() {
     hasUrl: Boolean(configuredUrl()),
     host: configuredUrl() ? new URL(configuredUrl()).host : '',
     hasUsername: Boolean(String(process.env.NOVA_VIDA_USERNAME || process.env.NOVA_VIDA_USER || '').trim()),
+    hasClient: Boolean(configuredClient()),
     hasPassword: Boolean(String(process.env.NOVA_VIDA_PASSWORD || '').trim()),
     fixtureMode: Boolean(getFixturePath()),
+    storageStateConfigured: Boolean(String(process.env.NOVA_VIDA_STORAGE_STATE || '').trim()),
   };
+}
+
+export async function mapNovaVidaFlow() {
+  if (!hasCredentials()) {
+    return {
+      source: 'Nova Vida',
+      status: 'requires_manual_login',
+      code: 'NOVA_VIDA_NOT_CONFIGURED',
+      message: 'Configure NOVA_VIDA_URL, NOVA_VIDA_USERNAME/NOVA_VIDA_USER, NOVA_VIDA_CLIENT e NOVA_VIDA_PASSWORD no .env.',
+      loginOk: false,
+    };
+  }
+  return runNovaVidaCli(['map']);
 }
 
 export async function lookupPhoneNovaVida(client) {
@@ -71,15 +135,22 @@ export async function lookupPhoneNovaVida(client) {
     };
   }
 
+  const result = await runNovaVidaCli(['search', '--cpf', cleanDigits(client.cpf), '--name', client.name || '']);
+  const phones = dedupePhones(result.phones || []);
   return {
     source: 'Nova Vida',
     cpf: cleanDigits(client.cpf),
-    name: client.name || '',
-    phones: [],
-    status: 'requires_manual_login',
-    code: 'NOVA_VIDA_PROVIDER_PENDING_MAPPING',
-    message:
-      'Credenciais configuradas. Falta mapear o fluxo real de pesquisa do Nova Vida com Playwright/API antes de consultar clientes reais automaticamente.',
+    name: result.name || client.name || '',
+    phones,
+    status: result.status || (phones.length ? 'success' : 'not_found'),
+    code: result.code || '',
+    message: result.message || (phones.length ? 'Telefones encontrados no Nova Vida.' : 'Nenhum telefone encontrado no Nova Vida.'),
+    stage: result.stage || '',
+    raw: {
+      page: result.page,
+      navigationCandidates: result.navigationCandidates,
+      inputCount: result.inputCount,
+    },
   };
 }
 

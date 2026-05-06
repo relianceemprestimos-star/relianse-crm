@@ -74,6 +74,7 @@ import {
   getPhoneLookupDiagnostics,
   listPhoneLookupLogs,
   listPhoneLookupJobs,
+  mapPhoneLookupProvider,
   processPhoneLookupJob,
   queuePhoneLookupForClient,
   queuePhoneLookupForMarginClients,
@@ -770,6 +771,18 @@ app.post('/api/clients/:id/phone-lookup', async (req, res) => {
 
 app.get('/api/phone-lookup/diagnostics', (_req, res) => {
   return res.json({ diagnostics: getPhoneLookupDiagnostics() });
+});
+
+app.post('/api/phone-lookup/provider/map', async (_req, res) => {
+  try {
+    return res.json(await mapPhoneLookupProvider());
+  } catch (error) {
+    return res.status(500).json({
+      status: 'failed',
+      code: 'NOVA_VIDA_MAP_ERROR',
+      message: error instanceof Error ? error.message : 'Erro ao mapear fluxo Nova Vida.',
+    });
+  }
 });
 
 app.post('/api/phone-lookup/search', async (req, res) => {

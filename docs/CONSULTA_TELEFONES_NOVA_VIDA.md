@@ -1,14 +1,8 @@
 # Consulta de Telefones Nova Vida
 
-O CRM possui uma aba própria chamada **Consulta de Telefones** para consultar telefones na fonte autorizada Nova Vida e salvar os resultados no cadastro do cliente.
+O CRM possui uma aba propria chamada **Consulta de Telefones** para consultar telefones na fonte autorizada Nova Vida e salvar os resultados no cadastro do cliente.
 
 ## Menu
-
-Acesse:
-
-```text
-Consulta de Telefones
-```
 
 Rota:
 
@@ -16,11 +10,11 @@ Rota:
 /consulta-telefones
 ```
 
-Permissão atual: perfil gerencial.
+Permissao atual: perfil gerencial.
 
-## Configuração
+## Configuracao
 
-As credenciais ficam no `.env`, nunca no código:
+As credenciais ficam no `.env`, nunca no codigo:
 
 ```env
 PHONE_LOOKUP_ENABLED=true
@@ -30,11 +24,29 @@ PHONE_LOOKUP_SOURCE=nova_vida
 NOVA_VIDA_URL=https://congonhas.novavidati.com.br
 NOVA_VIDA_USERNAME=
 NOVA_VIDA_USER=
+NOVA_VIDA_CLIENT=
 NOVA_VIDA_PASSWORD=
-NOVA_VIDA_HEADLESS=false
+NOVA_VIDA_HEADLESS=true
+NOVA_VIDA_STORAGE_STATE=/app/data/nova_vida_storage_state.json
 ```
 
-Use `NOVA_VIDA_USERNAME` para o usuário do portal e `NOVA_VIDA_USER` quando houver campo separado de cliente/e-mail.
+O formulario publico do Nova Vida usa os campos:
+
+- `#sUsuario`: usuario do portal;
+- `#sSenha`: senha;
+- `#sCliente`: cliente/contrato/tenant.
+
+Use `NOVA_VIDA_USER` ou `NOVA_VIDA_USERNAME` para o usuario e `NOVA_VIDA_CLIENT` para o campo Cliente. Senha nunca deve ir para o codigo.
+
+## Mapeamento seguro
+
+Antes de consultar clientes reais, rode o mapeamento tecnico:
+
+```http
+POST /api/phone-lookup/provider/map
+```
+
+Esse endpoint tenta autenticar ou reutilizar a sessao autorizada e retorna apenas estrutura segura da pagina: URL, titulo, campos, botoes e candidatos de navegacao. Ele nao pesquisa CPF.
 
 ## Busca individual
 
@@ -45,7 +57,7 @@ Na aba **Consulta de Telefones**:
 3. Confira os telefones encontrados.
 4. Clique em **Salvar todos no cliente** para gravar no cadastro.
 
-Os telefones ficam disponíveis também na tela de **Atendimento**, seção **Telefones**.
+Os telefones ficam disponiveis tambem na tela de **Atendimento**, secao **Telefones**.
 
 ## Busca em lote
 
@@ -57,10 +69,10 @@ Buscar telefones com margem
 
 Regra de elegibilidade:
 
-- CPF válido;
+- CPF valido;
 - margem maior que zero;
 - sem telefone ativo;
-- status diferente de sem interesse, bloqueado ou não abordar.
+- status diferente de sem interesse, bloqueado ou nao abordar.
 
 ## Fila e worker
 
@@ -88,7 +100,29 @@ Endpoint para processar fila:
 POST /api/phone-lookup/worker/run
 ```
 
-## Histórico
+## Login manual e sessao
+
+Se o Nova Vida exigir reCAPTCHA, 2FA ou validacao manual, o CRM nao tenta burlar. O retorno sera:
+
+```text
+requires_manual_login
+```
+
+Script preparado:
+
+```bash
+python scripts/login_nova_vida.py
+```
+
+Esse comando abre o navegador para login manual autorizado e salva sessao localmente fora do Git.
+
+No Docker/VPS, a sessao padrao fica em:
+
+```text
+/app/data/nova_vida_storage_state.json
+```
+
+## Historico
 
 Tabela:
 
@@ -102,23 +136,7 @@ Endpoint:
 GET /api/phone-lookup/history
 ```
 
-O histórico mostra data, cliente, CPF mascarado, status e quantidade de telefones encontrados.
-
-## Login manual
-
-Se o Nova Vida exigir reCAPTCHA, 2FA ou validação manual, o CRM não tenta burlar. O retorno será:
-
-```text
-requires_manual_login
-```
-
-Script preparado:
-
-```bash
-python scripts/login_nova_vida.py
-```
-
-Esse comando abre o navegador para login manual autorizado e salva sessão localmente fora do Git.
+O historico mostra data, cliente, CPF mascarado, status e quantidade de telefones encontrados.
 
 ## Logs
 
@@ -128,9 +146,9 @@ Arquivo:
 logs/phone_lookup.log
 ```
 
-O log registra CPF mascarado, status, quantidade de telefones, duração e erros. Senhas não são registradas.
+O log registra CPF mascarado, status, quantidade de telefones, duracao e erros. Senhas nao sao registradas.
 
-## Exportação
+## Exportacao
 
 Na fila, use:
 
@@ -146,12 +164,12 @@ Colunas adicionadas:
 - qualidade_telefone;
 - data_busca_telefone.
 
-## Segurança
+## Seguranca
 
-- Não salvar senha no código.
-- Não mostrar senha em log.
-- Não consultar clientes sem finalidade comercial.
-- Não buscar telefone de cliente bloqueado/sem interesse automaticamente.
-- Não burlar CAPTCHA.
-- Não disparar WhatsApp automaticamente.
-- Registrar histórico para auditoria.
+- Nao salvar senha no codigo.
+- Nao mostrar senha em log.
+- Nao consultar clientes sem finalidade comercial.
+- Nao buscar telefone de cliente bloqueado/sem interesse automaticamente.
+- Nao burlar CAPTCHA.
+- Nao disparar WhatsApp automaticamente.
+- Registrar historico para auditoria.

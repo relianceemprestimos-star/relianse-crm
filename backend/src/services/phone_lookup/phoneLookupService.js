@@ -14,7 +14,7 @@ import {
   updatePhoneLookupJob,
 } from '../../db.js';
 import { cleanDigits } from '../../utils.js';
-import { getNovaVidaDiagnostics, lookupPhoneNovaVida, searchPhoneNovaVida } from './novaVidaProvider.js';
+import { getNovaVidaDiagnostics, lookupPhoneNovaVida, mapNovaVidaFlow, searchPhoneNovaVida } from './novaVidaProvider.js';
 
 function nowIso() {
   return new Date().toISOString();
@@ -75,6 +75,18 @@ export function getPhoneLookupDiagnostics() {
     delaySeconds: Number(process.env.PHONE_LOOKUP_DELAY_SECONDS || 5),
     novaVida: getNovaVidaDiagnostics(),
   };
+}
+
+export async function mapPhoneLookupProvider() {
+  const result = await mapNovaVidaFlow();
+  logLookup('provider_map_finished', {
+    source: 'Nova Vida',
+    status: result.status,
+    code: result.code || '',
+    stage: result.stage || '',
+    loginOk: Boolean(result.loginOk),
+  });
+  return result;
 }
 
 export function queuePhoneLookupForClient({ clientId, userId, force = false }) {
@@ -138,6 +150,7 @@ export async function searchPhones({ cpf = '', name = '', clientId = null } = {}
     phones: result.phones || [],
     message: result.message || '',
     code: result.code || '',
+    stage: result.stage || '',
   };
 }
 
