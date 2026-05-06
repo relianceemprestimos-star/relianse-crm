@@ -32,6 +32,7 @@ export default function QueuePage() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loading, setLoading] = useState(true);
   const [startingId, setStartingId] = useState<number | null>(null);
+  const [phoneBulkLoading, setPhoneBulkLoading] = useState(false);
   const [filters, setFilters] = useState<QueueFilters>(() => ({
     status_atendimento: '',
     consulta_status: '',
@@ -142,6 +143,44 @@ export default function QueuePage() {
     }
   }
 
+  async function handleQueuePhoneLookup() {
+    try {
+      setPhoneBulkLoading(true);
+      const queued = await api.queuePhoneLookupMarginClients({
+        campaign_id: filters.campaign_id || undefined,
+        base_id: filters.base_id || undefined,
+      });
+      if (!queued.created) {
+        toast('Nenhum cliente elegível para busca de telefone.');
+        return;
+      }
+      toast.success(`${queued.created} cliente(s) com margem entraram na fila de busca.`);
+      const worker = await api.runPhoneLookupWorker(queued.created);
+      toast.success(`Fila processada: ${worker.processed} job(s).`);
+      const clientsResponse = await api.getClients(filters);
+      setResponse(clientsResponse);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Falha ao criar fila de busca de telefones.');
+    } finally {
+      setPhoneBulkLoading(false);
+    }
+  }
+
+  async function handleExportClientsWithPhones() {
+    try {
+      const blob = await api.exportClientsWithPhones(filters);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'clientes-com-telefones.xlsx';
+      link.click();
+      URL.revokeObjectURL(url);
+      toast.success('Exportação gerada.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Falha ao exportar clientes.');
+    }
+  }
+
   const stats = response?.meta.stats || {};
   const availableBases = bases.length ? bases : response?.meta.bases || [];
   const availableCampaigns: Campaign[] = response?.meta.campaigns || [];
@@ -166,6 +205,19 @@ export default function QueuePage() {
         <StatCard label="Finalizados" value={stats.finalizado ?? 0} />
         <StatCard label="Retornos agendados" value={stats.aguardando_retorno ?? 0} />
       </div>
+
+      <Card className="flex flex-wrap items-center justify-between gap-3 p-5">
+        <div>
+          <p className="font-semibold text-white">Busca de Telefones Nova Vida</p>
+          <p className="mt-1 text-sm text-slate-400">Cria fila apenas para clientes com margem, sem telefone e fora de status de recusa.</p>
+        </div>
+        <Button variant="secondary" onClick={() => void handleQueuePhoneLookup()} disabled={phoneBulkLoading}>
+          {phoneBulkLoading ? 'Buscando telefones...' : 'Buscar telefones com margem'}
+        </Button>
+        <Button variant="ghost" onClick={() => void handleExportClientsWithPhones()}>
+          Exportar com telefones
+        </Button>
+      </Card>
 
       <Card className="p-5">
         <div className="grid gap-3 xl:grid-cols-6">
@@ -340,7 +392,22 @@ export default function QueuePage() {
                         <div className="mt-1 text-xs text-slate-500">Posição #{client.queue_position}</div>
                       </td>
                       <td className="px-5 py-4 text-slate-300">{client.cpf}</td>
-                      <td className="px-5 py-4 text-slate-300">{client.phone || '-'}</td>
+                      <td className="px-5 py-4 text-slate-300">
+                        <div>{client.phone || '-'}</div>
+                        <div className="mt-2">
+                          {client.phones?.length ? (
+                            <Badge tone="success">Telefone encontrado</Badge>
+                          ) : client.phone_lookup_job?.status === 'pending' || client.phone_lookup_job?.status === 'running' ? (
+                            <Badge tone="info">Busca pendente</Badge>
+                          ) : client.phone_lookup_job?.status === 'requires_manual_login' ? (
+                            <Badge tone="danger">Login manual</Badge>
+                          ) : client.phone_lookup_job?.status === 'failed' ? (
+                            <Badge tone="danger">Busca com erro</Badge>
+                          ) : (
+                            <Badge tone="neutral">Sem telefone</Badge>
+                          )}
+                        </div>
+                      </td>
                       <td className="px-5 py-4">
                         <div className="font-semibold text-white">{client.base_name || client.campaign_name || '-'}</div>
                         <div className="mt-1 text-xs text-slate-500">{client.base_type || client.base_convenio || '-'}</div>

@@ -134,6 +134,40 @@ export interface Client {
   scheduled_returns?: unknown[];
   deals?: unknown[];
   interactions?: unknown[];
+  phones?: ClientPhone[];
+  phone_lookup_job?: PhoneLookupJob | null;
+}
+
+export interface ClientPhone {
+  id: number;
+  client_id: number;
+  phone_number: string;
+  normalized_phone: string;
+  type?: string;
+  source: string;
+  quality?: string;
+  is_whatsapp?: boolean | null;
+  is_primary: boolean;
+  status: string;
+  raw_label?: string;
+  searched_at?: string;
+  searched_at_formatted?: string;
+}
+
+export interface PhoneLookupJob {
+  id: number;
+  client_id: number;
+  cpf: string;
+  name: string;
+  status: 'pending' | 'running' | 'success' | 'not_found' | 'failed' | 'blocked' | 'requires_manual_login' | string;
+  source: string;
+  attempts: number;
+  error_message?: string;
+  started_at?: string;
+  finished_at?: string;
+  created_at?: string;
+  updated_at?: string;
+  client_name?: string;
 }
 
 export interface DashboardData {

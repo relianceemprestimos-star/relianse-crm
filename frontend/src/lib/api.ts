@@ -20,6 +20,8 @@ import type {
   UserRecord,
   UploadAnalysis,
   RibeiraoDiagnostics,
+  ClientPhone,
+  PhoneLookupJob,
 } from '../types';
 import { clearAuthSession, getAccessSession, getAuthToken } from './session';
 
@@ -246,6 +248,8 @@ export const api = {
     }),
   getClients: (filters: Record<string, string | number | undefined | null> = {}) =>
     request<ClientsResponse>(`/api/clients${buildQuery(filters)}`),
+  exportClientsWithPhones: (filters: Record<string, string | number | undefined | null> = {}) =>
+    requestBlob(`/api/clients/export${buildQuery(filters)}`),
   getClient: (id: number) => request<{ client: Client; interactions: any[]; scheduled_returns: any[]; deals: any[] }>(`/api/clients/${id}`),
   getNextClient: (filters: Record<string, string | number | undefined | null> = {}) =>
     request<{ next: { client: Client; queue_total: number; queue_position: number } | null }>(`/api/clients/next${buildQuery(filters)}`),
@@ -324,6 +328,34 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ user_id: userId, note: 'WhatsApp Web aberto para o cliente' }),
     }),
+  getClientPhones: (id: number) => request<{ phones: ClientPhone[] }>(`/api/clients/${id}/phones`),
+  lookupClientPhone: (id: number, force = false) =>
+    request<{ job: PhoneLookupJob; result?: any; client?: Client }>(`/api/clients/${id}/phone-lookup`, {
+      method: 'POST',
+      body: JSON.stringify({ force, run_now: true }),
+    }),
+  setPrimaryPhone: (clientId: number, phoneId: number) =>
+    request<{ client: Client; interactions: any[]; scheduled_returns: any[]; deals: any[] }>(`/api/clients/${clientId}/phones/${phoneId}/primary`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+  inactivatePhone: (clientId: number, phoneId: number) =>
+    request<{ client: Client; interactions: any[]; scheduled_returns: any[]; deals: any[] }>(`/api/clients/${clientId}/phones/${phoneId}/inactivate`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+  queuePhoneLookupMarginClients: (payload: { campaign_id?: string | number; base_id?: string | number; force?: boolean } = {}) =>
+    request<{ created: number; jobs: PhoneLookupJob[] }>('/api/phone-lookup/bulk/margin-clients', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  runPhoneLookupWorker: (max = 50) =>
+    request<{ processed: number; results: unknown[] }>('/api/phone-lookup/worker/run', {
+      method: 'POST',
+      body: JSON.stringify({ max }),
+    }),
+  getPhoneLookupJobs: (filters: Record<string, string | number | undefined | null> = {}) =>
+    request<{ jobs: PhoneLookupJob[]; stats: Record<string, number> }>(`/api/phone-lookup/jobs${buildQuery(filters)}`),
   uploadSpreadsheet: (
     file: File,
     mode: 'preview' | 'import',

@@ -24,6 +24,15 @@ services:
       RIBEIRAO_AVERBADOR_ORGAO: ${RIBEIRAO_AVERBADOR_ORGAO:-Prefeitura de Ribeirao Preto}
       RIBEIRAO_PROJECT_ROOT: /app/backend/src/services/averbadores/ribeirao/vendor/worker
       RIBEIRAO_HEADLESS: ${RIBEIRAO_HEADLESS:-true}
+      PHONE_LOOKUP_ENABLED: ${PHONE_LOOKUP_ENABLED:-true}
+      PHONE_LOOKUP_MAX_PER_RUN: ${PHONE_LOOKUP_MAX_PER_RUN:-50}
+      PHONE_LOOKUP_DELAY_SECONDS: ${PHONE_LOOKUP_DELAY_SECONDS:-5}
+      PHONE_LOOKUP_SOURCE: ${PHONE_LOOKUP_SOURCE:-nova_vida}
+      NOVA_VIDA_URL: ${NOVA_VIDA_URL:-}
+      NOVA_VIDA_USERNAME: ${NOVA_VIDA_USERNAME:-}
+      NOVA_VIDA_USER: ${NOVA_VIDA_USER:-}
+      NOVA_VIDA_PASSWORD: ${NOVA_VIDA_PASSWORD:-}
+      NOVA_VIDA_FIXTURE_PATH: ${NOVA_VIDA_FIXTURE_PATH:-}
     volumes:
       - ./data:/app/data
       - ./uploads:/app/uploads

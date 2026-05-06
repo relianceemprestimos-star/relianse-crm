@@ -531,6 +531,8 @@ function clientDto(database, row, margins = [], interactions = [], returns = [],
     deals,
     current_margin: best.net_margin ?? null,
     current_margin_formatted: formatMoney(best.net_margin),
+    phones: getClientPhonesInternal(database, row.id),
+    phone_lookup_job: getLatestPhoneLookupJobInternal(database, row.id),
   };
 }
 
@@ -565,6 +567,82 @@ function safeJsonParse(value, fallback = {}) {
   } catch {
     return fallback;
   }
+}
+
+function phoneDto(row) {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: Number(row.id),
+    client_id: Number(row.client_id),
+    phone_number: row.phone_number || '',
+    normalized_phone: row.normalized_phone || '',
+    type: row.type || '',
+    source: row.source || 'Nova Vida',
+    quality: row.quality || '',
+    is_whatsapp: row.is_whatsapp === null || row.is_whatsapp === undefined ? null : Number(row.is_whatsapp) === 1,
+    is_primary: Number(row.is_primary || 0) === 1,
+    status: row.status || 'active',
+    raw_label: row.raw_label || '',
+    searched_at: row.searched_at || '',
+    searched_at_formatted: formatDateTime(row.searched_at),
+    created_at: row.created_at || '',
+    updated_at: row.updated_at || '',
+  };
+}
+
+function phoneLookupJobDto(row) {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: Number(row.id),
+    client_id: Number(row.client_id),
+    cpf: row.cpf || '',
+    name: row.name || '',
+    status: row.status || 'pending',
+    source: row.source || 'Nova Vida',
+    attempts: Number(row.attempts || 0),
+    error_message: row.error_message || '',
+    started_at: row.started_at || '',
+    finished_at: row.finished_at || '',
+    created_at: row.created_at || '',
+    updated_at: row.updated_at || '',
+    client_name: row.client_name || row.name || '',
+    client_phone: row.client_phone || '',
+  };
+}
+
+function getClientPhonesInternal(database, clientId) {
+  return queryAll(
+    database,
+    `
+      SELECT *
+      FROM client_phones
+      WHERE client_id = ?
+      ORDER BY is_primary DESC, datetime(COALESCE(searched_at, created_at)) DESC, id DESC
+    `,
+    [clientId]
+  ).map(phoneDto);
+}
+
+function getLatestPhoneLookupJobInternal(database, clientId) {
+  return phoneLookupJobDto(
+    queryOne(
+      database,
+      `
+        SELECT *
+        FROM phone_lookup_jobs
+        WHERE client_id = ?
+        ORDER BY datetime(created_at) DESC, id DESC
+        LIMIT 1
+      `,
+      [clientId]
+    )
+  );
 }
 
 function initSchema(database) {
@@ -724,6 +802,40 @@ function initSchema(database) {
       FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE SET NULL
     );
 
+    CREATE TABLE IF NOT EXISTS client_phones (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_id INTEGER NOT NULL,
+      phone_number TEXT NOT NULL DEFAULT '',
+      normalized_phone TEXT NOT NULL DEFAULT '',
+      type TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT 'Nova Vida',
+      quality TEXT NOT NULL DEFAULT '',
+      is_whatsapp INTEGER,
+      is_primary INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'active',
+      raw_label TEXT NOT NULL DEFAULT '',
+      searched_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS phone_lookup_jobs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_id INTEGER NOT NULL,
+      cpf TEXT NOT NULL DEFAULT '',
+      name TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending',
+      source TEXT NOT NULL DEFAULT 'Nova Vida',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      error_message TEXT NOT NULL DEFAULT '',
+      started_at TEXT,
+      finished_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -858,6 +970,34 @@ function initSchema(database) {
     'campaign_id INTEGER',
   ]);
 
+  ensureColumns(database, 'client_phones', [
+    'phone_number TEXT NOT NULL DEFAULT \'\'',
+    'normalized_phone TEXT NOT NULL DEFAULT \'\'',
+    'type TEXT NOT NULL DEFAULT \'\'',
+    'source TEXT NOT NULL DEFAULT \'Nova Vida\'',
+    'quality TEXT NOT NULL DEFAULT \'\'',
+    'is_whatsapp INTEGER',
+    'is_primary INTEGER NOT NULL DEFAULT 0',
+    'status TEXT NOT NULL DEFAULT \'active\'',
+    'raw_label TEXT NOT NULL DEFAULT \'\'',
+    'searched_at TEXT',
+    'created_at TEXT NOT NULL',
+    'updated_at TEXT NOT NULL',
+  ]);
+
+  ensureColumns(database, 'phone_lookup_jobs', [
+    'cpf TEXT NOT NULL DEFAULT \'\'',
+    'name TEXT NOT NULL DEFAULT \'\'',
+    'status TEXT NOT NULL DEFAULT \'pending\'',
+    'source TEXT NOT NULL DEFAULT \'Nova Vida\'',
+    'attempts INTEGER NOT NULL DEFAULT 0',
+    'error_message TEXT NOT NULL DEFAULT \'\'',
+    'started_at TEXT',
+    'finished_at TEXT',
+    'created_at TEXT NOT NULL',
+    'updated_at TEXT NOT NULL',
+  ]);
+
   ensureColumns(database, 'users', [
     'login TEXT NOT NULL DEFAULT \'\'',
     'email TEXT NOT NULL DEFAULT \'\'',
@@ -883,6 +1023,9 @@ function initSchema(database) {
   ]);
 
   database.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_base_cpf ON clients(base_id, cpf)');
+  database.exec('CREATE INDEX IF NOT EXISTS idx_client_phones_client ON client_phones(client_id)');
+  database.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_client_phones_unique ON client_phones(client_id, normalized_phone, source)');
+  database.exec('CREATE INDEX IF NOT EXISTS idx_phone_lookup_jobs_status ON phone_lookup_jobs(status, created_at)');
 }
 
 function ensureColumns(database, table, columns) {
@@ -2690,6 +2833,270 @@ export function getClientById(id) {
     scheduled_returns: returns,
     deals,
   };
+}
+
+export function listClientPhones(clientId) {
+  return getClientPhonesInternal(getDb(), Number(clientId));
+}
+
+export function setPrimaryClientPhone(clientId, phoneId) {
+  const database = getDb();
+  const phone = queryOne(database, 'SELECT * FROM client_phones WHERE id = ? AND client_id = ?', [Number(phoneId), Number(clientId)]);
+  if (!phone) {
+    return null;
+  }
+
+  database.prepare('UPDATE client_phones SET is_primary = 0, updated_at = ? WHERE client_id = ?').run(nowIso(), Number(clientId));
+  database.prepare('UPDATE client_phones SET is_primary = 1, status = ?, updated_at = ? WHERE id = ?').run('active', nowIso(), Number(phoneId));
+  database.prepare('UPDATE clients SET phone = ?, updated_at = ? WHERE id = ?').run(phone.normalized_phone || phone.phone_number || '', nowIso(), Number(clientId));
+  persistDb();
+  return getClientById(Number(clientId));
+}
+
+export function updateClientPhoneStatus(clientId, phoneId, status = 'inactive') {
+  const database = getDb();
+  const phone = queryOne(database, 'SELECT * FROM client_phones WHERE id = ? AND client_id = ?', [Number(phoneId), Number(clientId)]);
+  if (!phone) {
+    return null;
+  }
+
+  database.prepare('UPDATE client_phones SET status = ?, is_primary = CASE WHEN ? <> ? THEN is_primary ELSE 0 END, updated_at = ? WHERE id = ?').run(
+    status,
+    status,
+    'inactive',
+    nowIso(),
+    Number(phoneId)
+  );
+  persistDb();
+  return getClientById(Number(clientId));
+}
+
+export function saveClientLookupPhones({ clientId, userId, phones = [], source = 'Nova Vida', searchedAt = nowIso() }) {
+  const database = getDb();
+  const client = queryOne(database, 'SELECT id, phone FROM clients WHERE id = ?', [Number(clientId)]);
+  if (!client) {
+    return null;
+  }
+
+  const insertPhone = database.prepare(`
+    INSERT INTO client_phones (
+      client_id, phone_number, normalized_phone, type, source, quality, is_whatsapp, is_primary, status, raw_label, searched_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(client_id, normalized_phone, source) DO UPDATE SET
+      phone_number = excluded.phone_number,
+      type = excluded.type,
+      quality = excluded.quality,
+      is_whatsapp = excluded.is_whatsapp,
+      status = excluded.status,
+      raw_label = excluded.raw_label,
+      searched_at = excluded.searched_at,
+      updated_at = excluded.updated_at
+  `);
+
+  const existingPrimary = queryOne(database, 'SELECT id FROM client_phones WHERE client_id = ? AND is_primary = 1 AND status = ?', [Number(clientId), 'active']);
+  let primaryCandidate = null;
+  let saved = 0;
+  for (const phone of phones) {
+    const normalized = String(phone.normalized || phone.normalized_phone || '').trim();
+    if (!normalized) {
+      continue;
+    }
+    if (!primaryCandidate) {
+      primaryCandidate = normalized;
+    }
+    insertPhone.run(
+      Number(clientId),
+      String(phone.number || phone.phone_number || normalized),
+      normalized,
+      String(phone.type || ''),
+      String(phone.source || source || 'Nova Vida'),
+      String(phone.quality || ''),
+      phone.is_whatsapp === null || phone.is_whatsapp === undefined ? null : phone.is_whatsapp ? 1 : 0,
+      0,
+      String(phone.status || 'active'),
+      String(phone.raw_label || ''),
+      searchedAt,
+      nowIso(),
+      nowIso()
+    );
+    saved += 1;
+  }
+
+  if (!existingPrimary && primaryCandidate) {
+    database.prepare('UPDATE client_phones SET is_primary = 1, updated_at = ? WHERE client_id = ? AND normalized_phone = ?').run(nowIso(), Number(clientId), primaryCandidate);
+    database.prepare('UPDATE clients SET phone = ?, updated_at = ? WHERE id = ?').run(primaryCandidate, nowIso(), Number(clientId));
+  } else if (!client.phone && primaryCandidate) {
+    database.prepare('UPDATE clients SET phone = ?, updated_at = ? WHERE id = ?').run(primaryCandidate, nowIso(), Number(clientId));
+  }
+
+  if (saved > 0 && userId) {
+    insertInteraction(database, {
+      clientId: Number(clientId),
+      userId: Number(userId),
+      type: 'phone_lookup_success',
+      note: `${saved} telefone(s) encontrado(s) na fonte ${source}.`,
+    });
+  }
+
+  persistDb();
+  return { client: getClientById(Number(clientId))?.client || null, phones: listClientPhones(Number(clientId)), saved };
+}
+
+export function createPhoneLookupJob({ clientId, userId, source = 'Nova Vida' }) {
+  const database = getDb();
+  const client = queryOne(database, 'SELECT id, name, cpf FROM clients WHERE id = ?', [Number(clientId)]);
+  if (!client) {
+    return null;
+  }
+
+  const now = nowIso();
+  const result = database
+    .prepare(
+      'INSERT INTO phone_lookup_jobs (client_id, cpf, name, status, source, attempts, error_message, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    )
+    .run(Number(clientId), client.cpf || '', client.name || '', 'pending', source, 0, '', now, now);
+
+  if (userId) {
+    insertInteraction(database, {
+      clientId: Number(clientId),
+      userId: Number(userId),
+      type: 'phone_lookup_queued',
+      note: `Busca de telefone criada na fonte ${source}.`,
+    });
+  }
+  persistDb();
+  return getPhoneLookupJobById(Number(result.lastInsertRowid || result.lastInsertRowID || result.lastInsertId || 0));
+}
+
+export function getPhoneLookupJobById(id) {
+  return phoneLookupJobDto(
+    queryOne(
+      getDb(),
+      `
+        SELECT j.*, c.name AS client_name, c.phone AS client_phone
+        FROM phone_lookup_jobs j
+        LEFT JOIN clients c ON c.id = j.client_id
+        WHERE j.id = ?
+        LIMIT 1
+      `,
+      [Number(id)]
+    )
+  );
+}
+
+export function listPhoneLookupJobs(params = {}) {
+  const database = getDb();
+  const filters = [];
+  const values = [];
+
+  if (params.status) {
+    filters.push('j.status = ?');
+    values.push(String(params.status));
+  }
+  if (params.client_id) {
+    filters.push('j.client_id = ?');
+    values.push(Number(params.client_id));
+  }
+
+  const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+  const limit = Math.min(Math.max(Number(params.limit || 100), 1), 500);
+  const jobs = queryAll(
+    database,
+    `
+      SELECT j.*, c.name AS client_name, c.phone AS client_phone
+      FROM phone_lookup_jobs j
+      LEFT JOIN clients c ON c.id = j.client_id
+      ${where}
+      ORDER BY datetime(j.created_at) DESC, j.id DESC
+      LIMIT ${limit}
+    `,
+    values
+  ).map(phoneLookupJobDto);
+
+  const stats = queryAll(
+    database,
+    `
+      SELECT status, COUNT(*) AS total
+      FROM phone_lookup_jobs
+      GROUP BY status
+    `
+  ).reduce((acc, row) => ({ ...acc, [row.status || 'unknown']: Number(row.total || 0) }), {});
+
+  return { jobs, stats };
+}
+
+export function updatePhoneLookupJob(id, patch = {}) {
+  const database = getDb();
+  const current = getPhoneLookupJobById(Number(id));
+  if (!current) {
+    return null;
+  }
+
+  const next = {
+    status: patch.status ?? current.status,
+    attempts: patch.attempts ?? current.attempts,
+    error_message: patch.error_message ?? current.error_message ?? '',
+    started_at: patch.started_at ?? current.started_at ?? null,
+    finished_at: patch.finished_at ?? current.finished_at ?? null,
+    updated_at: nowIso(),
+  };
+  database
+    .prepare('UPDATE phone_lookup_jobs SET status = ?, attempts = ?, error_message = ?, started_at = ?, finished_at = ?, updated_at = ? WHERE id = ?')
+    .run(next.status, next.attempts, next.error_message, next.started_at, next.finished_at, next.updated_at, Number(id));
+  persistDb();
+  return getPhoneLookupJobById(Number(id));
+}
+
+export function enqueuePhoneLookupForMarginClients(params = {}) {
+  const database = getDb();
+  const source = String(params.source || 'Nova Vida');
+  const limit = Math.min(Math.max(Number(params.limit || process.env.PHONE_LOOKUP_MAX_PER_RUN || 50), 1), 500);
+  const force = params.force === true || String(params.force || '') === '1';
+  const filters = [
+    'LENGTH(c.cpf) = 11',
+    'COALESCE(c.best_net_margin, c.current_margin, 0) > 0',
+    "LOWER(COALESCE(c.status_atendimento, c.status, '')) NOT IN ('sem_interesse', 'bloqueado', 'nao_abordar', 'não_abordar', 'nao abordar', 'não abordar', 'finalizado_sem_interesse')",
+  ];
+
+  if (!force) {
+    filters.push("NOT EXISTS (SELECT 1 FROM client_phones p WHERE p.client_id = c.id AND p.status = 'active')");
+    filters.push("NOT EXISTS (SELECT 1 FROM phone_lookup_jobs j WHERE j.client_id = c.id AND j.status IN ('pending', 'running'))");
+  }
+  if (params.campaign_id) {
+    filters.push('(c.campaign_id = ? OR b.campaign_id = ?)');
+  }
+  if (params.base_id) {
+    filters.push('c.base_id = ?');
+  }
+
+  const values = [];
+  if (params.campaign_id) {
+    values.push(Number(params.campaign_id), Number(params.campaign_id));
+  }
+  if (params.base_id) {
+    values.push(Number(params.base_id));
+  }
+
+  const clients = queryAll(
+    database,
+    `
+      SELECT c.id
+      FROM clients c
+      LEFT JOIN bases b ON b.id = c.base_id
+      WHERE ${filters.join(' AND ')}
+      ORDER BY COALESCE(c.best_net_margin, c.current_margin, 0) DESC, c.id ASC
+      LIMIT ${limit}
+    `,
+    values
+  );
+
+  const jobs = [];
+  for (const client of clients) {
+    const job = createPhoneLookupJob({ clientId: Number(client.id), userId: params.userId, source });
+    if (job) jobs.push(job);
+  }
+
+  return { created: jobs.length, jobs };
 }
 
 function insertInteraction(database, { clientId, userId, type, note = '', privateNote = '' }) {

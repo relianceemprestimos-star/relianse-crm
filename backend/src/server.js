@@ -2,6 +2,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import express from 'express';
 import multer from 'multer';
+import xlsx from 'xlsx';
 
 import { BUILD_VERSION } from './build.js';
 import {
@@ -38,6 +39,9 @@ import {
   updateUserRecord,
   setCampaignUsers,
   updateCampaignRecord,
+  listClientPhones,
+  setPrimaryClientPhone,
+  updateClientPhoneStatus,
 } from './db.js';
 import { authMiddleware, loginWithCredentials, roleMiddleware } from './auth.js';
 import { hashPassword, verifyPassword } from './security.js';
@@ -66,6 +70,14 @@ import {
   startRibeiraoBatch,
 } from './services/averbadores/ribeirao/ribeiraoBatchService.js';
 import { normalizePhoneToBrazilInternational } from './utils.js';
+import {
+  getPhoneLookupDiagnostics,
+  listPhoneLookupJobs,
+  processPhoneLookupJob,
+  queuePhoneLookupForClient,
+  queuePhoneLookupForMarginClients,
+  runPhoneLookupWorker,
+} from './services/phone_lookup/phoneLookupService.js';
 
 dotenv.config();
 await initDb();
@@ -229,6 +241,7 @@ app.use('/api/upload', roleMiddleware(['gerencial']));
 app.use('/api/settings', roleMiddleware(['gerencial']));
 app.use('/api/reports', roleMiddleware(['gerencial']));
 app.use('/api/ribeirao', roleMiddleware(['gerencial']));
+app.use('/api/phone-lookup', roleMiddleware(['gerencial']));
 
 app.get('/api/users', (_req, res) => {
   res.json({ users: getUsers() });
@@ -532,6 +545,37 @@ app.get('/api/clients', (req, res) => {
   res.json(data);
 });
 
+app.get('/api/clients/export', requirePrivilegedRole, (req, res) => {
+  const data = listClients({ ...(req.query || {}), include_archived: req.query?.include_archived || '1' });
+  const rows = (data.clients || []).map((client) => {
+    const phones = client.phones || [];
+    const primary = phones.find((phone) => phone.is_primary) || phones[0] || null;
+    return {
+      CPF: client.cpf || '',
+      Nome: client.name || '',
+      Telefone: client.phone || '',
+      telefone_principal: primary?.normalized_phone || primary?.phone_number || client.phone || '',
+      telefones_encontrados: phones.map((phone) => phone.normalized_phone || phone.phone_number).filter(Boolean).join('; '),
+      origem_telefone: primary?.source || '',
+      qualidade_telefone: primary?.quality || '',
+      data_busca_telefone: primary?.searched_at_formatted || primary?.searched_at || '',
+      Status: client.status_label || client.status_atendimento || client.status || '',
+      Consulta: client.consulta_status_label || client.consulta_status || '',
+      Campanha: client.campaign_name || '',
+      Base: client.base_name || '',
+      Melhor_produto: client.best_product_label || '',
+      Melhor_margem: client.best_net_margin_formatted || '',
+    };
+  });
+  const workbook = xlsx.utils.book_new();
+  const sheet = xlsx.utils.json_to_sheet(rows);
+  xlsx.utils.book_append_sheet(workbook, sheet, 'Clientes');
+  const buffer = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', 'attachment; filename="clientes-com-telefones.xlsx"');
+  return res.send(buffer);
+});
+
 app.get('/api/clients/next', (req, res) => {
   const next = getNextClient(req.query || {});
   res.json({ next });
@@ -672,6 +716,85 @@ app.post('/api/clients/:id/whatsapp-open', (req, res) => {
   }
 
   return res.json({ client: result });
+});
+
+app.get('/api/clients/:id/phones', (req, res) => {
+  const id = Number(req.params.id);
+  if (!getClientById(id)) {
+    return res.status(404).json({ message: 'Cliente não encontrado.' });
+  }
+  return res.json({ phones: listClientPhones(id) });
+});
+
+app.post('/api/clients/:id/phones/:phoneId/primary', (req, res) => {
+  const result = setPrimaryClientPhone(Number(req.params.id), Number(req.params.phoneId));
+  if (!result) {
+    return res.status(404).json({ message: 'Telefone não encontrado.' });
+  }
+  return res.json(result);
+});
+
+app.post('/api/clients/:id/phones/:phoneId/inactivate', (req, res) => {
+  const result = updateClientPhoneStatus(Number(req.params.id), Number(req.params.phoneId), 'inactive');
+  if (!result) {
+    return res.status(404).json({ message: 'Telefone não encontrado.' });
+  }
+  return res.json(result);
+});
+
+app.post('/api/clients/:id/phone-lookup', async (req, res) => {
+  try {
+    const userId = getAuthenticatedUserId(req);
+    const force = req.body?.force === true || String(req.body?.force || '') === '1';
+    const queued = queuePhoneLookupForClient({ clientId: Number(req.params.id), userId, force });
+    if (queued.error) {
+      return res.status(queued.status || 400).json({ message: queued.error });
+    }
+
+    if (req.body?.run_now !== false) {
+      const processed = await processPhoneLookupJob(queued.job.id, { userId });
+      if (processed.error && processed.status && processed.status >= 500) {
+        return res.status(500).json({ message: processed.error, job: processed.job });
+      }
+      return res.json({ job: processed.job, result: processed.result, client: processed.client });
+    }
+
+    return res.json({ job: queued.job });
+  } catch (error) {
+    return res.status(500).json({ message: error instanceof Error ? error.message : 'Falha na busca de telefone.' });
+  }
+});
+
+app.get('/api/phone-lookup/diagnostics', (_req, res) => {
+  return res.json({ diagnostics: getPhoneLookupDiagnostics() });
+});
+
+app.get('/api/phone-lookup/jobs', (req, res) => {
+  return res.json(listPhoneLookupJobs(req.query || {}));
+});
+
+app.post('/api/phone-lookup/bulk/margin-clients', (req, res) => {
+  const userId = getAuthenticatedUserId(req);
+  const result = queuePhoneLookupForMarginClients({
+    userId,
+    filters: {
+      campaign_id: req.body?.campaign_id || req.query?.campaign_id,
+      base_id: req.body?.base_id || req.query?.base_id,
+    },
+    force: req.body?.force === true || String(req.body?.force || '') === '1',
+  });
+  return res.json(result);
+});
+
+app.post('/api/phone-lookup/worker/run', async (req, res) => {
+  try {
+    const userId = getAuthenticatedUserId(req);
+    const max = Number(req.body?.max || process.env.PHONE_LOOKUP_MAX_PER_RUN || 50);
+    const result = await runPhoneLookupWorker({ max, userId });
+    return res.json(result);
+  } catch (error) {
+    return res.status(500).json({ message: error instanceof Error ? error.message : 'Falha ao executar fila de busca.' });
+  }
 });
 
 app.post('/api/ribeirao/session/start', requirePrivilegedRole, async (req, res) => {

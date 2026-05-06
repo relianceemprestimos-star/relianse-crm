@@ -8,6 +8,7 @@ import {
   MessageCircleMore,
   MoveLeft,
   MoveRight,
+  PhoneCall,
   Send,
   ThumbsDown,
   ThumbsUp,
@@ -39,6 +40,7 @@ export default function AttendancePage() {
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingAction, setSavingAction] = useState(false);
+  const [lookupLoading, setLookupLoading] = useState(false);
   const [note, setNote] = useState('');
   const [privateMode, setPrivateMode] = useState(false);
   const [privateNote, setPrivateNote] = useState('');
@@ -180,6 +182,55 @@ export default function AttendancePage() {
 
     toast.success('WhatsApp aberto em nova aba.');
     await refreshClient();
+  }
+
+  async function handleLookupPhone(force = false) {
+    if (!client) return;
+    try {
+      setLookupLoading(true);
+      const response = await api.lookupClientPhone(client.id, force);
+      if (response.client) {
+        setClient(response.client);
+      } else {
+        await refreshClient();
+      }
+      const status = response.job?.status || response.result?.status;
+      if (status === 'success') {
+        toast.success('Telefone encontrado e salvo no cliente.');
+      } else if (status === 'requires_manual_login') {
+        toast.error('Nova Vida precisa de login manual ou mapeamento antes da consulta.');
+      } else if (status === 'not_found') {
+        toast('Nenhum telefone encontrado no Nova Vida.');
+      } else {
+        toast.error(response.job?.error_message || response.result?.message || 'Busca de telefone não concluída.');
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Falha ao buscar telefone.');
+    } finally {
+      setLookupLoading(false);
+    }
+  }
+
+  async function handleSetPrimaryPhone(phoneId: number) {
+    if (!client) return;
+    try {
+      const response = await api.setPrimaryPhone(client.id, phoneId);
+      setClient(response.client);
+      toast.success('Telefone principal atualizado.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Falha ao definir telefone principal.');
+    }
+  }
+
+  async function handleInactivatePhone(phoneId: number) {
+    if (!client) return;
+    try {
+      const response = await api.inactivatePhone(client.id, phoneId);
+      setClient(response.client);
+      toast.success('Telefone inativado.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Falha ao inativar telefone.');
+    }
   }
 
   async function saveObservation(noteText = note, privateText = privateNote) {
@@ -401,11 +452,57 @@ export default function AttendancePage() {
                   <MessageCircleMore size={16} />
                   Abrir WhatsApp Web
                 </Button>
+                <Button variant="secondary" className="py-4" onClick={() => void handleLookupPhone(true)} disabled={lookupLoading}>
+                  <PhoneCall size={16} />
+                  {lookupLoading ? 'Buscando...' : 'Buscar telefone no Nova Vida'}
+                </Button>
                 <Button variant="secondary" className="py-4" onClick={() => setRawOpen(true)}>
                   <Eye size={16} />
                   Ver dados originais
                 </Button>
                 <Badge tone="neutral">Vendedor: {client.assigned_to_name || user?.name || 'â€”'}</Badge>
+              </div>
+
+              <div className="mt-4 rounded-2xl border border-border bg-bg/60 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Telefones</p>
+                    <p className="mt-1 text-sm text-slate-300">Origem, qualidade e histórico da busca de telefone.</p>
+                  </div>
+                  <Badge tone={client.phones?.length ? 'success' : 'neutral'}>{client.phones?.length || 0} encontrados</Badge>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {client.phones?.length ? (
+                    client.phones.map((phone) => (
+                      <div key={phone.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-bg/70 p-3 text-sm">
+                        <div>
+                          <p className="font-semibold text-white">{phone.normalized_phone || phone.phone_number}</p>
+                          <p className="text-xs text-slate-500">
+                            {phone.source} • {phone.type || 'tipo não informado'} • {phone.quality || 'qualidade não informada'} • {phone.searched_at_formatted || '-'}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {phone.is_primary ? <Badge tone="success">Principal</Badge> : null}
+                          <Button variant="ghost" className="px-3 py-2" onClick={() => navigator.clipboard?.writeText(phone.normalized_phone || phone.phone_number)}>
+                            Copiar
+                          </Button>
+                          {!phone.is_primary ? (
+                            <Button variant="ghost" className="px-3 py-2" onClick={() => void handleSetPrimaryPhone(phone.id)}>
+                              Principal
+                            </Button>
+                          ) : null}
+                          <Button variant="ghost" className="px-3 py-2" onClick={() => void handleInactivatePhone(phone.id)}>
+                            Inativar
+                          </Button>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-border bg-white/3 p-4 text-sm text-slate-500">
+                      Nenhum telefone encontrado ainda. Use a busca Nova Vida somente para clientes com oportunidade real.
+                    </div>
+                  )}
+                </div>
               </div>
 
               {client.has_duplicate_in_other_base ? (
