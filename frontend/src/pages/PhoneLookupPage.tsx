@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Copy, MapPin, RotateCcw, Save, Search } from 'lucide-react';
+import { Bookmark, Calendar, ChevronRight, Copy, Home, Info, Mail, MapPin, Phone, RotateCcw, Save, Search, User } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 import { api } from '../lib/api';
 import type { Client, ClientAddress, PhoneLookupHistoryItem } from '../types';
-import { Badge, Button, Card, Input, SectionHeader } from '../components/ui';
+import { Badge, Button, Card, Input } from '../components/ui';
 
 type ResultPhone = {
   number?: string;
@@ -292,23 +292,30 @@ export default function PhoneLookupPage() {
   }
 
   return (
-    <div className="space-y-8">
-      <SectionHeader
-        title="Consulta telefone"
-        description="Pesquise informações de clientes e visualize telefones, endereços e e-mails vinculados."
-      />
+    <div className="space-y-7">
+      <div className="flex items-center gap-4">
+        <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-accent/20 bg-accent/10 text-accent shadow-[0_0_36px_rgba(0,209,193,.12)]">
+          <Phone size={25} />
+        </div>
+        <div>
+          <h1 className="text-3xl font-black tracking-tight text-white">Consulta telefone</h1>
+          <p className="mt-1 text-sm text-slate-400">Pesquise informações de clientes e visualize telefones, endereços e e-mails vinculados.</p>
+        </div>
+      </div>
 
-      <Card className="overflow-visible p-6">
-        <div className="flex flex-col gap-5 xl:flex-row xl:items-end">
-          <div className="grid flex-1 gap-4 lg:grid-cols-[1.4fr_0.85fr_1fr]">
+      <Card className="overflow-visible rounded-3xl border-accent/15 bg-panel/80 p-6 shadow-[0_22px_70px_rgba(0,0,0,.22)]">
+        <div className="grid gap-5 lg:grid-cols-[1.4fr_0.75fr_1.05fr]">
             <label className="relative block text-sm text-slate-300">
               Cliente do CRM
-              <Input
-                className="mt-2"
-                value={clientSearch}
-                onChange={(event) => setClientSearch(event.target.value)}
-                placeholder="Digite o nome, CPF ou telefone do cliente"
-              />
+              <div className="relative mt-2">
+                <Input
+                  className="h-12 rounded-full pr-12"
+                  value={clientSearch}
+                  onChange={(event) => setClientSearch(event.target.value)}
+                  placeholder="Digite o nome, CPF ou telefone do cliente"
+                />
+                <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+              </div>
               {clientOptions.length ? (
                 <div className="absolute z-20 mt-2 max-h-72 w-full overflow-auto rounded-2xl border border-border bg-bg/95 p-2 shadow-2xl">
                   {clientOptions.map((client) => (
@@ -328,69 +335,78 @@ export default function PhoneLookupPage() {
 
             <label className="block text-sm text-slate-300">
               CPF
-              <Input className="mt-2" value={cpf} onChange={(event) => setCpf(event.target.value)} placeholder="Digite o CPF" />
+              <Input className="mt-2 h-12 rounded-full" value={cpf} onChange={(event) => setCpf(event.target.value)} placeholder="Digite o CPF" />
             </label>
 
             <label className="block text-sm text-slate-300">
               Nome
-              <Input className="mt-2" value={name} onChange={(event) => setName(event.target.value)} placeholder="Digite o nome do cliente" />
+              <Input className="mt-2 h-12 rounded-full" value={name} onChange={(event) => setName(event.target.value)} placeholder="Digite o nome do cliente" />
             </label>
-          </div>
+        </div>
 
-          <div className="flex flex-wrap gap-3 xl:justify-end">
-            <Button onClick={() => void handleSearch()} disabled={loading}>
+        <div className="mt-5 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex flex-wrap gap-3">
+            <Button className="rounded-full px-8 shadow-[0_0_28px_rgba(0,209,193,.18)]" onClick={() => void handleSearch()} disabled={loading}>
               <Search size={16} />
               {loading ? 'Buscando...' : 'Buscar'}
             </Button>
-            <Button variant="secondary" onClick={clearFields}>
+            <Button variant="secondary" className="rounded-full px-7" onClick={clearFields}>
               <RotateCcw size={16} />
               Limpar campos
             </Button>
-            <Button variant="secondary" onClick={() => void handleSaveCurrent()} disabled={saving || !result?.consultation_id}>
+            <Button variant="secondary" className="rounded-full px-7" onClick={() => void handleSaveCurrent()} disabled={saving || !result?.consultation_id}>
               <Save size={16} />
               {saving ? 'Salvando...' : 'Salvar busca atual'}
             </Button>
           </div>
+
+          <div className="flex min-w-[280px] items-center gap-3 rounded-2xl border border-border bg-bg/60 px-4 py-3 text-xs text-slate-400">
+            <Info size={17} className="shrink-0 text-slate-300" />
+            <div>
+              <p className="font-bold text-accent">Dicas de busca</p>
+              <p>Use CPF, nome ou telefone para encontrar o cliente desejado.</p>
+            </div>
+          </div>
         </div>
 
-        <div className="mt-5 grid gap-3 lg:grid-cols-[1fr_360px]">
-          <div className="flex flex-wrap gap-2">
+        {(selectedClient || result) ? (
+          <div className="mt-4 flex flex-wrap gap-2">
             {selectedClient ? <Badge tone="accent">Cliente selecionado: {selectedClient.name}</Badge> : null}
             {result?.cache_hit ? <Badge tone="success">Carregado do CRM</Badge> : null}
             {result?.consulted_at ? <Badge tone="neutral">Consulta: {formatDate(result.consulted_at)}</Badge> : null}
           </div>
-          <div className="rounded-2xl border border-border bg-bg/60 p-4 text-xs text-slate-400">
-            <span className="font-semibold text-slate-200">Dicas de busca: </span>
-            use CPF para aproveitar o cache de 60 dias. Nome e cliente ajudam a vincular a consulta ao cadastro correto.
-          </div>
-        </div>
+        ) : null}
       </Card>
 
-      <Card className="overflow-hidden border-accent/10 bg-panel/95">
+      <Card className="overflow-hidden rounded-3xl border-accent/15 bg-panel/90 shadow-[0_24px_90px_rgba(0,0,0,.24)]">
         <div className="border-b border-border/80 bg-gradient-to-r from-accent/10 via-white/[0.03] to-transparent p-6">
           {result ? (
             <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge tone={statusTone(result.status)}>{statusLabel(result.status)}</Badge>
-                  <Badge tone="neutral">{result.origin || result.source || 'Consulta salva'}</Badge>
-                  {result.expires_at ? <Badge tone="info">Válida até {formatDate(result.expires_at)}</Badge> : null}
+              <div className="flex items-start gap-4">
+                <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-accent/15 text-accent">
+                  <User size={28} />
                 </div>
-                <h2 className="mt-4 text-3xl font-black tracking-tight text-white">
-                  {result.full_name || result.name || 'Cliente consultado'}
-                </h2>
-                <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-sm text-slate-400">
-                  <span>CPF: <strong className="text-slate-200">{result.cpf || '-'}</strong></span>
-                  <span>Ultima atualização: <strong className="text-slate-200">{formatDate(result.consulted_at) || '-'}</strong></span>
-                  {selectedClient?.created_at_formatted || selectedClient?.created_at ? (
-                    <span>Cliente desde <strong className="text-slate-200">{selectedClient.created_at_formatted || formatDate(selectedClient.created_at)}</strong></span>
-                  ) : null}
+                <div>
+                  <h2 className="text-2xl font-black tracking-tight text-white">
+                    {result.full_name || result.name || 'Cliente consultado'}
+                  </h2>
+                  <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-sm text-slate-400">
+                    <span>CPF <strong className="text-slate-200">{result.cpf || '-'}</strong></span>
+                    {selectedClient?.created_at_formatted || selectedClient?.created_at ? (
+                      <span>Cliente desde <strong className="text-slate-200">{selectedClient.created_at_formatted || formatDate(selectedClient.created_at)}</strong></span>
+                    ) : null}
+                  </div>
                 </div>
               </div>
-              <div className="grid grid-cols-3 gap-3 rounded-3xl border border-border bg-bg/50 p-3 text-center">
-                <Metric label="Telefones" value={resultPhones.length} />
-                <Metric label="Endereços" value={resultAddresses.length} />
-                <Metric label="E-mails" value={resultEmails.length} />
+
+              <div className="flex flex-col items-start gap-3 lg:items-end">
+                <div className="flex flex-wrap gap-2 lg:justify-end">
+                  <Badge tone={statusTone(result.status)}>{statusLabel(result.status)}</Badge>
+                  <Badge tone="neutral">{result.origin || result.source || 'Consulta salva'}</Badge>
+                </div>
+                <div className="rounded-full border border-border bg-bg/70 px-4 py-2 text-xs text-slate-300">
+                  Dados atualizados em {formatDate(result.consulted_at) || '-'}
+                </div>
               </div>
             </div>
           ) : (
@@ -406,87 +422,87 @@ export default function PhoneLookupPage() {
 
         {result ? (
           <>
-            <div className="flex gap-2 overflow-x-auto border-b border-border/80 px-6 py-4">
+            <div className="flex gap-0 overflow-x-auto border-b border-border/80 px-6 pt-4">
               {tabs.map((tab) => (
                 <button
                   key={tab.id}
                   type="button"
                   onClick={() => setActiveTab(tab.id)}
-                  className={`rounded-2xl px-4 py-2 text-sm font-semibold transition ${
+                  className={`inline-flex items-center gap-2 rounded-t-2xl border px-5 py-3 text-sm font-semibold transition ${
                     activeTab === tab.id
-                      ? 'bg-accent text-slate-950 shadow-[0_0_24px_rgba(0,209,193,.18)]'
-                      : 'border border-border bg-bg/60 text-slate-300 hover:border-accent/40 hover:text-white'
+                      ? 'border-accent/40 border-b-accent bg-accent/10 text-accent shadow-[inset_0_-2px_0_rgba(0,209,193,1)]'
+                      : 'border-border bg-bg/40 text-slate-300 hover:border-accent/40 hover:text-white'
                   }`}
                 >
                   {tab.label}
+                  {tab.id === 'phones' ? <span className="rounded-full bg-white/10 px-2 py-0.5 text-xs">{resultPhones.length}</span> : null}
+                  {tab.id === 'addresses' ? <span className="rounded-full bg-white/10 px-2 py-0.5 text-xs">{resultAddresses.length}</span> : null}
+                  {tab.id === 'emails' ? <span className="rounded-full bg-white/10 px-2 py-0.5 text-xs">{resultEmails.length}</span> : null}
                 </button>
               ))}
             </div>
 
             <div className="p-6">
               {activeTab === 'summary' ? (
-                <div className="grid gap-5 xl:grid-cols-4">
-                  <SummaryBlock title="Dados pessoais" className="xl:col-span-2">
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <Info label="Nascimento" value={result.birth_date || '-'} />
-                      <Info label="Idade" value={result.age === null || result.age === undefined ? '-' : String(result.age)} />
-                      <Info label="Sexo" value={result.gender || '-'} />
-                      <Info label="Nome da mãe" value={result.mother_name || '-'} />
-                      <Info label="Nome do pai" value={result.father_name || '-'} className="sm:col-span-2" />
-                    </div>
+                <div className="grid gap-3 rounded-3xl border border-border bg-bg/40 p-3 xl:grid-cols-4">
+                  <SummaryBlock title="Dados pessoais" icon={<Calendar size={18} />}>
+                    <PersonalLine label="Nascimento" value={`${result.birth_date || '-'}${result.age ? ` (${result.age} anos)` : ''}`} />
+                    <PersonalLine label="Sexo" value={result.gender || '-'} />
+                    <PersonalLine label="Nome da mãe" value={result.mother_name || '-'} />
+                    <PersonalLine label="Nome do pai" value={result.father_name || '-'} />
                   </SummaryBlock>
 
-                  <SummaryBlock title="Telefones">
+                  <SummaryBlock title={`Telefones (${resultPhones.length})`} icon={<Phone size={18} />}>
                     {primaryPhone ? (
-                      <CompactItem
-                        title={phoneValue(primaryPhone)}
-                        subtitle={phoneType(primaryPhone) || 'tipo nao informado'}
-                        action="Ver todos os telefones"
-                        onAction={() => setActiveTab('phones')}
-                      />
+                      <div className="space-y-2">
+                        {resultPhones.slice(0, 5).map((phone, index) => (
+                          <PhoneRow key={`${phoneValue(phone)}-${index}`} phone={phone} onCopy={() => void copyPhone(phone)} />
+                        ))}
+                        <InlineLink label="Ver todos os telefones" onClick={() => setActiveTab('phones')} />
+                      </div>
                     ) : (
                       <EmptyState text="Nenhum telefone encontrado." />
                     )}
                   </SummaryBlock>
 
-                  <SummaryBlock title="E-mail">
-                    {primaryEmail ? (
-                      <CompactItem
-                        title={primaryEmail}
-                        subtitle={`${resultEmails.length} e-mail(s) encontrado(s)`}
-                        action="Ver todos os e-mails"
-                        onAction={() => setActiveTab('emails')}
-                      />
-                    ) : (
-                      <EmptyState text="Nenhum e-mail encontrado." />
-                    )}
-                  </SummaryBlock>
-
-                  <SummaryBlock title="Endereço" className="xl:col-span-4">
+                  <SummaryBlock title={`Endereço (${resultAddresses.length})`} icon={<Home size={18} />}>
                     {primaryAddress ? (
-                      <div className="flex flex-col gap-4 rounded-2xl border border-border bg-bg/60 p-4 lg:flex-row lg:items-center lg:justify-between">
-                        <div>
-                          <p className="font-semibold text-white">{addressValue(primaryAddress)}</p>
-                          <p className="mt-1 text-xs text-slate-500">
-                            {[primaryAddress.city, primaryAddress.state, primaryAddress.zipcode || primaryAddress.zip_code].filter(Boolean).join(' - ')}
-                          </p>
+                      <div className="space-y-4">
+                        <div className="border-b border-border pb-4">
+                          <p className="leading-relaxed text-slate-200">{addressValue(primaryAddress)}</p>
+                          <p className="mt-2 text-xs text-slate-500">{[primaryAddress.city, primaryAddress.state, primaryAddress.zipcode || primaryAddress.zip_code].filter(Boolean).join(' - ')}</p>
                         </div>
-                        <div className="flex flex-wrap gap-2">
+                        <div className="space-y-2">
                           <Button
                             variant="ghost"
-                            className="px-3 py-2"
+                            className="w-full justify-between rounded-2xl border border-border px-4 py-3"
                             onClick={() => window.open(`https://www.google.com/maps/search/${encodeURIComponent(addressValue(primaryAddress))}`, '_blank')}
                           >
-                            <MapPin size={14} />
-                            Ver no mapa
+                            <span className="inline-flex items-center gap-2"><MapPin size={14} />Ver no mapa</span>
+                            <ChevronRight size={16} />
                           </Button>
-                          <Button variant="ghost" className="px-3 py-2" onClick={() => setActiveTab('addresses')}>
-                            Ver todos os endereços
-                          </Button>
+                          <InlineLink label="Ver todos os endereços" onClick={() => setActiveTab('addresses')} />
                         </div>
                       </div>
                     ) : (
                       <EmptyState text="Nenhum endereço encontrado." />
+                    )}
+                  </SummaryBlock>
+
+                  <SummaryBlock title={`E-mail (${resultEmails.length})`} icon={<Mail size={18} />}>
+                    {primaryEmail ? (
+                      <div className="space-y-4">
+                        <div className="flex items-start gap-3 border-b border-border pb-4">
+                          <Mail size={17} className="mt-0.5 text-slate-400" />
+                          <div>
+                            <p className="font-semibold text-white">{primaryEmail}</p>
+                            <p className="mt-1 text-xs text-slate-500">Principal</p>
+                          </div>
+                        </div>
+                        <InlineLink label="Ver todos os e-mails" onClick={() => setActiveTab('emails')} />
+                      </div>
+                    ) : (
+                      <EmptyState text="Nenhum e-mail encontrado." />
                     )}
                   </SummaryBlock>
                 </div>
@@ -500,7 +516,7 @@ export default function PhoneLookupPage() {
                         <div className="flex items-start justify-between gap-3">
                           <div>
                             <p className="font-bold text-white">{phoneValue(phone)}</p>
-                            <p className="mt-1 text-xs text-slate-500">{phoneType(phone) || 'tipo nao informado'}</p>
+                            <p className="mt-1 text-xs text-slate-500">{phoneType(phone) || 'tipo não informado'}</p>
                           </div>
                           <Button variant="ghost" className="px-3 py-2" onClick={() => void copyPhone(phone)}>
                             <Copy size={14} />
@@ -546,7 +562,7 @@ export default function PhoneLookupPage() {
         ) : null}
       </Card>
 
-      <Card className="p-6">
+      <Card className="rounded-3xl border-accent/15 bg-panel/90 p-6">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
           <div>
             <h3 className="text-xl font-bold text-white">Clientes consultados</h3>
@@ -589,8 +605,9 @@ export default function PhoneLookupPage() {
                   </td>
                   <td className="px-5 py-4 text-slate-300">{item.source || item.origin || '-'}</td>
                   <td className="px-5 py-4">
-                    <Button variant="ghost" className="px-3 py-2" onClick={() => void openDetails(item)}>
+                    <Button variant="ghost" className="rounded-2xl border border-accent/60 px-4 py-2 text-accent" onClick={() => void openDetails(item)}>
                       Detalhes
+                      <ChevronRight size={15} />
                     </Button>
                   </td>
                 </tr>
@@ -608,47 +625,62 @@ export default function PhoneLookupPage() {
   );
 }
 
-function Metric({ label, value }: { label: string; value: number }) {
+function SummaryBlock({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="rounded-2xl bg-white/[0.03] px-4 py-3">
-      <p className="text-2xl font-black text-white">{value}</p>
-      <p className="mt-1 text-xs text-slate-500">{label}</p>
-    </div>
-  );
-}
-
-function SummaryBlock({ title, className = '', children }: { title: string; className?: string; children: React.ReactNode }) {
-  return (
-    <section className={`rounded-3xl border border-border bg-panelAlt/60 p-5 ${className}`}>
-      <h3 className="text-lg font-bold text-white">{title}</h3>
+    <section className="rounded-2xl border border-border bg-panelAlt/70 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,.03)]">
+      <div className="flex items-center gap-3 border-b border-border pb-4">
+        <span className="text-slate-400">{icon}</span>
+        <h3 className="text-base font-bold text-white">{title}</h3>
+      </div>
       <div className="mt-4">{children}</div>
     </section>
   );
 }
 
-function CompactItem({ title, subtitle, action, onAction }: { title: string; subtitle: string; action: string; onAction: () => void }) {
+function PersonalLine({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-border bg-bg/60 p-4">
-      <p className="font-semibold text-white">{title}</p>
-      <p className="mt-1 text-xs text-slate-500">{subtitle}</p>
-      <button type="button" className="mt-4 text-sm font-semibold text-accent hover:brightness-110" onClick={onAction}>
-        {action}
+    <div className="flex gap-3 py-3">
+      <span className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-bg/80 text-slate-400">
+        <Bookmark size={14} />
+      </span>
+      <div>
+        <p className="text-xs text-slate-500">{label}</p>
+        <p className="mt-1 text-sm font-semibold text-slate-100">{value}</p>
+      </div>
+    </div>
+  );
+}
+
+function PhoneRow({ phone, onCopy }: { phone: ResultPhone; onCopy: () => void }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-2xl border border-border bg-bg/60 px-3 py-2">
+      <div className="flex items-center gap-3">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent/10 text-accent">
+          <Phone size={16} />
+        </span>
+        <div>
+          <p className="text-sm font-bold text-white">{phoneValue(phone)}</p>
+          <p className="text-xs text-slate-500">{phoneType(phone) || 'tipo não informado'}</p>
+        </div>
+      </div>
+      <button type="button" className="rounded-lg p-2 text-slate-400 hover:bg-white/5 hover:text-accent" onClick={onCopy}>
+        <Copy size={16} />
       </button>
     </div>
   );
 }
 
-function PanelGrid({ children }: { children: React.ReactNode }) {
-  return <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{children}</div>;
+function InlineLink({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button type="button" className="inline-flex items-center gap-2 text-sm font-semibold text-accent hover:brightness-110" onClick={onClick}>
+      {label}
+      <ChevronRight size={15} />
+    </button>
+  );
 }
 
-function Info({ label, value, className = '' }: { label: string; value: string; className?: string }) {
-  return (
-    <div className={`rounded-2xl border border-border bg-bg/60 p-4 ${className}`}>
-      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{label}</p>
-      <p className="mt-1 font-semibold text-white">{value}</p>
-    </div>
-  );
+function PanelGrid({ children }: { children: React.ReactNode }) {
+  return <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{children}</div>;
 }
 
 function EmptyState({ text }: { text: string }) {
