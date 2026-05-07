@@ -411,7 +411,7 @@ export default function RibeiraoPage() {
       toast.error('Selecione uma conexão antes de iniciar a consulta.');
       return;
     }
-    if (selectedConnection !== 'prefeitura-ribeirao-preto') {
+    if (selectedConnection !== 'prefeitura_ribeirao_preto') {
       toast.error('Esta conexão ainda está em preparação. Use Prefeitura de Ribeirão Preto por enquanto.');
       return;
     }
@@ -434,6 +434,10 @@ export default function RibeiraoPage() {
 
     if (batchSourceMode === 'upload' && !batchPreview?.cpfs?.length) {
       toast.error('Envie uma planilha com CPFs válidos antes de iniciar o lote.');
+      return;
+    }
+    if (batchSourceMode === 'upload' && (batchPreview?.valid_rows || 0) > 450) {
+      toast.error('O arquivo deve ter no máximo 450 CPFs válidos.');
       return;
     }
 
@@ -555,28 +559,10 @@ export default function RibeiraoPage() {
     <div className="space-y-8">
       <SectionHeader
         title="Consulta de Margem"
-        description="Consulte margens em lote por conexão autorizada, com arquivo de CPFs e retorno pelo portal."
+        description="Consulte margens em lote por convênio, prefeitura ou governo."
         action={<Badge tone="accent">Perfil: {sessionSession.role}</Badge>}
       />
 
-      <div className="flex flex-wrap gap-3">
-        <TabButton active={activeTab === 'individual'} onClick={() => setActiveTab('individual')}>
-          Consulta individual
-        </TabButton>
-        <TabButton active={activeTab === 'batch'} onClick={() => setActiveTab('batch')}>
-          Consulta em lote
-        </TabButton>
-        <TabButton active={activeTab === 'history'} onClick={() => setActiveTab('history')}>
-          Histórico
-        </TabButton>
-      </div>
-
-      <div className="grid gap-4 xl:grid-cols-4">
-        <MetricCard label="Consultas" value={stats.total} icon={<Search size={18} />} />
-        <MetricCard label="Com margem" value={stats.withMargin} icon={<CheckCircle2 size={18} />} />
-        <MetricCard label="Sem margem" value={stats.withoutMargin} icon={<Sparkles size={18} />} />
-        <MetricCard label="Erros / CAPTCHA" value={stats.errors + stats.captcha} icon={<ShieldAlert size={18} />} />
-      </div>
 
       {activeTab === 'individual' ? (
         <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">

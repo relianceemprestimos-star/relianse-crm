@@ -35,6 +35,7 @@ export default function App() {
           <Route path="/upload" element={<UploadPage />} />
           <Route path="/bases" element={<BasesPage />} />
           <Route path="/relatorios" element={<ReportsPage />} />
+          <Route path="/consulta-margem" element={<RibeiraoPage />} />
           <Route path="/consulta-ribeirao" element={<RibeiraoPage />} />
           <Route path="/consulta-telefones" element={<PhoneLookupPage />} />
           <Route path="/configuracoes" element={<SettingsPage />} />

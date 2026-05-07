@@ -40,7 +40,7 @@ const navItems: NavItem[] = [
   { to: '/atendimento', label: 'Atendimentos', icon: ClipboardList, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/relatorios', label: 'Relatorios', icon: Zap, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/whatsapp', label: 'WhatsApp Web', icon: MessagesSquare, allowedRoles: ['gerencial', 'vendedor'] },
-  { to: '/consulta-ribeirao', label: 'Consulta de Margem', icon: Landmark, allowedRoles: ['gerencial', 'vendedor'] },
+  { to: '/consulta-margem', label: 'Consulta de Margem', icon: Landmark, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/consulta-telefones', label: 'Consulta de Telefones', icon: PhoneCall, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/usuarios', label: 'Usuários', icon: Users, allowedRoles: ['gerencial'] },
   { to: '/configuracoes', label: 'Configurações', icon: Settings, allowedRoles: ['gerencial', 'vendedor'] },
@@ -56,6 +56,7 @@ const pageTitles: Record<string, string> = {
   '/atendimento': 'Atendimento',
   '/relatorios': 'Relatorios e acompanhamento',
   '/whatsapp': 'WhatsApp Web',
+  '/consulta-margem': 'Consulta de Margem',
   '/consulta-ribeirao': 'Consulta de Margem',
   '/consulta-telefones': 'Consulta de Telefones',
   '/usuarios': 'Usuários',
@@ -63,6 +64,7 @@ const pageTitles: Record<string, string> = {
 };
 
 function getPathKey(pathname: string) {
+  if (pathname.startsWith('/consulta-ribeirao')) return '/consulta-margem';
   const exact = navItems.find((item) => pathname.startsWith(item.to));
   return exact?.to || '/dashboard';
 }
