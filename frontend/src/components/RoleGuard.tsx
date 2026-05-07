@@ -1,4 +1,4 @@
-import { Navigate, Outlet } from 'react-router-dom';
+﻿import { Navigate, Outlet } from 'react-router-dom';
 import { ShieldAlert } from 'lucide-react';
 
 import { useAuth } from './AuthProvider';
@@ -32,7 +32,7 @@ export function RoleGuard({ allowedRoles = ['gerencial'] }: { allowedRoles?: Acc
             <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Acesso restrito</p>
             <h3 className="mt-2 text-2xl font-bold text-white">Acesso restrito ao perfil gerencial.</h3>
             <p className="mt-3 max-w-xl text-sm text-slate-400">
-              Esta área fica disponível apenas para usuários gerenciais do Relianse CRM.
+              Esta Ã¡rea fica disponÃ­vel apenas para usuÃ¡rios gerenciais do Reliance CRM.
             </p>
           </div>
         </div>
@@ -42,3 +42,4 @@ export function RoleGuard({ allowedRoles = ['gerencial'] }: { allowedRoles?: Acc
 
   return <Outlet />;
 }
+

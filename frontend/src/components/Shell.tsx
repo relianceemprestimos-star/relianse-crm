@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+﻿import { useEffect, useMemo, useState } from 'react';
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   Bell,
@@ -74,7 +74,7 @@ export function Shell() {
   const location = useLocation();
   const navigate = useNavigate();
   const currentKey = useMemo(() => getPathKey(location.pathname), [location.pathname]);
-  const pageTitle = pageTitles[currentKey] || 'Relianse CRM';
+  const pageTitle = pageTitles[currentKey] || 'Reliance CRM';
 
   useEffect(() => {
     const handleSessionChange = () => setAccessSession(getAccessSession());
@@ -112,7 +112,7 @@ export function Shell() {
             {!collapsed ? (
               <div>
                 <p className="text-xs uppercase tracking-[0.28em] text-slate-500">CRM premium</p>
-                <h1 className="text-lg font-bold text-white">Relianse CRM</h1>
+                <h1 className="text-lg font-bold text-white">Reliance CRM</h1>
               </div>
             ) : null}
           </div>
@@ -148,7 +148,7 @@ export function Shell() {
                   <div className="mt-3 flex items-center justify-between gap-3">
                     <div>
                       <p className="text-sm font-semibold text-white">Modo escuro ativo</p>
-                      <p className="text-xs text-slate-500">Pronto para operação comercial.</p>
+                      <p className="text-xs text-slate-500">Pronto para operaÃ§Ã£o comercial.</p>
                     </div>
                     <Badge tone="accent">Online</Badge>
                   </div>
@@ -172,7 +172,7 @@ export function Shell() {
         <header className="sticky top-0 z-30 border-b border-border bg-bg/80 px-6 py-4 backdrop-blur-xl">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
             <div>
-              <p className="text-sm text-slate-500">Relianse CRM</p>
+              <p className="text-sm text-slate-500">Reliance CRM</p>
               <h2 className="text-2xl font-bold tracking-tight text-white">{pageTitle}</h2>
             </div>
 
@@ -217,3 +217,4 @@ export function Shell() {
     </div>
   );
 }
+

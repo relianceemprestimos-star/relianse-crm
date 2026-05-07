@@ -155,12 +155,19 @@ export async function lookupPhoneNovaVida(client) {
     phones,
     status: result.status || (phones.length ? 'success' : 'not_found'),
     code: result.code || '',
-    message: result.message || (phones.length ? 'Telefones encontrados no Nova Vida.' : 'Nenhum telefone encontrado no Nova Vida.'),
+    message:
+      result.code === 'NOVA_VIDA_SESSION_EXPIRED_MANUAL_LOGIN_REQUIRED'
+        ? 'Sessao Nova Vida expirada. Login manual necessario.'
+        : result.message || (phones.length ? 'Telefones encontrados no Nova Vida.' : 'Nenhum telefone encontrado no Nova Vida.'),
     stage: result.stage || '',
+    reconnectAttempted: Boolean(result.reconnectAttempted),
+    reconnectOk: Boolean(result.reconnectOk),
     raw: {
       page: result.page,
       navigationCandidates: result.navigationCandidates,
       inputCount: result.inputCount,
+      reconnectAttempted: Boolean(result.reconnectAttempted),
+      reconnectOk: Boolean(result.reconnectOk),
     },
   };
 }

@@ -1,6 +1,6 @@
-# Relianse CRM
+﻿# Reliance CRM
 
-CRM operacional para a Relianse, empresa de credito consignado para servidores publicos, prefeituras, governos e convenios. O sistema centraliza bases de clientes, campanhas, fila de atendimento, historico comercial, relatorios, Consulta Ribeirao e consulta cadastral/telefones via Nova Vida.
+CRM operacional para a Reliance, empresa de credito consignado para servidores publicos, prefeituras, governos e convenios. O sistema centraliza bases de clientes, campanhas, fila de atendimento, historico comercial, relatorios, Consulta Ribeirao e consulta cadastral/telefones via Nova Vida.
 
 ## Objetivo do projeto
 
@@ -303,3 +303,4 @@ STATUS_DO_PROJETO.md
 ```
 
 Depois clone o repositorio, crie `.env` a partir de `.env.example`, instale dependencias e rode os comandos de validacao.
+

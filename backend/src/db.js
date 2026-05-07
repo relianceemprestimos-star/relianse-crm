@@ -29,7 +29,7 @@ const DEFAULT_DB_PATH = path.join(BACKEND_ROOT, 'data', 'relianse-crm.sqlite');
 const SQL_WASM_DIR = path.join(PROJECT_ROOT, 'node_modules', 'sql.js', 'dist');
 
 const DEFAULT_SETTINGS = {
-  company_name: 'Relianse CRM',
+  company_name: 'Reliance CRM',
   attendant_name: 'Carlos Andrade',
   whatsapp_message:
     'Oie, {nome}, tudo bem? E a Aline. Vi aqui que apareceu uma oportunidade no seu consignado. Posso te enviar uma simulacao sem compromisso?',
@@ -2914,9 +2914,29 @@ export function listClients(params = {}) {
   }
 
   if (params.search) {
-    filters.push('(c.name LIKE ? OR c.cpf LIKE ? OR c.phone LIKE ?)');
-    const search = `%${String(params.search).trim()}%`;
-    values.push(search, search, search);
+    const rawSearch = String(params.search).trim();
+    const search = `%${rawSearch}%`;
+    const digitSearch = cleanDigits(rawSearch);
+    const normalizedPhoneSearch = digitSearch ? `%${digitSearch}%` : search;
+    filters.push(`(
+      c.name LIKE ?
+      OR c.cpf LIKE ?
+      OR c.phone LIKE ?
+      OR REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(c.cpf, ''), '.', ''), '-', ''), ' ', ''), '/', ''), '+', '') LIKE ?
+      OR REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(c.phone, ''), '(', ''), ')', ''), '-', ''), ' ', ''), '+', '') LIKE ?
+      OR EXISTS (
+        SELECT 1
+        FROM client_phones cp
+        WHERE cp.client_id = c.id
+          AND (
+            cp.phone_number LIKE ?
+            OR cp.normalized_phone LIKE ?
+            OR REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(cp.phone_number, ''), '(', ''), ')', ''), '-', ''), ' ', ''), '+', '') LIKE ?
+            OR REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(cp.normalized_phone, ''), '(', ''), ')', ''), '-', ''), ' ', ''), '+', '') LIKE ?
+          )
+      )
+    )`);
+    values.push(search, search, search, normalizedPhoneSearch, normalizedPhoneSearch, search, search, normalizedPhoneSearch, normalizedPhoneSearch);
   }
 
   const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : '';

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+﻿import { useEffect, useState, type ReactNode } from 'react';
 import { KeyRound, MoonStar, Save, Settings as SettingsIcon, UserCircle2, Users, Volume2, Webhook } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -12,15 +12,15 @@ import { Badge, Button, Card, Input, SectionHeader, Textarea } from '../componen
 export default function SettingsPage() {
   const { user } = useAuth();
   const [settings, setSettings] = useState<Settings>({
-    company_name: 'Relianse CRM',
+    company_name: 'Reliance CRM',
     attendant_name: 'Carlos Andrade',
     whatsapp_message:
-      'Oie, {nome}, tudo bem? Ã‰ a Aline. Vi aqui que apareceu uma oportunidade no seu consignado. Posso te enviar uma simulaÃ§Ã£o sem compromisso?',
+      'Oie, {nome}, tudo bem? Ãƒâ€° a Aline. Vi aqui que apareceu uma oportunidade no seu consignado. Posso te enviar uma simulaÃƒÂ§ÃƒÂ£o sem compromisso?',
     allow_column_editing: 'true',
     daily_limit: '50',
     theme: 'dark',
     expected_columns:
-      'cpf, nome, telefone, e-mail, margem bruta consignaÃ§Ã£o, margem lÃ­quida consignaÃ§Ã£o, margem bruta crÃ©dito, margem lÃ­quida crÃ©dito, margem bruta cartÃ£o, margem lÃ­quida cartÃ£o, status, mensagem',
+      'cpf, nome, telefone, e-mail, margem bruta consignaÃƒÂ§ÃƒÂ£o, margem lÃƒÂ­quida consignaÃƒÂ§ÃƒÂ£o, margem bruta crÃƒÂ©dito, margem lÃƒÂ­quida crÃƒÂ©dito, margem bruta cartÃƒÂ£o, margem lÃƒÂ­quida cartÃƒÂ£o, status, mensagem',
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -53,7 +53,7 @@ export default function SettingsPage() {
           }
         }
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : 'Falha ao carregar configurações.');
+        toast.error(error instanceof Error ? error.message : 'Falha ao carregar configuraÃ§Ãµes.');
       } finally {
         if (active) {
           setLoading(false);
@@ -72,9 +72,9 @@ export default function SettingsPage() {
       setSaving(true);
       const response = await api.saveSettings(settings);
       setSettings(response.settings);
-      toast.success('Configurações salvas.');
+      toast.success('ConfiguraÃ§Ãµes salvas.');
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Falha ao salvar configurações.');
+      toast.error(error instanceof Error ? error.message : 'Falha ao salvar configuraÃ§Ãµes.');
     } finally {
       setSaving(false);
     }
@@ -109,8 +109,8 @@ export default function SettingsPage() {
   return (
     <div className="space-y-8">
       <SectionHeader
-        title="Configurações"
-        description="Ajuste os dados padrão da operação, a mensagem de WhatsApp e as preferências de carregamento da planilha."
+        title="ConfiguraÃ§Ãµes"
+        description="Ajuste os dados padrÃ£o da operaÃ§Ã£o, a mensagem de WhatsApp e as preferÃªncias de carregamento da planilha."
         action={
           <Badge tone="accent">
             <MoonStar size={14} className="mr-2" />
@@ -120,14 +120,14 @@ export default function SettingsPage() {
       />
 
       {loading ? (
-        <Card className="p-8 text-sm text-slate-400">Carregando configurações...</Card>
+        <Card className="p-8 text-sm text-slate-400">Carregando configuraÃ§Ãµes...</Card>
       ) : (
         <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
           <Card className="p-6">
             <div className="space-y-6">
               <SectionBlock icon={<UserCircle2 size={18} />} title="Conta ativa">
                 <div className="rounded-2xl border border-border bg-bg/60 p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Usuário logado</p>
+                  <p className="text-xs uppercase tracking-[0.2em] text-slate-500">UsuÃ¡rio logado</p>
                   <p className="mt-2 text-lg font-semibold text-white">{user?.name || '-'}</p>
                   <p className="mt-1 text-sm text-slate-400">{user?.login || '-'}</p>
                   <p className="mt-3 text-xs text-slate-500">Perfil atual: {roleLabel(user?.role)}</p>
@@ -142,7 +142,7 @@ export default function SettingsPage() {
                 />
               </SectionBlock>
 
-              <SectionBlock icon={<UserCircle2 size={18} />} title="Atendente padrão">
+              <SectionBlock icon={<UserCircle2 size={18} />} title="Atendente padrÃ£o">
                 <Input
                   value={settings.attendant_name}
                   onChange={(event) => setSettings((current) => ({ ...current, attendant_name: event.target.value }))}
@@ -150,14 +150,14 @@ export default function SettingsPage() {
                 />
               </SectionBlock>
 
-              <SectionBlock icon={<Volume2 size={18} />} title="Mensagem padrão para WhatsApp">
+              <SectionBlock icon={<Volume2 size={18} />} title="Mensagem padrÃ£o para WhatsApp">
                 <Textarea
                   rows={6}
                   value={settings.whatsapp_message}
                   onChange={(event) => setSettings((current) => ({ ...current, whatsapp_message: event.target.value }))}
                 />
                 <p className="mt-2 text-xs text-slate-500">
-                  Variáveis aceitas: {'{nome}'}, {'{cpf}'}, {'{telefone}'}, {'{margem_consignacao_liquida}'}, {'{margem_credito_liquida}'}, {'{margem_cartao_liquida}'}, {'{melhor_margem}'}, {'{melhor_produto}'}
+                  VariÃ¡veis aceitas: {'{nome}'}, {'{cpf}'}, {'{telefone}'}, {'{margem_consignacao_liquida}'}, {'{margem_credito_liquida}'}, {'{margem_cartao_liquida}'}, {'{melhor_margem}'}, {'{melhor_produto}'}
                 </p>
               </SectionBlock>
 
@@ -178,7 +178,7 @@ export default function SettingsPage() {
                     />
                   </label>
                   <label className="block text-sm text-slate-300">
-                    Limite diário por vendedor
+                    Limite diÃ¡rio por vendedor
                     <Input
                       className="mt-2"
                       value={settings.daily_limit}
@@ -228,20 +228,20 @@ export default function SettingsPage() {
               </SectionBlock>
 
               {user?.role === 'gerencial' ? (
-                <SectionBlock icon={<Users size={18} />} title="Consulta Ribeirão">
+                <SectionBlock icon={<Users size={18} />} title="Consulta RibeirÃ£o">
                   <div className="space-y-3">
                     <div className="rounded-2xl border border-border bg-bg/60 p-4">
                       <div className="flex flex-wrap items-center gap-3">
                         <Badge tone={ribeiraoConfig?.configured ? 'success' : 'danger'}>
-                          {ribeiraoConfig?.configured ? 'Configurada' : 'Não configurada'}
+                          {ribeiraoConfig?.configured ? 'Configurada' : 'NÃ£o configurada'}
                         </Badge>
-                        <span className="text-sm text-slate-300">{ribeiraoConfig?.message || 'URL do averbador não configurada no servidor.'}</span>
+                        <span className="text-sm text-slate-300">{ribeiraoConfig?.message || 'URL do averbador nÃ£o configurada no servidor.'}</span>
                       </div>
                       <div className="mt-3 rounded-xl border border-border bg-panel px-4 py-3 text-sm text-slate-300">
                         {ribeiraoConfig?.configured ? ribeiraoConfig.value_masked || '-' : 'Configure RIBEIRAO_AVERBADOR_URL no .env da VPS e reinicie os containers.'}
                       </div>
                       <p className="mt-3 text-xs text-slate-500">
-                        {ribeiraoConfig?.hint || 'Se a URL estiver vazia, a sessão Ribeirão será bloqueada antes de conectar.'}
+                        {ribeiraoConfig?.hint || 'Se a URL estiver vazia, a sessÃ£o RibeirÃ£o serÃ¡ bloqueada antes de conectar.'}
                       </p>
                     </div>
                   </div>
@@ -249,7 +249,7 @@ export default function SettingsPage() {
               ) : null}
 
               {user?.role === 'gerencial' ? (
-                <SectionBlock icon={<Users size={18} />} title="Usuários do sistema">
+                <SectionBlock icon={<Users size={18} />} title="UsuÃ¡rios do sistema">
                   <UsersManagerPanel />
                 </SectionBlock>
               ) : null}
@@ -261,9 +261,9 @@ export default function SettingsPage() {
               <p className="text-sm text-slate-400">Resumo</p>
               <div className="mt-4 space-y-3">
                 <Summary label="Empresa" value={settings.company_name} />
-                <Summary label="Atendente padrão" value={settings.attendant_name} />
+                <Summary label="Atendente padrÃ£o" value={settings.attendant_name} />
                 <Summary label="Tema" value={settings.theme} />
-                <Summary label="Limite diário" value={settings.daily_limit} />
+                <Summary label="Limite diÃ¡rio" value={settings.daily_limit} />
               </div>
             </Card>
 
@@ -274,7 +274,7 @@ export default function SettingsPage() {
 
             <Button className="w-full py-4 text-base" onClick={() => void handleSave()} disabled={saving}>
               <Save size={16} />
-              {saving ? 'Salvando...' : 'Salvar configurações'}
+              {saving ? 'Salvando...' : 'Salvar configuraÃ§Ãµes'}
             </Button>
           </div>
         </div>
@@ -311,3 +311,4 @@ function Summary({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
+

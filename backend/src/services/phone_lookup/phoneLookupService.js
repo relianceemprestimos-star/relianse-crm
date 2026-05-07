@@ -161,9 +161,10 @@ export async function searchPhones({ cpf = '', name = '', phone = '', clientId =
   markExpiredClientConsultations();
   const clientDetails = clientId ? getClientById(Number(clientId)) : null;
   const client = clientDetails?.client || null;
-  const searchCpf = cleanDigits(cpf || client?.cpf || '');
-  const searchName = String(name || client?.name || '').trim();
   const searchPhone = String(phone || client?.phone || '').trim();
+  const phoneDigits = cleanDigits(searchPhone);
+  const searchCpf = cleanDigits(cpf || client?.cpf || (phoneDigits.length === 11 ? phoneDigits : ''));
+  const searchName = String(name || client?.name || (!searchCpf && searchPhone ? searchPhone : '')).trim();
   if (!searchCpf && !searchName) {
     return { error: 'Informe CPF ou nome para buscar.', status: 400 };
   }
@@ -212,6 +213,8 @@ export async function searchPhones({ cpf = '', name = '', phone = '', clientId =
     status: finalStatus,
     phonesFound: result.phones?.length || 0,
     consultationId: savedConsultation?.id ?? null,
+    reconnectAttempted: Boolean(result.reconnectAttempted),
+    reconnectOk: Boolean(result.reconnectOk),
   });
 
   if (client?.id) {

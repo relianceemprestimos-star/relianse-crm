@@ -1,6 +1,6 @@
 # Integração Nova Vida
 
-Este módulo prepara o Relianse CRM para buscar telefones no sistema autorizado Nova Vida dentro do fluxo comercial.
+Este módulo prepara o Reliance CRM para buscar telefones no sistema autorizado Nova Vida dentro do fluxo comercial.
 
 ## Regras de uso
 

@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+﻿import { useEffect, useState, type FormEvent } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { LockKeyhole, LogIn, Sparkles } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -24,7 +24,7 @@ export default function LoginPage() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-bg px-4">
         <Card className="w-full max-w-md p-8 text-center">
-          <p className="text-sm uppercase tracking-[0.24em] text-slate-500">Relianse CRM</p>
+          <p className="text-sm uppercase tracking-[0.24em] text-slate-500">Reliance CRM</p>
           <h1 className="mt-3 text-2xl font-bold text-white">Carregando acesso</h1>
           <p className="mt-2 text-sm text-slate-400">Verificando sua sessao segura...</p>
         </Card>
@@ -49,7 +49,7 @@ export default function LoginPage() {
       await login(loginValue.trim(), password);
       const target = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname || '/dashboard';
       navigate(target, { replace: true });
-      toast.success('Bem-vindo ao Relianse CRM.');
+      toast.success('Bem-vindo ao Reliance CRM.');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Falha ao entrar no sistema.');
     } finally {
@@ -68,9 +68,9 @@ export default function LoginPage() {
           <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-3xl bg-gradient-to-br from-accent to-cyan-400 text-slate-950 shadow-[0_0_35px_rgba(0,209,193,.3)]">
             <Sparkles size={22} strokeWidth={2.5} />
           </div>
-          <p className="mt-4 text-xs uppercase tracking-[0.3em] text-slate-500">Relianse CRM</p>
+          <p className="mt-4 text-xs uppercase tracking-[0.3em] text-slate-500">Reliance CRM</p>
           <h1 className="mt-2 text-3xl font-bold text-white">Entrar no sistema</h1>
-          <p className="mt-2 text-sm text-slate-400">Acesse sua área de atendimento</p>
+          <p className="mt-2 text-sm text-slate-400">Acesse sua Ã¡rea de atendimento</p>
         </div>
 
         <form className="space-y-4" onSubmit={(event) => void handleSubmit(event)}>
@@ -96,7 +96,7 @@ export default function LoginPage() {
             </div>
             <div>
               <p className="font-semibold text-white">Acesso protegido</p>
-              <p className="text-xs text-slate-500">Usuários ativos com senha hash.</p>
+              <p className="text-xs text-slate-500">UsuÃ¡rios ativos com senha hash.</p>
             </div>
           </div>
           <Badge tone="accent">Seguro</Badge>
@@ -105,3 +105,4 @@ export default function LoginPage() {
     </div>
   );
 }
+

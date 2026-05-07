@@ -8,7 +8,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: ${BACKEND_PORT:-4000}
-      APP_NAME: ${APP_NAME:-Relianse CRM}
+      APP_NAME: ${APP_NAME:-Reliance CRM}
       SQLITE_PATH: ${SQLITE_PATH:-/app/data/relianse-crm.sqlite}
       DATABASE_PATH: ${DATABASE_PATH:-/app/data/relianse-crm.sqlite}
       UPLOAD_DIR: ${UPLOAD_DIR:-/app/uploads}

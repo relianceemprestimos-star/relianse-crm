@@ -1,4 +1,4 @@
-import cors from 'cors';
+﻿import cors from 'cors';
 import dotenv from 'dotenv';
 import express from 'express';
 import multer from 'multer';
@@ -179,7 +179,7 @@ app.use(express.urlencoded({ extended: true }));
 app.get('/api/health', (_req, res) => {
   res.json({
     status: 'ok',
-    app: process.env.APP_NAME || 'Relianse CRM',
+    app: process.env.APP_NAME || 'Reliance CRM',
     service: 'relianse-crm-backend',
     build: BUILD_VERSION,
     db: getDb().name,
@@ -216,7 +216,7 @@ app.post('/api/auth/change-password', (req, res) => {
   try {
     const currentUser = req.user;
     if (!currentUser) {
-      return res.status(401).json({ message: 'Faça login para continuar.' });
+      return res.status(401).json({ message: 'FaÃ§a login para continuar.' });
     }
 
     const currentPassword = String(req.body.currentPassword || '').trim();
@@ -227,12 +227,12 @@ app.post('/api/auth/change-password', (req, res) => {
       return res.status(400).json({ message: 'Preencha todos os campos da senha.' });
     }
     if (newPassword !== confirmPassword) {
-      return res.status(400).json({ message: 'As senhas não conferem.' });
+      return res.status(400).json({ message: 'As senhas nÃ£o conferem.' });
     }
 
     const user = getUserById(Number(currentUser.id));
     if (!user) {
-      return res.status(404).json({ message: 'Usuário não encontrado.' });
+      return res.status(404).json({ message: 'UsuÃ¡rio nÃ£o encontrado.' });
     }
     if (!verifyPassword(currentPassword, user.password_hash)) {
       return res.status(400).json({ message: 'Senha atual incorreta.' });
@@ -274,7 +274,7 @@ app.post('/api/users', (req, res) => {
       return res.status(400).json({ message: 'Informe a senha do usuario.' });
     }
     if (getUserByLogin(login)) {
-      return res.status(400).json({ message: 'Login já cadastrado.' });
+      return res.status(400).json({ message: 'Login jÃ¡ cadastrado.' });
     }
 
     const user = createUserRecord({
@@ -287,7 +287,7 @@ app.post('/api/users', (req, res) => {
 
     return res.json({ user });
   } catch (error) {
-    return res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao cadastrar usuário.' });
+    return res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao cadastrar usuÃ¡rio.' });
   }
 });
 
@@ -306,7 +306,7 @@ app.put('/api/users/:id', (req, res) => {
 
     const duplicate = login && getUserByLogin(login);
     if (duplicate && Number(duplicate.id) !== id) {
-      return res.status(400).json({ message: 'Login já cadastrado.' });
+      return res.status(400).json({ message: 'Login jÃ¡ cadastrado.' });
     }
 
     const user = updateUserRecord(id, {
@@ -318,7 +318,7 @@ app.put('/api/users/:id', (req, res) => {
 
     return res.json({ user });
   } catch (error) {
-    return res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao atualizar usuário.' });
+    return res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao atualizar usuÃ¡rio.' });
   }
 });
 
@@ -363,7 +363,7 @@ app.post('/api/users/:id/toggle-active', (req, res) => {
 
     return res.json({ user });
   } catch (error) {
-    return res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao atualizar usuário.' });
+    return res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao atualizar usuÃ¡rio.' });
   }
 });
 
@@ -471,7 +471,7 @@ app.post('/api/bases/:id/rename', (req, res) => {
   const id = Number(req.params.id);
   const base = renameBase(id, String(req.body.nome_base || req.body.name || ''));
   if (!base) {
-    return res.status(404).json({ message: 'Base não encontrada.' });
+    return res.status(404).json({ message: 'Base nÃ£o encontrada.' });
   }
   return res.json({ base });
 });
@@ -481,7 +481,7 @@ app.post('/api/bases/:id/archive', (req, res) => {
   const archived = req.body.archived !== false;
   const base = archiveBase(id, archived);
   if (!base) {
-    return res.status(404).json({ message: 'Base não encontrada.' });
+    return res.status(404).json({ message: 'Base nÃ£o encontrada.' });
   }
   return res.json({ base });
 });
@@ -506,7 +506,7 @@ app.get('/api/ribeirao/diagnostics', roleMiddleware(operationalRoles), (_req, re
 app.post('/api/upload', upload.single('file'), (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).json({ message: 'Envie um arquivo válido.' });
+      return res.status(400).json({ message: 'Envie um arquivo vÃ¡lido.' });
     }
 
     const mode = String(req.body.mode || 'import').toLowerCase();
@@ -612,7 +612,7 @@ app.get('/api/clients/:id', (req, res) => {
   const id = Number(req.params.id);
   const client = getClientById(id);
   if (!client) {
-    return res.status(404).json({ message: 'Cliente não encontrado.' });
+    return res.status(404).json({ message: 'Cliente nÃ£o encontrado.' });
   }
   res.json(client);
 });
@@ -622,7 +622,7 @@ app.post('/api/clients/:id/start', (req, res) => {
   const userId = getAuthenticatedUserId(req);
   const currentClient = getClientById(id);
   if (!currentClient) {
-    return res.status(404).json({ message: 'Cliente não encontrado.' });
+    return res.status(404).json({ message: 'Cliente nÃ£o encontrado.' });
   }
   const requesterRole = getRequestRole(req);
   if (
@@ -630,11 +630,11 @@ app.post('/api/clients/:id/start', (req, res) => {
     Number(currentClient.client.assigned_to) !== userId &&
     requesterRole !== 'gerencial'
   ) {
-    return res.status(403).json({ message: 'Este atendimento já está com outro vendedor.' });
+    return res.status(403).json({ message: 'Este atendimento jÃ¡ estÃ¡ com outro vendedor.' });
   }
   const result = startAttendance(id, userId);
   if (!result) {
-    return res.status(404).json({ message: 'Cliente não encontrado.' });
+    return res.status(404).json({ message: 'Cliente nÃ£o encontrado.' });
   }
   return res.json(result);
 });
@@ -650,7 +650,7 @@ app.post('/api/clients/:id/interactions', (req, res) => {
   });
 
   if (!result) {
-    return res.status(404).json({ message: 'Cliente não encontrado.' });
+    return res.status(404).json({ message: 'Cliente nÃ£o encontrado.' });
   }
 
   return res.json(result);
@@ -672,7 +672,7 @@ app.post('/api/clients/:id/schedule-return', (req, res) => {
   });
 
   if (!result) {
-    return res.status(404).json({ message: 'Cliente não encontrado.' });
+    return res.status(404).json({ message: 'Cliente nÃ£o encontrado.' });
   }
 
   return res.json(result);
@@ -688,7 +688,7 @@ app.post('/api/clients/:id/finalize', (req, res) => {
   });
 
   if (!result) {
-    return res.status(404).json({ message: 'Cliente não encontrado.' });
+    return res.status(404).json({ message: 'Cliente nÃ£o encontrado.' });
   }
 
   return res.json(result);
@@ -704,7 +704,7 @@ app.post('/api/clients/:id/no-interest', (req, res) => {
   });
 
   if (!result) {
-    return res.status(404).json({ message: 'Cliente não encontrado.' });
+    return res.status(404).json({ message: 'Cliente nÃ£o encontrado.' });
   }
 
   return res.json(result);
@@ -724,7 +724,7 @@ app.post('/api/clients/:id/converted', (req, res) => {
   });
 
   if (!result) {
-    return res.status(404).json({ message: 'Cliente não encontrado.' });
+    return res.status(404).json({ message: 'Cliente nÃ£o encontrado.' });
   }
 
   return res.json(result);
@@ -739,7 +739,7 @@ app.post('/api/clients/:id/whatsapp-open', (req, res) => {
   });
 
   if (!result) {
-    return res.status(404).json({ message: 'Cliente não encontrado.' });
+    return res.status(404).json({ message: 'Cliente nÃ£o encontrado.' });
   }
 
   return res.json({ client: result });
@@ -748,7 +748,7 @@ app.post('/api/clients/:id/whatsapp-open', (req, res) => {
 app.get('/api/clients/:id/phones', (req, res) => {
   const id = Number(req.params.id);
   if (!getClientById(id)) {
-    return res.status(404).json({ message: 'Cliente não encontrado.' });
+    return res.status(404).json({ message: 'Cliente nÃ£o encontrado.' });
   }
   return res.json({ phones: listClientPhones(id) });
 });
@@ -756,7 +756,7 @@ app.get('/api/clients/:id/phones', (req, res) => {
 app.post('/api/clients/:id/phones/:phoneId/primary', (req, res) => {
   const result = setPrimaryClientPhone(Number(req.params.id), Number(req.params.phoneId));
   if (!result) {
-    return res.status(404).json({ message: 'Telefone não encontrado.' });
+    return res.status(404).json({ message: 'Telefone nÃ£o encontrado.' });
   }
   return res.json(result);
 });
@@ -764,7 +764,7 @@ app.post('/api/clients/:id/phones/:phoneId/primary', (req, res) => {
 app.post('/api/clients/:id/phones/:phoneId/inactivate', (req, res) => {
   const result = updateClientPhoneStatus(Number(req.params.id), Number(req.params.phoneId), 'inactive');
   if (!result) {
-    return res.status(404).json({ message: 'Telefone não encontrado.' });
+    return res.status(404).json({ message: 'Telefone nÃ£o encontrado.' });
   }
   return res.json(result);
 });
@@ -970,14 +970,14 @@ app.post('/api/ribeirao/query', roleMiddleware(operationalRoles), async (req, re
       return res.status(400).json({
         success: false,
         code: 'NO_ACTIVE_SESSION',
-        message: 'Nenhuma sessão ativa com o portal da Prefeitura. Inicie a sessão antes de consultar.',
+        message: 'Nenhuma sessÃ£o ativa com o portal da Prefeitura. Inicie a sessÃ£o antes de consultar.',
       });
     }
     if (!cpf) {
       return res.status(400).json({
         success: false,
         code: 'INVALID_CPF',
-        message: 'Informe um CPF válido.',
+        message: 'Informe um CPF vÃ¡lido.',
       });
     }
 
@@ -1058,7 +1058,7 @@ app.post('/api/ribeirao/query', roleMiddleware(operationalRoles), async (req, re
 app.post('/api/ribeirao/batch/upload-preview', roleMiddleware(operationalRoles), upload.single('file'), (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).json({ message: 'Envie uma planilha válida.' });
+      return res.status(400).json({ message: 'Envie uma planilha vÃ¡lida.' });
     }
 
     const preview = previewRibeiraoBatchSpreadsheet(req.file.buffer, req.file.originalname);
@@ -1111,7 +1111,7 @@ async function handleBatchStart(req, res) {
       return res.status(400).json({
         success: false,
         code: 'NO_ACTIVE_SESSION',
-        message: 'Nenhuma sessão ativa com o portal da Prefeitura. Inicie a sessão antes de consultar em lote.',
+        message: 'Nenhuma sessÃ£o ativa com o portal da Prefeitura. Inicie a sessÃ£o antes de consultar em lote.',
       });
     }
 
@@ -1302,12 +1302,13 @@ app.use((error, _req, res, next) => {
 });
 
 app.use((_req, res) => {
-  res.status(404).json({ message: 'Rota não encontrada.' });
+  res.status(404).json({ message: 'Rota nÃ£o encontrada.' });
 });
 
 app.listen(port, () => {
   const dbPath = getDb().name;
   console.log(`[BUILD] ${BUILD_VERSION}`);
-  console.log(`Relianse CRM backend running on port ${port}`);
+  console.log(`Reliance CRM backend running on port ${port}`);
   console.log(`SQLite database: ${dbPath}`);
 });
+

@@ -1,10 +1,10 @@
-# Instrucoes para outro Codex continuar o CRM Relianse
+﻿# Instrucoes para outro Codex continuar o CRM Reliance
 
 Este arquivo e o handoff tecnico para abrir o projeto em outra conta/Codex sem perder contexto.
 
 ## 1. Contexto do projeto
 
-O projeto e o CRM operacional da Relianse para credito consignado. Ele organiza bases de clientes, campanhas, fila de atendimento, historico comercial, relatorios e integracoes com portais externos autorizados.
+O projeto e o CRM operacional da Reliance para credito consignado. Ele organiza bases de clientes, campanhas, fila de atendimento, historico comercial, relatorios e integracoes com portais externos autorizados.
 
 Repositorio GitHub:
 
@@ -196,7 +196,7 @@ Resultado esperado:
 ```json
 {
   "status": "ok",
-  "app": "Relianse CRM"
+  "app": "Reliance CRM"
 }
 ```
 
@@ -207,3 +207,4 @@ No CRM:
 - Upload de Listas abre preview.
 - Consulta de Telefones abre.
 - Consulta Ribeirao mostra diagnostico/configuracao.
+

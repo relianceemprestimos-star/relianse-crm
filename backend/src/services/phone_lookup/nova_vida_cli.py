@@ -269,6 +269,18 @@ def is_logged_in(page) -> bool:
     return any(keyword in text for keyword in keywords)
 
 
+def is_login_screen(page) -> bool:
+    try:
+        data = collect_page(page)
+        text = str(data.get("bodySample") or "").lower()
+        url = str(data.get("url") or "").lower()
+        if page.locator("#sUsuario, #sSenha, #sCliente").count() > 0:
+            return True
+        return "/login" in url and any(word in text for word in ("entrar", "senha", "usuario", "usuário", "cliente"))
+    except Exception:
+        return False
+
+
 def login_if_needed(page) -> dict[str, Any]:
     creds = credentials()
     response = page.goto(creds["url"], wait_until="domcontentloaded", timeout=60000)
@@ -316,8 +328,7 @@ def login_if_needed(page) -> dict[str, Any]:
 
     after = collect_page(page)
     if is_logged_in(page):
-        storage_state_path().parent.mkdir(parents=True, exist_ok=True)
-        page.context.storage_state(path=str(storage_state_path()))
+        save_session_state(page)
         return {"ok": True, "stage": "login", "page": after}
 
     status = status_from_login_page(after) or {
@@ -326,6 +337,11 @@ def login_if_needed(page) -> dict[str, Any]:
         "message": "O Nova Vida nao confirmou login e permaneceu fora da area autenticada.",
     }
     return {"ok": False, "stage": "login", **status, "page": after}
+
+
+def save_session_state(page) -> None:
+    storage_state_path().parent.mkdir(parents=True, exist_ok=True)
+    page.context.storage_state(path=str(storage_state_path()))
 
 
 def find_search_navigation(page) -> list[dict[str, Any]]:
@@ -625,6 +641,34 @@ def try_generic_search(page, cpf: str, name: str) -> dict[str, Any]:
     }
 
 
+def search_with_auto_reconnect(page, cpf: str, name: str) -> dict[str, Any]:
+    result = try_generic_search(page, cpf, name)
+    if not is_login_screen(page):
+        if result.get("status") == "success":
+            save_session_state(page)
+        return result
+
+    reconnect = login_if_needed(page)
+    if not reconnect.get("ok"):
+        return {
+            "status": "requires_manual_login",
+            "code": "NOVA_VIDA_SESSION_EXPIRED_MANUAL_LOGIN_REQUIRED",
+            "message": "Sessao Nova Vida expirada. Login manual necessario.",
+            "phones": [],
+            "stage": reconnect.get("stage", "reconnect"),
+            "reconnectAttempted": True,
+            "reconnectOk": False,
+            "login": reconnect,
+        }
+
+    retry = try_generic_search(page, cpf, name)
+    retry["reconnectAttempted"] = True
+    retry["reconnectOk"] = True
+    if retry.get("status") == "success":
+        save_session_state(page)
+    return retry
+
+
 def command_map() -> None:
     with sync_playwright() as playwright:
         browser = launch_browser(playwright)
@@ -670,7 +714,7 @@ def command_search(cpf: str, name: str) -> None:
                 )
                 return
 
-            result = try_generic_search(page, cpf, name)
+            result = search_with_auto_reconnect(page, cpf, name)
             output(
                 {
                     "source": SOURCE,

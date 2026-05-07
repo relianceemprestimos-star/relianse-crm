@@ -162,6 +162,13 @@ export default function PhoneLookupPage() {
     };
   }, [clientSearch]);
 
+  function handleClientSearchChange(value: string) {
+    setClientSearch(value);
+    if (selectedClient && value.trim() !== selectedClient.name) {
+      setSelectedClient(null);
+    }
+  }
+
   const resultPhones = useMemo(() => result?.phones || [], [result]);
   const resultAddresses = useMemo(() => result?.addresses || [], [result]);
   const resultEmails = useMemo(() => {
@@ -221,10 +228,14 @@ export default function PhoneLookupPage() {
   async function handleSearch() {
     try {
       setLoading(true);
+      const typedSearch = clientSearch.trim();
+      const typedDigits = typedSearch.replace(/\D/g, '');
+      const effectiveCpf = cpf.trim() || (typedDigits.length === 11 ? typedDigits : '');
+      const effectiveName = name.trim() || (!effectiveCpf && typedSearch ? typedSearch : '');
       const response = await api.searchPhones({
-        cpf,
-        name,
-        phone: clientSearch,
+        cpf: effectiveCpf,
+        name: effectiveName,
+        phone: typedSearch,
         client_id: selectedClient?.id || null,
       });
       const normalized = normalizeConsultation(response);
@@ -235,7 +246,7 @@ export default function PhoneLookupPage() {
       } else if (normalized.status === 'success') {
         toast.success('Consulta realizada e salva.');
       } else if (normalized.status === 'requires_manual_login') {
-        toast.error('A fonte solicitou login manual ou validacao.');
+        toast.error(normalized.message || 'Sessao expirada. Login manual necessario.');
       } else {
         toast.error(normalized.message || 'Consulta nao concluida.');
       }
@@ -311,7 +322,7 @@ export default function PhoneLookupPage() {
                 <Input
                   className="h-12 rounded-full pr-12"
                   value={clientSearch}
-                  onChange={(event) => setClientSearch(event.target.value)}
+                  onChange={(event) => handleClientSearchChange(event.target.value)}
                   placeholder="Digite o nome, CPF ou telefone do cliente"
                 />
                 <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
