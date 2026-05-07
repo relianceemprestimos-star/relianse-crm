@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Copy, RotateCcw, Save, Search } from 'lucide-react';
+import { Copy, MapPin, RotateCcw, Save, Search } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 import { api } from '../lib/api';
@@ -19,6 +19,7 @@ type ResultPhone = {
 };
 
 type ResultEmail = string | { email?: string; is_primary?: boolean };
+type ResultTab = 'summary' | 'phones' | 'addresses' | 'emails';
 
 type LookupResult = {
   status: string;
@@ -45,6 +46,13 @@ type LookupResult = {
   consulted_at?: string;
   expires_at?: string;
 };
+
+const tabs: Array<{ id: ResultTab; label: string }> = [
+  { id: 'summary', label: 'Resumo' },
+  { id: 'phones', label: 'Telefones' },
+  { id: 'addresses', label: 'Endereços' },
+  { id: 'emails', label: 'E-mails' },
+];
 
 const statusLabels: Record<string, string> = {
   success: 'Sucesso',
@@ -73,6 +81,17 @@ function phoneValue(phone: ResultPhone) {
 
 function phoneType(phone: ResultPhone) {
   return phone.type || phone.phone_type || '';
+}
+
+function addressValue(address?: ClientAddress) {
+  return address?.address_full || address?.full_address || '';
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('pt-BR');
 }
 
 function normalizeConsultation(item: any): LookupResult {
@@ -113,6 +132,8 @@ export default function PhoneLookupPage() {
   const [result, setResult] = useState<LookupResult | null>(null);
   const [history, setHistory] = useState<PhoneLookupHistoryItem[]>([]);
   const [historyFilter, setHistoryFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [activeTab, setActiveTab] = useState<ResultTab>('summary');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -149,10 +170,14 @@ export default function PhoneLookupPage() {
     if (result?.email && !values.includes(result.email)) values.unshift(result.email);
     return values;
   }, [result]);
+  const primaryAddress = resultAddresses[0];
+  const primaryPhone = resultPhones[0];
+  const primaryEmail = resultEmails[0] || '';
   const filteredHistory = useMemo(() => {
     const term = historyFilter.trim().toLowerCase();
-    if (!term) return history;
     return history.filter((item) => {
+      if (statusFilter && item.status !== statusFilter) return false;
+      if (!term) return true;
       const text = [
         item.client_name,
         item.name,
@@ -168,7 +193,7 @@ export default function PhoneLookupPage() {
         .toLowerCase();
       return text.includes(term);
     });
-  }, [history, historyFilter]);
+  }, [history, historyFilter, statusFilter]);
 
   async function loadHistory() {
     const response = await api.getPhoneLookupHistory({ limit: 80 });
@@ -190,6 +215,7 @@ export default function PhoneLookupPage() {
     setSelectedClient(null);
     setClientOptions([]);
     setResult(null);
+    setActiveTab('summary');
   }
 
   async function handleSearch() {
@@ -203,6 +229,7 @@ export default function PhoneLookupPage() {
       });
       const normalized = normalizeConsultation(response);
       setResult(normalized);
+      setActiveTab('summary');
       if (normalized.cache_hit) {
         toast.success('Consulta carregada do histórico salvo.');
       } else if (normalized.status === 'success') {
@@ -246,6 +273,7 @@ export default function PhoneLookupPage() {
       const response = await api.getPhoneLookupConsultation(item.id);
       const normalized = normalizeConsultation(response.consultation);
       setResult(normalized);
+      setActiveTab('summary');
       setCpf(normalized.cpf || '');
       setName(normalized.full_name || normalized.name || '');
       setClientSearch(response.consultation.client_name || normalized.full_name || normalized.name || '');
@@ -267,143 +295,276 @@ export default function PhoneLookupPage() {
     <div className="space-y-8">
       <SectionHeader
         title="Consulta telefone"
-        description="Pesquise informacoes de clientes e visualize telefones, enderecos e e-mails vinculados."
+        description="Pesquise informações de clientes e visualize telefones, endereços e e-mails vinculados."
       />
 
-      <Card className="p-6">
-        <div className="grid gap-4 lg:grid-cols-[1.35fr_0.8fr_0.9fr]">
-          <label className="relative block text-sm text-slate-300">
-            Cliente do CRM
-            <Input
-              className="mt-2"
-              value={clientSearch}
-              onChange={(event) => setClientSearch(event.target.value)}
-              placeholder="Digite o nome, CPF ou telefone do cliente"
-            />
-            {clientOptions.length ? (
-              <div className="absolute z-20 mt-2 max-h-72 w-full overflow-auto rounded-2xl border border-border bg-bg/95 p-2 shadow-2xl">
-                {clientOptions.map((client) => (
-                  <button
-                    key={client.id}
-                    type="button"
-                    className="flex w-full items-center justify-between gap-4 rounded-xl px-3 py-2 text-left text-sm text-slate-300 hover:bg-white/5"
-                    onClick={() => chooseClient(client)}
-                  >
-                    <span className="font-semibold text-white">{client.name}</span>
-                    <span className="text-xs text-slate-500">{client.cpf || client.phone || '-'}</span>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </label>
+      <Card className="overflow-visible p-6">
+        <div className="flex flex-col gap-5 xl:flex-row xl:items-end">
+          <div className="grid flex-1 gap-4 lg:grid-cols-[1.4fr_0.85fr_1fr]">
+            <label className="relative block text-sm text-slate-300">
+              Cliente do CRM
+              <Input
+                className="mt-2"
+                value={clientSearch}
+                onChange={(event) => setClientSearch(event.target.value)}
+                placeholder="Digite o nome, CPF ou telefone do cliente"
+              />
+              {clientOptions.length ? (
+                <div className="absolute z-20 mt-2 max-h-72 w-full overflow-auto rounded-2xl border border-border bg-bg/95 p-2 shadow-2xl">
+                  {clientOptions.map((client) => (
+                    <button
+                      key={client.id}
+                      type="button"
+                      className="flex w-full items-center justify-between gap-4 rounded-xl px-3 py-2 text-left text-sm text-slate-300 hover:bg-white/5"
+                      onClick={() => chooseClient(client)}
+                    >
+                      <span className="font-semibold text-white">{client.name}</span>
+                      <span className="text-xs text-slate-500">{client.cpf || client.phone || '-'}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </label>
 
-          <label className="block text-sm text-slate-300">
-            CPF
-            <Input className="mt-2" value={cpf} onChange={(event) => setCpf(event.target.value)} placeholder="Digite o CPF" />
-          </label>
+            <label className="block text-sm text-slate-300">
+              CPF
+              <Input className="mt-2" value={cpf} onChange={(event) => setCpf(event.target.value)} placeholder="Digite o CPF" />
+            </label>
 
-          <label className="block text-sm text-slate-300">
-            Nome
-            <Input className="mt-2" value={name} onChange={(event) => setName(event.target.value)} placeholder="Digite o nome do cliente" />
-          </label>
+            <label className="block text-sm text-slate-300">
+              Nome
+              <Input className="mt-2" value={name} onChange={(event) => setName(event.target.value)} placeholder="Digite o nome do cliente" />
+            </label>
+          </div>
+
+          <div className="flex flex-wrap gap-3 xl:justify-end">
+            <Button onClick={() => void handleSearch()} disabled={loading}>
+              <Search size={16} />
+              {loading ? 'Buscando...' : 'Buscar'}
+            </Button>
+            <Button variant="secondary" onClick={clearFields}>
+              <RotateCcw size={16} />
+              Limpar campos
+            </Button>
+            <Button variant="secondary" onClick={() => void handleSaveCurrent()} disabled={saving || !result?.consultation_id}>
+              <Save size={16} />
+              {saving ? 'Salvando...' : 'Salvar busca atual'}
+            </Button>
+          </div>
         </div>
 
-        <div className="mt-5 flex flex-wrap items-center gap-3">
-          <Button onClick={() => void handleSearch()} disabled={loading}>
-            <Search size={16} />
-            {loading ? 'Buscando...' : 'Buscar'}
-          </Button>
-          <Button variant="secondary" onClick={clearFields}>
-            <RotateCcw size={16} />
-            Limpar campos
-          </Button>
-          <Button variant="secondary" onClick={() => void handleSaveCurrent()} disabled={saving || !result?.consultation_id}>
-            <Save size={16} />
-            {saving ? 'Salvando...' : 'Salvar busca atual'}
-          </Button>
-          {selectedClient ? <Badge tone="accent">Cliente selecionado: {selectedClient.name}</Badge> : null}
-          {result?.cache_hit ? <Badge tone="success">Carregado do CRM</Badge> : null}
+        <div className="mt-5 grid gap-3 lg:grid-cols-[1fr_360px]">
+          <div className="flex flex-wrap gap-2">
+            {selectedClient ? <Badge tone="accent">Cliente selecionado: {selectedClient.name}</Badge> : null}
+            {result?.cache_hit ? <Badge tone="success">Carregado do CRM</Badge> : null}
+            {result?.consulted_at ? <Badge tone="neutral">Consulta: {formatDate(result.consulted_at)}</Badge> : null}
+          </div>
+          <div className="rounded-2xl border border-border bg-bg/60 p-4 text-xs text-slate-400">
+            <span className="font-semibold text-slate-200">Dicas de busca: </span>
+            use CPF para aproveitar o cache de 60 dias. Nome e cliente ajudam a vincular a consulta ao cadastro correto.
+          </div>
         </div>
       </Card>
 
-      <div className="grid gap-5 xl:grid-cols-2">
-        <Card className="p-6">
-          <CardTitle title="Dados pessoais" />
+      <Card className="overflow-hidden border-accent/10 bg-panel/95">
+        <div className="border-b border-border/80 bg-gradient-to-r from-accent/10 via-white/[0.03] to-transparent p-6">
           {result ? (
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
-              <Info label="Nome" value={result.full_name || result.name || '-'} />
-              <Info label="CPF" value={result.cpf || '-'} />
-              <Info label="Nascimento" value={result.birth_date || '-'} />
-              <Info label="Idade" value={result.age === null || result.age === undefined ? '-' : String(result.age)} />
-              <Info label="Sexo" value={result.gender || '-'} />
-              <Info label="Nome da mae" value={result.mother_name || '-'} />
-              <Info label="Nome do pai" value={result.father_name || '-'} />
-              <Info label="Origem" value={result.origin || result.source || '-'} />
+            <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone={statusTone(result.status)}>{statusLabel(result.status)}</Badge>
+                  <Badge tone="neutral">{result.origin || result.source || 'Consulta salva'}</Badge>
+                  {result.expires_at ? <Badge tone="info">Válida até {formatDate(result.expires_at)}</Badge> : null}
+                </div>
+                <h2 className="mt-4 text-3xl font-black tracking-tight text-white">
+                  {result.full_name || result.name || 'Cliente consultado'}
+                </h2>
+                <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-sm text-slate-400">
+                  <span>CPF: <strong className="text-slate-200">{result.cpf || '-'}</strong></span>
+                  <span>Ultima atualização: <strong className="text-slate-200">{formatDate(result.consulted_at) || '-'}</strong></span>
+                  {selectedClient?.created_at_formatted || selectedClient?.created_at ? (
+                    <span>Cliente desde <strong className="text-slate-200">{selectedClient.created_at_formatted || formatDate(selectedClient.created_at)}</strong></span>
+                  ) : null}
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-3 rounded-3xl border border-border bg-bg/50 p-3 text-center">
+                <Metric label="Telefones" value={resultPhones.length} />
+                <Metric label="Endereços" value={resultAddresses.length} />
+                <Metric label="E-mails" value={resultEmails.length} />
+              </div>
             </div>
           ) : (
-            <EmptyState text="Os dados pessoais da consulta aparecem aqui." />
+            <div className="rounded-3xl border border-dashed border-border bg-bg/50 p-8 text-center">
+              <p className="text-sm uppercase tracking-[0.25em] text-slate-500">Resultado do cliente</p>
+              <h2 className="mt-2 text-2xl font-black text-white">Pesquise um CPF, nome ou cliente para visualizar o cadastro.</h2>
+              <p className="mx-auto mt-3 max-w-2xl text-sm text-slate-400">
+                Quando houver consulta salva válida, os dados aparecem do CRM. Caso contrário, o sistema busca online e salva o snapshot automaticamente.
+              </p>
+            </div>
           )}
-          {result?.message ? <p className="mt-4 rounded-2xl border border-border bg-bg/70 p-4 text-sm text-slate-300">{result.message}</p> : null}
-        </Card>
+        </div>
 
-        <Card className="p-6">
-          <CardTitle title="Telefones" count={resultPhones.length} />
-          <div className="mt-5 grid gap-3 sm:grid-cols-2">
-            {resultPhones.length ? (
-              resultPhones.map((phone, index) => (
-                <div key={`${phoneValue(phone)}-${index}`} className="rounded-2xl border border-border bg-bg/60 p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="font-bold text-white">{phoneValue(phone)}</p>
-                      <p className="mt-1 text-xs text-slate-500">{phoneType(phone) || 'tipo nao informado'}</p>
+        {result ? (
+          <>
+            <div className="flex gap-2 overflow-x-auto border-b border-border/80 px-6 py-4">
+              {tabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`rounded-2xl px-4 py-2 text-sm font-semibold transition ${
+                    activeTab === tab.id
+                      ? 'bg-accent text-slate-950 shadow-[0_0_24px_rgba(0,209,193,.18)]'
+                      : 'border border-border bg-bg/60 text-slate-300 hover:border-accent/40 hover:text-white'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="p-6">
+              {activeTab === 'summary' ? (
+                <div className="grid gap-5 xl:grid-cols-4">
+                  <SummaryBlock title="Dados pessoais" className="xl:col-span-2">
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <Info label="Nascimento" value={result.birth_date || '-'} />
+                      <Info label="Idade" value={result.age === null || result.age === undefined ? '-' : String(result.age)} />
+                      <Info label="Sexo" value={result.gender || '-'} />
+                      <Info label="Nome da mãe" value={result.mother_name || '-'} />
+                      <Info label="Nome do pai" value={result.father_name || '-'} className="sm:col-span-2" />
                     </div>
-                    <Button variant="ghost" className="px-3 py-2" onClick={() => void copyPhone(phone)}>
-                      <Copy size={14} />
-                      Copiar
-                    </Button>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <EmptyState text="Nenhum telefone para exibir." />
-            )}
-          </div>
-        </Card>
+                  </SummaryBlock>
 
-        <Card className="p-6">
-          <CardTitle title="Enderecos" count={resultAddresses.length} />
-          <div className="mt-5 space-y-3">
-            {resultAddresses.length ? (
-              resultAddresses.map((address, index) => (
-                <div key={`${address.address_full || address.full_address}-${index}`} className="rounded-2xl border border-border bg-bg/60 p-4">
-                  <p className="font-semibold text-white">{address.address_full || address.full_address || '-'}</p>
-                  <p className="mt-1 text-xs text-slate-500">
-                    {[address.city, address.state, address.zipcode || address.zip_code].filter(Boolean).join(' - ')}
-                  </p>
-                </div>
-              ))
-            ) : (
-              <EmptyState text="Nenhum endereco retornado." />
-            )}
-          </div>
-        </Card>
+                  <SummaryBlock title="Telefones">
+                    {primaryPhone ? (
+                      <CompactItem
+                        title={phoneValue(primaryPhone)}
+                        subtitle={phoneType(primaryPhone) || 'tipo nao informado'}
+                        action="Ver todos os telefones"
+                        onAction={() => setActiveTab('phones')}
+                      />
+                    ) : (
+                      <EmptyState text="Nenhum telefone encontrado." />
+                    )}
+                  </SummaryBlock>
 
-        <Card className="p-6">
-          <CardTitle title="E-mails" count={resultEmails.length} />
-          <div className="mt-5 flex flex-wrap gap-2">
-            {resultEmails.length ? resultEmails.map((email) => <Badge key={email} tone="neutral">{email}</Badge>) : <EmptyState text="Nenhum e-mail retornado." />}
-          </div>
-        </Card>
-      </div>
+                  <SummaryBlock title="E-mail">
+                    {primaryEmail ? (
+                      <CompactItem
+                        title={primaryEmail}
+                        subtitle={`${resultEmails.length} e-mail(s) encontrado(s)`}
+                        action="Ver todos os e-mails"
+                        onAction={() => setActiveTab('emails')}
+                      />
+                    ) : (
+                      <EmptyState text="Nenhum e-mail encontrado." />
+                    )}
+                  </SummaryBlock>
+
+                  <SummaryBlock title="Endereço" className="xl:col-span-4">
+                    {primaryAddress ? (
+                      <div className="flex flex-col gap-4 rounded-2xl border border-border bg-bg/60 p-4 lg:flex-row lg:items-center lg:justify-between">
+                        <div>
+                          <p className="font-semibold text-white">{addressValue(primaryAddress)}</p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            {[primaryAddress.city, primaryAddress.state, primaryAddress.zipcode || primaryAddress.zip_code].filter(Boolean).join(' - ')}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            variant="ghost"
+                            className="px-3 py-2"
+                            onClick={() => window.open(`https://www.google.com/maps/search/${encodeURIComponent(addressValue(primaryAddress))}`, '_blank')}
+                          >
+                            <MapPin size={14} />
+                            Ver no mapa
+                          </Button>
+                          <Button variant="ghost" className="px-3 py-2" onClick={() => setActiveTab('addresses')}>
+                            Ver todos os endereços
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <EmptyState text="Nenhum endereço encontrado." />
+                    )}
+                  </SummaryBlock>
+                </div>
+              ) : null}
+
+              {activeTab === 'phones' ? (
+                <PanelGrid>
+                  {resultPhones.length ? (
+                    resultPhones.map((phone, index) => (
+                      <div key={`${phoneValue(phone)}-${index}`} className="rounded-2xl border border-border bg-bg/60 p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="font-bold text-white">{phoneValue(phone)}</p>
+                            <p className="mt-1 text-xs text-slate-500">{phoneType(phone) || 'tipo nao informado'}</p>
+                          </div>
+                          <Button variant="ghost" className="px-3 py-2" onClick={() => void copyPhone(phone)}>
+                            <Copy size={14} />
+                            Copiar
+                          </Button>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <EmptyState text="Nenhum telefone para exibir." />
+                  )}
+                </PanelGrid>
+              ) : null}
+
+              {activeTab === 'addresses' ? (
+                <div className="space-y-3">
+                  {resultAddresses.length ? (
+                    resultAddresses.map((address, index) => (
+                      <div key={`${addressValue(address)}-${index}`} className="rounded-2xl border border-border bg-bg/60 p-4">
+                        <p className="font-semibold text-white">{addressValue(address) || '-'}</p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {[address.city, address.state, address.zipcode || address.zip_code].filter(Boolean).join(' - ')}
+                        </p>
+                      </div>
+                    ))
+                  ) : (
+                    <EmptyState text="Nenhum endereço retornado." />
+                  )}
+                </div>
+              ) : null}
+
+              {activeTab === 'emails' ? (
+                <div className="flex flex-wrap gap-2">
+                  {resultEmails.length ? resultEmails.map((email) => <Badge key={email} tone="neutral">{email}</Badge>) : <EmptyState text="Nenhum e-mail retornado." />}
+                </div>
+              ) : null}
+
+              {result.message ? (
+                <p className="mt-6 rounded-2xl border border-border bg-bg/70 p-4 text-sm text-slate-300">{result.message}</p>
+              ) : null}
+            </div>
+          </>
+        ) : null}
+      </Card>
 
       <Card className="p-6">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
           <div>
-            <p className="text-sm text-slate-400">Historico salvo por ate 60 dias</p>
             <h3 className="text-xl font-bold text-white">Clientes consultados</h3>
+            <p className="mt-1 text-sm text-slate-400">Histórico das últimas consultas realizadas.</p>
           </div>
-          <div className="w-full lg:max-w-md">
-            <Input value={historyFilter} onChange={(event) => setHistoryFilter(event.target.value)} placeholder="Filtrar por cliente, CPF, telefone ou status" />
+          <div className="grid w-full gap-3 md:grid-cols-[1fr_220px] xl:max-w-2xl">
+            <Input value={historyFilter} onChange={(event) => setHistoryFilter(event.target.value)} placeholder="Filtrar por cliente, CPF ou telefone" />
+            <select
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value)}
+              className="w-full rounded-2xl border border-border bg-bg/80 px-4 py-3 text-sm text-slate-100 outline-none transition focus:border-accent/60 focus:ring-2 focus:ring-accent/10"
+            >
+              <option value="">Todos os status</option>
+              <option value="success">Sucesso</option>
+              <option value="failed">Falha</option>
+                  <option value="requires_manual_login">Requer login manual</option>
+              <option value="expired">Expirada</option>
+            </select>
           </div>
         </div>
 
@@ -411,7 +572,7 @@ export default function PhoneLookupPage() {
           <table className="min-w-[980px] text-left text-sm">
             <thead className="bg-bg/80 text-slate-400">
               <tr>
-                {['Data da consulta', 'Cliente', 'CPF', 'Telefones', 'Status', 'Origem', 'Acao'].map((header) => (
+                {['Data da consulta', 'Cliente', 'CPF', 'Telefones', 'Status', 'Origem', 'Ação'].map((header) => (
                   <th key={header} className="px-5 py-4 font-medium">{header}</th>
                 ))}
               </tr>
@@ -447,18 +608,43 @@ export default function PhoneLookupPage() {
   );
 }
 
-function CardTitle({ title, count }: { title: string; count?: number }) {
+function Metric({ label, value }: { label: string; value: number }) {
   return (
-    <div className="flex items-center justify-between gap-3">
-      <h3 className="text-xl font-bold text-white">{title}</h3>
-      {count !== undefined ? <Badge tone="neutral">{count}</Badge> : null}
+    <div className="rounded-2xl bg-white/[0.03] px-4 py-3">
+      <p className="text-2xl font-black text-white">{value}</p>
+      <p className="mt-1 text-xs text-slate-500">{label}</p>
     </div>
   );
 }
 
-function Info({ label, value }: { label: string; value: string }) {
+function SummaryBlock({ title, className = '', children }: { title: string; className?: string; children: React.ReactNode }) {
+  return (
+    <section className={`rounded-3xl border border-border bg-panelAlt/60 p-5 ${className}`}>
+      <h3 className="text-lg font-bold text-white">{title}</h3>
+      <div className="mt-4">{children}</div>
+    </section>
+  );
+}
+
+function CompactItem({ title, subtitle, action, onAction }: { title: string; subtitle: string; action: string; onAction: () => void }) {
   return (
     <div className="rounded-2xl border border-border bg-bg/60 p-4">
+      <p className="font-semibold text-white">{title}</p>
+      <p className="mt-1 text-xs text-slate-500">{subtitle}</p>
+      <button type="button" className="mt-4 text-sm font-semibold text-accent hover:brightness-110" onClick={onAction}>
+        {action}
+      </button>
+    </div>
+  );
+}
+
+function PanelGrid({ children }: { children: React.ReactNode }) {
+  return <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{children}</div>;
+}
+
+function Info({ label, value, className = '' }: { label: string; value: string; className?: string }) {
+  return (
+    <div className={`rounded-2xl border border-border bg-bg/60 p-4 ${className}`}>
       <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{label}</p>
       <p className="mt-1 font-semibold text-white">{value}</p>
     </div>
