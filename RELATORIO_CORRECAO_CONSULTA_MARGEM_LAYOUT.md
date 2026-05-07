@@ -96,7 +96,32 @@ Resultado:
 - Arquivo gerado: `dist/assets/index-CgNZiFgh.js`.
 - Aviso apenas de chunk grande do Vite, sem falha de build.
 
+## Deploy VPS
+
+Comandos executados na VPS em `/opt/reliance/repositorios/relianse-crm`:
+
+```bash
+git pull --rebase origin main
+docker compose build frontend
+docker compose up -d --force-recreate frontend caddy
+```
+
+Resultado:
+
+- `frontend` recriado com sucesso.
+- `caddy` recriado com sucesso.
+- `frontend` ficou `healthy`.
+- `caddy` ficou `Up`.
+
+## Evidências de produção
+
+Validação dentro do container `frontend`:
+
+- Bundle publicado: `/usr/share/nginx/html/assets/index-CgNZiFgh.js`
+- O bundle contém `Consulta de Margem`.
+- O bundle contém as rotas `/consulta-margem` e `/consulta-ribeirao`, ambas renderizando a mesma tela nova.
+- Não foi encontrado `Consulta Ribeirão` como título/menu publicado no bundle atual.
+
 ## Status final
 
-Pendente apenas deploy/rebuild da VPS após commit para a produção refletir a alteração.
-
+Concluído e publicado na VPS.
