@@ -5,11 +5,17 @@ import {
   createPhoneLookupJob,
   enqueuePhoneLookupForMarginClients,
   getClientById,
+  getClientConsultationById,
   getPhoneLookupJobById,
+  getValidClientConsultationByCpf,
+  linkClientConsultationToClient,
+  listClientConsultations,
   listClients,
   listPhoneLookupLogs,
   listPhoneLookupJobs,
   logPhoneLookupRecord,
+  markExpiredClientConsultations,
+  saveClientConsultationSnapshot,
   saveClientEnrichmentData,
   saveClientLookupPhones,
   updatePhoneLookupJob,
@@ -62,10 +68,45 @@ function canAutoLookup(client) {
 function statusFromProvider(providerStatus) {
   const status = String(providerStatus || '').toLowerCase();
   if (status === 'success') return 'success';
-  if (status === 'not_found') return 'not_found';
-  if (status === 'blocked') return 'blocked';
   if (status === 'requires_manual_login') return 'requires_manual_login';
   return 'failed';
+}
+
+function consultationToSearchResult(consultation, { cacheHit = false } = {}) {
+  if (!consultation) return null;
+  return {
+    status: consultation.status,
+    source: cacheHit ? 'Consulta salva' : consultation.source || 'Fonte externa',
+    origin: cacheHit ? 'Consulta salva' : consultation.source || 'Fonte externa',
+    cache_hit: cacheHit,
+    consultation_id: consultation.id,
+    client_id: consultation.client_id ?? null,
+    cpf: consultation.cpf || '',
+    name: consultation.nome || consultation.full_name || '',
+    full_name: consultation.full_name || consultation.nome || '',
+    birth_date: consultation.birth_date || '',
+    age: consultation.age ?? null,
+    gender: consultation.gender || '',
+    mother_name: consultation.mother_name || '',
+    father_name: consultation.father_name || '',
+    email: consultation.emails?.[0]?.email || '',
+    emails: (consultation.emails || []).map((item) => item.email).filter(Boolean),
+    addresses: consultation.addresses || [],
+    raw_data: consultation.raw_data || {},
+    phones: (consultation.phones || []).map((phone) => ({
+      number: phone.phone_number || phone.number || '',
+      normalized: phone.phone_number || phone.normalized || '',
+      normalized_phone: phone.phone_number || phone.normalized || '',
+      type: phone.phone_type || phone.type || '',
+      quality: phone.label || '',
+      raw_label: phone.label || '',
+      source: 'Consulta salva',
+    })),
+    message: consultation.error_message || '',
+    code: '',
+    expires_at: consultation.expires_at,
+    consulted_at: consultation.consulted_at,
+  };
 }
 
 export function getPhoneLookupDiagnostics() {
@@ -116,37 +157,65 @@ export function queuePhoneLookupForMarginClients({ userId, filters = {}, force =
   return result;
 }
 
-export async function searchPhones({ cpf = '', name = '', clientId = null, userId = null } = {}) {
+export async function searchPhones({ cpf = '', name = '', phone = '', clientId = null, userId = null } = {}) {
+  markExpiredClientConsultations();
   const clientDetails = clientId ? getClientById(Number(clientId)) : null;
   const client = clientDetails?.client || null;
   const searchCpf = cleanDigits(cpf || client?.cpf || '');
   const searchName = String(name || client?.name || '').trim();
+  const searchPhone = String(phone || client?.phone || '').trim();
   if (!searchCpf && !searchName) {
-    return { error: 'Informe CPF ou nome para buscar telefone.', status: 400 };
+    return { error: 'Informe CPF ou nome para buscar.', status: 400 };
+  }
+
+  if (searchCpf.length === 11) {
+    const cached = getValidClientConsultationByCpf(searchCpf);
+    if (cached) {
+      logLookup('manual_search_cache_hit', {
+        clientId: client?.id ?? null,
+        cpf: maskCpf(searchCpf),
+        consultationId: cached.id,
+      });
+      return consultationToSearchResult(cached, { cacheHit: true });
+    }
   }
 
   const result = await searchPhoneNovaVida({ cpf: searchCpf, name: searchName });
+  const finalStatus = statusFromProvider(result.status);
+  const savedConsultation = saveClientConsultationSnapshot({
+    clientId: client?.id ?? null,
+    createdBy: userId,
+    cpf: searchCpf,
+    nome: result.full_name || result.name || searchName,
+    telefonePesquisado: searchPhone,
+    status: finalStatus,
+    source: 'Fonte externa',
+    errorMessage: finalStatus === 'success' ? '' : result.message || result.code || 'Consulta nao concluida.',
+    result: { ...result, status: finalStatus },
+  });
+
   logPhoneLookupRecord({
     clientId: client?.id ?? null,
     cpf: searchCpf,
     cpfMasked: searchCpf ? maskCpf(searchCpf) : '',
     name: result.name || searchName,
-    source: 'Nova Vida',
-    status: result.status,
+    source: 'Fonte externa',
+    status: finalStatus,
     phonesFoundCount: result.phones?.length || 0,
     hasAddress: Boolean(result.addresses?.length),
     hasBirthDate: Boolean(result.birth_date),
-    errorMessage: result.status === 'success' ? '' : result.message || result.code || '',
+    errorMessage: finalStatus === 'success' ? '' : result.message || result.code || '',
   });
   logLookup('manual_search_finished', {
     clientId: client?.id ?? null,
     cpf: searchCpf ? maskCpf(searchCpf) : '',
-    status: result.status,
+    status: finalStatus,
     phonesFound: result.phones?.length || 0,
+    consultationId: savedConsultation?.id ?? null,
   });
 
   if (client?.id) {
-    if (result.status === 'success' && result.phones?.length) {
+    if (finalStatus === 'success' && result.phones?.length) {
       saveClientLookupPhones({
         clientId: client.id,
         userId,
@@ -159,14 +228,17 @@ export async function searchPhones({ cpf = '', name = '', clientId = null, userI
       clientId: client.id,
       userId,
       source: 'Nova Vida',
-      data: { ...result, status: result.status },
+      data: { ...result, status: finalStatus },
       searchedAt: nowIso(),
     });
   }
 
   return {
-    status: result.status,
-    source: result.source || 'Nova Vida',
+    status: finalStatus,
+    source: 'Fonte externa',
+    origin: 'Fonte externa',
+    cache_hit: false,
+    consultation_id: savedConsultation?.id ?? null,
     client_id: client?.id ?? null,
     cpf: searchCpf,
     name: result.name || searchName,
@@ -184,7 +256,36 @@ export async function searchPhones({ cpf = '', name = '', clientId = null, userI
     message: result.message || '',
     code: result.code || '',
     stage: result.stage || '',
+    expires_at: savedConsultation?.expires_at || '',
+    consulted_at: savedConsultation?.consulted_at || '',
   };
+}
+
+export function getPhoneLookupConsultation(id) {
+  const consultation = getClientConsultationById(Number(id));
+  return consultation ? consultationToSearchResult(consultation, { cacheHit: true }) : null;
+}
+
+export function listPhoneLookupConsultations(params = {}) {
+  return { rows: listClientConsultations(params) };
+}
+
+export function saveCurrentConsultation({ consultationId, clientId, userId }) {
+  if (!consultationId) {
+    return { error: 'Consulta atual nao encontrada para salvar.', status: 400 };
+  }
+  if (!clientId) {
+    const consultation = getClientConsultationById(Number(consultationId));
+    if (!consultation) return { error: 'Consulta nao encontrada.', status: 404 };
+    return { consultation };
+  }
+  const linked = linkClientConsultationToClient({ consultationId: Number(consultationId), clientId: Number(clientId), userId });
+  if (!linked) return { error: 'Nao foi possivel vincular a consulta ao cliente.', status: 404 };
+  return { consultation: linked };
+}
+
+export function cleanupPhoneLookupConsultations() {
+  return markExpiredClientConsultations();
 }
 
 export function savePhonesToClient({ clientId, phones = [], enrichment = null, userId }) {

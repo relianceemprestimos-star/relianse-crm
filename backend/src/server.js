@@ -72,6 +72,9 @@ import {
 import { normalizePhoneToBrazilInternational } from './utils.js';
 import {
   getPhoneLookupDiagnostics,
+  cleanupPhoneLookupConsultations,
+  getPhoneLookupConsultation,
+  listPhoneLookupConsultations,
   listPhoneLookupLogs,
   listPhoneLookupJobs,
   mapPhoneLookupProvider,
@@ -79,6 +82,7 @@ import {
   queuePhoneLookupForClient,
   queuePhoneLookupForMarginClients,
   runPhoneLookupWorker,
+  saveCurrentConsultation,
   savePhonesToClient,
   searchPhones,
 } from './services/phone_lookup/phoneLookupService.js';
@@ -808,6 +812,7 @@ app.post('/api/phone-lookup/search', async (req, res) => {
     const result = await searchPhones({
       cpf: req.body?.cpf,
       name: req.body?.name,
+      phone: req.body?.phone || req.body?.telefone,
       clientId: req.body?.client_id || req.body?.clientId || null,
       userId: getAuthenticatedUserId(req),
     });
@@ -835,7 +840,31 @@ app.post('/api/phone-lookup/save-to-client', (req, res) => {
 });
 
 app.get('/api/phone-lookup/history', (req, res) => {
-  return res.json({ rows: listPhoneLookupLogs(req.query || {}) });
+  return res.json(listPhoneLookupConsultations(req.query || {}));
+});
+
+app.get('/api/phone-lookup/consultations/:id', (req, res) => {
+  const consultation = getPhoneLookupConsultation(req.params.id);
+  if (!consultation) {
+    return res.status(404).json({ message: 'Consulta nao encontrada.' });
+  }
+  return res.json({ consultation });
+});
+
+app.post('/api/phone-lookup/save-current', (req, res) => {
+  const result = saveCurrentConsultation({
+    consultationId: req.body?.consultation_id || req.body?.consultationId,
+    clientId: req.body?.client_id || req.body?.clientId || null,
+    userId: getAuthenticatedUserId(req),
+  });
+  if (result.error) {
+    return res.status(result.status || 400).json({ message: result.error });
+  }
+  return res.json(result);
+});
+
+app.post('/api/phone-lookup/cleanup', (_req, res) => {
+  return res.json(cleanupPhoneLookupConsultations());
 });
 
 app.get('/api/phone-lookup/jobs', (req, res) => {

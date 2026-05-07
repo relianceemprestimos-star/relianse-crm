@@ -359,10 +359,13 @@ export const api = {
     }),
   getPhoneLookupJobs: (filters: Record<string, string | number | undefined | null> = {}) =>
     request<{ jobs: PhoneLookupJob[]; stats: Record<string, number> }>(`/api/phone-lookup/jobs${buildQuery(filters)}`),
-  searchPhones: (payload: { cpf?: string; name?: string; client_id?: number | string | null }) =>
+  searchPhones: (payload: { cpf?: string; name?: string; phone?: string; client_id?: number | string | null }) =>
     request<{
       status: string;
       source: string;
+      origin?: string;
+      cache_hit?: boolean;
+      consultation_id?: number | null;
       client_id?: number | null;
       cpf: string;
       name: string;
@@ -379,6 +382,8 @@ export const api = {
       phones: ClientPhone[];
       message?: string;
       code?: string;
+      consulted_at?: string;
+      expires_at?: string;
     }>(
       '/api/phone-lookup/search',
       {
@@ -393,6 +398,29 @@ export const api = {
     }),
   getPhoneLookupHistory: (filters: Record<string, string | number | undefined | null> = {}) =>
     request<{ rows: PhoneLookupHistoryItem[] }>(`/api/phone-lookup/history${buildQuery(filters)}`),
+  getPhoneLookupConsultation: (id: number | string) =>
+    request<{ consultation: PhoneLookupHistoryItem & {
+      source: string;
+      origin?: string;
+      cache_hit?: boolean;
+      consultation_id?: number;
+      full_name?: string;
+      birth_date?: string;
+      age?: number | null;
+      gender?: string;
+      mother_name?: string;
+      father_name?: string;
+      email?: string;
+      emails?: Array<{ email: string; is_primary?: boolean }>;
+      addresses?: ClientAddress[];
+      phones?: ClientPhone[];
+      raw_data?: Record<string, unknown>;
+    } }>(`/api/phone-lookup/consultations/${id}`),
+  saveCurrentPhoneLookup: (payload: { consultation_id?: number | string | null; client_id?: number | string | null }) =>
+    request<{ consultation: PhoneLookupHistoryItem }>('/api/phone-lookup/save-current', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
   uploadSpreadsheet: (
     file: File,
     mode: 'preview' | 'import',

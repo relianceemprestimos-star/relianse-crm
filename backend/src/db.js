@@ -231,6 +231,12 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function addDaysIso(dateIso, days) {
+  const date = dateIso ? new Date(dateIso) : new Date();
+  date.setUTCDate(date.getUTCDate() + Number(days || 0));
+  return date.toISOString();
+}
+
 function normalizeUserRole(role) {
   const text = String(role || '').toLowerCase();
   if (text.includes('ger')) {
@@ -673,6 +679,45 @@ function phoneLookupLogDto(row) {
   };
 }
 
+function consultationDto(row, phones = [], addresses = [], emails = []) {
+  if (!row) return null;
+  return {
+    id: Number(row.id),
+    client_id: row.client_id === null || row.client_id === undefined ? null : Number(row.client_id),
+    cpf: row.cpf || '',
+    nome: row.nome || '',
+    name: row.nome || '',
+    telefone_pesquisado: row.telefone_pesquisado || '',
+    status: row.status || '',
+    source: row.source || '',
+    origin: row.source || '',
+    error_message: row.error_message || '',
+    message: row.error_message || '',
+    consulted_at: row.consulted_at || '',
+    consulted_at_formatted: formatDateTime(row.consulted_at),
+    expires_at: row.expires_at || '',
+    expires_at_formatted: formatDateTime(row.expires_at),
+    created_by: row.created_by === null || row.created_by === undefined ? null : Number(row.created_by),
+    created_at: row.created_at || '',
+    updated_at: row.updated_at || '',
+    client_name: row.client_name || '',
+    client_cpf: row.client_cpf || '',
+    full_name: row.full_name || row.nome || '',
+    birth_date: row.birth_date || '',
+    age: row.age === null || row.age === undefined || row.age === '' ? null : Number(row.age),
+    gender: row.gender || '',
+    mother_name: row.mother_name || '',
+    father_name: row.father_name || '',
+    raw_data: safeJsonParse(row.raw_data, {}),
+    phones_count: Number(row.phones_count || phones.length || 0),
+    addresses_count: Number(row.addresses_count || addresses.length || 0),
+    emails_count: Number(row.emails_count || emails.length || 0),
+    phones,
+    addresses,
+    emails,
+  };
+}
+
 function getClientPhonesInternal(database, clientId) {
   return queryAll(
     database,
@@ -939,6 +984,61 @@ function initSchema(database) {
       FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL
     );
 
+    CREATE TABLE IF NOT EXISTS client_consultations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_id INTEGER,
+      cpf TEXT NOT NULL DEFAULT '',
+      nome TEXT NOT NULL DEFAULT '',
+      telefone_pesquisado TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'failed',
+      source TEXT NOT NULL DEFAULT '',
+      error_message TEXT NOT NULL DEFAULT '',
+      full_name TEXT NOT NULL DEFAULT '',
+      birth_date TEXT,
+      age INTEGER,
+      gender TEXT NOT NULL DEFAULT '',
+      mother_name TEXT NOT NULL DEFAULT '',
+      father_name TEXT NOT NULL DEFAULT '',
+      raw_data TEXT NOT NULL DEFAULT '{}',
+      consulted_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      created_by INTEGER,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL,
+      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS client_consultation_phones (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      consultation_id INTEGER NOT NULL,
+      phone_number TEXT NOT NULL DEFAULT '',
+      phone_type TEXT NOT NULL DEFAULT '',
+      label TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (consultation_id) REFERENCES client_consultations(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS client_consultation_addresses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      consultation_id INTEGER NOT NULL,
+      full_address TEXT NOT NULL DEFAULT '',
+      city TEXT NOT NULL DEFAULT '',
+      state TEXT NOT NULL DEFAULT '',
+      zip_code TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (consultation_id) REFERENCES client_consultations(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS client_consultation_emails (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      consultation_id INTEGER NOT NULL,
+      email TEXT NOT NULL DEFAULT '',
+      is_primary INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (consultation_id) REFERENCES client_consultations(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS phone_lookup_jobs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       client_id INTEGER NOT NULL,
@@ -1159,6 +1259,52 @@ function initSchema(database) {
     'updated_at TEXT NOT NULL',
   ]);
 
+  ensureColumns(database, 'client_consultations', [
+    'client_id INTEGER',
+    'cpf TEXT NOT NULL DEFAULT \'\'',
+    'nome TEXT NOT NULL DEFAULT \'\'',
+    'telefone_pesquisado TEXT NOT NULL DEFAULT \'\'',
+    'status TEXT NOT NULL DEFAULT \'failed\'',
+    'source TEXT NOT NULL DEFAULT \'\'',
+    'error_message TEXT NOT NULL DEFAULT \'\'',
+    'full_name TEXT NOT NULL DEFAULT \'\'',
+    'birth_date TEXT',
+    'age INTEGER',
+    'gender TEXT NOT NULL DEFAULT \'\'',
+    'mother_name TEXT NOT NULL DEFAULT \'\'',
+    'father_name TEXT NOT NULL DEFAULT \'\'',
+    'raw_data TEXT NOT NULL DEFAULT \'{}\'',
+    'consulted_at TEXT NOT NULL',
+    'expires_at TEXT NOT NULL',
+    'created_by INTEGER',
+    'created_at TEXT NOT NULL',
+    'updated_at TEXT NOT NULL',
+  ]);
+
+  ensureColumns(database, 'client_consultation_phones', [
+    'consultation_id INTEGER NOT NULL',
+    'phone_number TEXT NOT NULL DEFAULT \'\'',
+    'phone_type TEXT NOT NULL DEFAULT \'\'',
+    'label TEXT NOT NULL DEFAULT \'\'',
+    'created_at TEXT NOT NULL',
+  ]);
+
+  ensureColumns(database, 'client_consultation_addresses', [
+    'consultation_id INTEGER NOT NULL',
+    'full_address TEXT NOT NULL DEFAULT \'\'',
+    'city TEXT NOT NULL DEFAULT \'\'',
+    'state TEXT NOT NULL DEFAULT \'\'',
+    'zip_code TEXT NOT NULL DEFAULT \'\'',
+    'created_at TEXT NOT NULL',
+  ]);
+
+  ensureColumns(database, 'client_consultation_emails', [
+    'consultation_id INTEGER NOT NULL',
+    'email TEXT NOT NULL DEFAULT \'\'',
+    'is_primary INTEGER NOT NULL DEFAULT 0',
+    'created_at TEXT NOT NULL',
+  ]);
+
   ensureColumns(database, 'users', [
     'login TEXT NOT NULL DEFAULT \'\'',
     'email TEXT NOT NULL DEFAULT \'\'',
@@ -1194,6 +1340,11 @@ function initSchema(database) {
   database.exec('CREATE INDEX IF NOT EXISTS idx_phone_lookup_jobs_status ON phone_lookup_jobs(status, created_at)');
   database.exec('CREATE INDEX IF NOT EXISTS idx_phone_lookup_logs_created ON phone_lookup_logs(created_at)');
   database.exec('CREATE INDEX IF NOT EXISTS idx_client_enrichment_client ON client_enrichment_data(client_id, searched_at)');
+  database.exec('CREATE INDEX IF NOT EXISTS idx_client_consultations_cpf_expires ON client_consultations(cpf, expires_at, status)');
+  database.exec('CREATE INDEX IF NOT EXISTS idx_client_consultations_consulted ON client_consultations(consulted_at)');
+  database.exec('CREATE INDEX IF NOT EXISTS idx_client_consultation_phones_consultation ON client_consultation_phones(consultation_id)');
+  database.exec('CREATE INDEX IF NOT EXISTS idx_client_consultation_addresses_consultation ON client_consultation_addresses(consultation_id)');
+  database.exec('CREATE INDEX IF NOT EXISTS idx_client_consultation_emails_consultation ON client_consultation_emails(consultation_id)');
 }
 
 function ensureColumns(database, table, columns) {
@@ -3183,6 +3334,266 @@ export function saveClientEnrichmentData({ clientId = null, userId = null, data 
 
   persistDb();
   return enrichmentDto(queryOne(database, 'SELECT * FROM client_enrichment_data WHERE id = ?', [Number(result.lastInsertRowid || 0)]));
+}
+
+function consultationChildren(database, consultationId) {
+  const phones = queryAll(
+    database,
+    'SELECT * FROM client_consultation_phones WHERE consultation_id = ? ORDER BY id ASC',
+    [Number(consultationId)]
+  ).map((row) => ({
+    id: Number(row.id),
+    consultation_id: Number(row.consultation_id),
+    phone_number: row.phone_number || '',
+    number: row.phone_number || '',
+    normalized: row.phone_number || '',
+    phone_type: row.phone_type || '',
+    type: row.phone_type || '',
+    label: row.label || '',
+    source: 'Consulta salva',
+    created_at: row.created_at || '',
+  }));
+  const addresses = queryAll(
+    database,
+    'SELECT * FROM client_consultation_addresses WHERE consultation_id = ? ORDER BY id ASC',
+    [Number(consultationId)]
+  ).map((row) => ({
+    id: Number(row.id),
+    consultation_id: Number(row.consultation_id),
+    full_address: row.full_address || '',
+    address_full: row.full_address || '',
+    city: row.city || '',
+    state: row.state || '',
+    zip_code: row.zip_code || '',
+    zipcode: row.zip_code || '',
+    created_at: row.created_at || '',
+  }));
+  const emails = queryAll(
+    database,
+    'SELECT * FROM client_consultation_emails WHERE consultation_id = ? ORDER BY is_primary DESC, id ASC',
+    [Number(consultationId)]
+  ).map((row) => ({
+    id: Number(row.id),
+    consultation_id: Number(row.consultation_id),
+    email: row.email || '',
+    is_primary: Number(row.is_primary || 0) === 1,
+    created_at: row.created_at || '',
+  }));
+  return { phones, addresses, emails };
+}
+
+export function getClientConsultationById(id) {
+  const database = getDb();
+  const row = queryOne(
+    database,
+    `
+      SELECT cc.*, c.name AS client_name, c.cpf AS client_cpf,
+        (SELECT COUNT(*) FROM client_consultation_phones p WHERE p.consultation_id = cc.id) AS phones_count,
+        (SELECT COUNT(*) FROM client_consultation_addresses a WHERE a.consultation_id = cc.id) AS addresses_count,
+        (SELECT COUNT(*) FROM client_consultation_emails e WHERE e.consultation_id = cc.id) AS emails_count
+      FROM client_consultations cc
+      LEFT JOIN clients c ON c.id = cc.client_id
+      WHERE cc.id = ?
+      LIMIT 1
+    `,
+    [Number(id)]
+  );
+  if (!row) return null;
+  const children = consultationChildren(database, row.id);
+  return consultationDto(row, children.phones, children.addresses, children.emails);
+}
+
+export function getValidClientConsultationByCpf(cpf, { now = nowIso() } = {}) {
+  const digits = cleanDigits(cpf);
+  if (digits.length !== 11) return null;
+  const row = queryOne(
+    getDb(),
+    `
+      SELECT id
+      FROM client_consultations
+      WHERE cpf = ?
+        AND status != 'expired'
+        AND datetime(expires_at) > datetime(?)
+      ORDER BY datetime(consulted_at) DESC, id DESC
+      LIMIT 1
+    `,
+    [digits, now]
+  );
+  return row ? getClientConsultationById(Number(row.id)) : null;
+}
+
+function statusToConsultationStatus(status) {
+  const normalized = String(status || '').toLowerCase();
+  if (normalized === 'success' || normalized === 'saved') return 'success';
+  if (normalized === 'requires_manual_login') return 'requires_manual_login';
+  if (normalized === 'expired') return 'expired';
+  return 'failed';
+}
+
+export function saveClientConsultationSnapshot({
+  clientId = null,
+  createdBy = null,
+  cpf = '',
+  nome = '',
+  telefonePesquisado = '',
+  status = 'failed',
+  source = 'Fonte externa',
+  errorMessage = '',
+  result = {},
+  consultedAt = nowIso(),
+  ttlDays = 60,
+} = {}) {
+  const database = getDb();
+  const normalizedCpf = cleanDigits(cpf || result.cpf || '');
+  const normalizedClientId = clientId === null || clientId === undefined || clientId === '' ? null : Number(clientId);
+  const client = normalizedClientId ? queryOne(database, 'SELECT id, name, cpf FROM clients WHERE id = ?', [normalizedClientId]) : null;
+  const phones = Array.isArray(result.phones) ? result.phones : [];
+  const addresses = Array.isArray(result.addresses) ? result.addresses : [];
+  const emails = Array.isArray(result.emails) ? result.emails : result.email ? [result.email] : [];
+  const now = nowIso();
+  const finalStatus = statusToConsultationStatus(status || result.status);
+  const expiresAt = addDaysIso(consultedAt, ttlDays);
+  const insert = database
+    .prepare(
+      `
+        INSERT INTO client_consultations (
+          client_id, cpf, nome, telefone_pesquisado, status, source, error_message,
+          full_name, birth_date, age, gender, mother_name, father_name, raw_data,
+          consulted_at, expires_at, created_by, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `
+    )
+    .run(
+      normalizedClientId,
+      normalizedCpf,
+      String(nome || result.full_name || result.name || client?.name || ''),
+      String(telefonePesquisado || ''),
+      finalStatus,
+      String(source || 'Fonte externa'),
+      String(errorMessage || result.message || result.code || ''),
+      String(result.full_name || result.name || nome || client?.name || ''),
+      result.birth_date || null,
+      result.age === null || result.age === undefined || result.age === '' ? null : Number(result.age),
+      String(result.gender || ''),
+      String(result.mother_name || ''),
+      String(result.father_name || ''),
+      JSON.stringify(result.raw_data || result.raw || result || {}),
+      consultedAt,
+      expiresAt,
+      createdBy === null || createdBy === undefined ? null : Number(createdBy),
+      now,
+      now
+    );
+  const fallbackId = queryOne(database, 'SELECT MAX(id) AS id FROM client_consultations')?.id;
+  const consultationId = Number(insert.lastInsertRowid || insert.lastInsertRowID || insert.lastInsertId || fallbackId || 0);
+  const phoneInsert = database.prepare(
+    'INSERT INTO client_consultation_phones (consultation_id, phone_number, phone_type, label, created_at) VALUES (?, ?, ?, ?, ?)'
+  );
+  for (const phone of phones) {
+    const phoneNumber = String(phone.normalized || phone.normalized_phone || phone.number || phone.phone_number || '').trim();
+    if (!phoneNumber) continue;
+    phoneInsert.run(
+      consultationId,
+      phoneNumber,
+      String(phone.type || phone.phone_type || ''),
+      String(phone.label || phone.quality || phone.raw_label || phone.source || ''),
+      now
+    );
+  }
+  const addressInsert = database.prepare(
+    'INSERT INTO client_consultation_addresses (consultation_id, full_address, city, state, zip_code, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+  );
+  for (const address of addresses) {
+    const fullAddress = String(address.address_full || address.full_address || '').trim();
+    if (!fullAddress) continue;
+    addressInsert.run(
+      consultationId,
+      fullAddress,
+      String(address.city || ''),
+      String(address.state || ''),
+      String(address.zipcode || address.zip_code || ''),
+      now
+    );
+  }
+  const emailInsert = database.prepare(
+    'INSERT INTO client_consultation_emails (consultation_id, email, is_primary, created_at) VALUES (?, ?, ?, ?)'
+  );
+  emails.forEach((email, index) => {
+    const value = typeof email === 'string' ? email : email?.email;
+    if (!value) return;
+    emailInsert.run(consultationId, String(value), index === 0 || email?.is_primary ? 1 : 0, now);
+  });
+  persistDb();
+  return getClientConsultationById(consultationId);
+}
+
+export function listClientConsultations(params = {}) {
+  const database = getDb();
+  markExpiredClientConsultations();
+  const limit = Math.min(Math.max(Number(params.limit || 50), 1), 300);
+  const filters = [];
+  const values = [];
+  if (params.status) {
+    filters.push('cc.status = ?');
+    values.push(String(params.status));
+  }
+  if (params.search) {
+    const search = `%${String(params.search).trim()}%`;
+    filters.push('(cc.cpf LIKE ? OR cc.nome LIKE ? OR cc.telefone_pesquisado LIKE ? OR c.name LIKE ?)');
+    values.push(search, search, search, search);
+  }
+  const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+  return queryAll(
+    database,
+    `
+      SELECT cc.*, c.name AS client_name, c.cpf AS client_cpf,
+        (SELECT COUNT(*) FROM client_consultation_phones p WHERE p.consultation_id = cc.id) AS phones_count,
+        (SELECT COUNT(*) FROM client_consultation_addresses a WHERE a.consultation_id = cc.id) AS addresses_count,
+        (SELECT COUNT(*) FROM client_consultation_emails e WHERE e.consultation_id = cc.id) AS emails_count
+      FROM client_consultations cc
+      LEFT JOIN clients c ON c.id = cc.client_id
+      ${where}
+      ORDER BY datetime(cc.consulted_at) DESC, cc.id DESC
+      LIMIT ${limit}
+    `,
+    values
+  ).map((row) => consultationDto(row));
+}
+
+export function linkClientConsultationToClient({ consultationId, clientId, userId = null }) {
+  const database = getDb();
+  const consultation = getClientConsultationById(Number(consultationId));
+  const client = queryOne(database, 'SELECT id, name FROM clients WHERE id = ?', [Number(clientId)]);
+  if (!consultation || !client) return null;
+  const now = nowIso();
+  database.prepare('UPDATE client_consultations SET client_id = ?, updated_at = ? WHERE id = ?').run(Number(clientId), now, Number(consultationId));
+  if (userId) {
+    insertInteraction(database, {
+      clientId: Number(clientId),
+      userId: Number(userId),
+      type: 'consulta_cadastral_vinculada',
+      note: `Consulta salva vinculada ao cliente. CPF consultado: ${consultation.cpf || '-'}.`,
+    });
+  }
+  persistDb();
+  return getClientConsultationById(Number(consultationId));
+}
+
+export function markExpiredClientConsultations({ now = nowIso() } = {}) {
+  const database = getDb();
+  const before = queryOne(
+    database,
+    "SELECT COUNT(*) AS total FROM client_consultations WHERE status != 'expired' AND datetime(expires_at) <= datetime(?)",
+    [now]
+  );
+  const total = Number(before?.total || 0);
+  database
+    .prepare("UPDATE client_consultations SET status = 'expired', updated_at = ? WHERE status != 'expired' AND datetime(expires_at) <= datetime(?)")
+    .run(now, now);
+  if (total > 0) {
+    persistDb();
+  }
+  return { expired: total };
 }
 
 export function logPhoneLookupRecord({ clientId = null, cpf = '', cpfMasked = '', name = '', source = 'Nova Vida', status = '', phonesFoundCount = 0, hasAddress = false, hasBirthDate = false, errorMessage = '' }) {

@@ -144,6 +144,7 @@ export interface Client {
 
 export interface ClientAddress {
   address_full?: string;
+  full_address?: string;
   street?: string;
   number?: string;
   complement?: string;
@@ -151,6 +152,7 @@ export interface ClientAddress {
   city?: string;
   state?: string;
   zipcode?: string;
+  zip_code?: string;
 }
 
 export interface ClientEnrichmentData {
@@ -217,16 +219,31 @@ export interface PhoneLookupHistoryItem {
   client_id?: number | null;
   cpf?: string;
   cpf_masked: string;
+  nome?: string;
   name: string;
+  full_name?: string;
+  telefone_pesquisado?: string;
   source: string;
+  origin?: string;
   status: string;
+  message?: string;
   phones_found_count: number;
+  phones_count?: number;
+  addresses_count?: number;
+  emails_count?: number;
   has_address?: boolean;
   has_birth_date?: boolean;
   error_message?: string;
+  consulted_at?: string;
+  consulted_at_formatted?: string;
+  expires_at?: string;
+  expires_at_formatted?: string;
   created_at: string;
   created_at_formatted?: string;
   client_name?: string;
+  phones?: ClientPhone[];
+  addresses?: ClientAddress[];
+  emails?: Array<{ email: string; is_primary?: boolean }>;
 }
 
 export interface DashboardData {
