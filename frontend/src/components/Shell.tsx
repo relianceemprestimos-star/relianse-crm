@@ -34,16 +34,16 @@ type NavItem = {
 const navItems: NavItem[] = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/campanhas', label: 'Campanhas', icon: Flag, allowedRoles: ['gerencial', 'vendedor'] },
-  { to: '/upload', label: 'Upload de Listas', icon: Files, allowedRoles: ['gerencial'] },
-  { to: '/bases', label: 'Bases', icon: Layers3, allowedRoles: ['gerencial'] },
+  { to: '/upload', label: 'Upload de Listas', icon: Files, allowedRoles: ['gerencial', 'vendedor'] },
+  { to: '/bases', label: 'Bases', icon: Layers3, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/fila', label: 'Fila de Clientes', icon: Users, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/atendimento', label: 'Atendimentos', icon: ClipboardList, allowedRoles: ['gerencial', 'vendedor'] },
-  { to: '/relatorios', label: 'Relatorios', icon: Zap, allowedRoles: ['gerencial'] },
+  { to: '/relatorios', label: 'Relatorios', icon: Zap, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/whatsapp', label: 'WhatsApp Web', icon: MessagesSquare, allowedRoles: ['gerencial', 'vendedor'] },
-  { to: '/consulta-ribeirao', label: 'Consulta Ribeirão', icon: Landmark, allowedRoles: ['gerencial'] },
-  { to: '/consulta-telefones', label: 'Consulta de Telefones', icon: PhoneCall, allowedRoles: ['gerencial'] },
+  { to: '/consulta-ribeirao', label: 'Consulta Ribeirão', icon: Landmark, allowedRoles: ['gerencial', 'vendedor'] },
+  { to: '/consulta-telefones', label: 'Consulta de Telefones', icon: PhoneCall, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/usuarios', label: 'Usuários', icon: Users, allowedRoles: ['gerencial'] },
-  { to: '/configuracoes', label: 'Configurações', icon: Settings, allowedRoles: ['gerencial'] },
+  { to: '/configuracoes', label: 'Configurações', icon: Settings, allowedRoles: ['gerencial', 'vendedor'] },
 ];
 
 const pageTitles: Record<string, string> = {

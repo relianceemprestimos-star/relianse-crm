@@ -1615,7 +1615,7 @@ function getCampaignUsers(database, campaignId) {
 
 function isCampaignVisibleToUser(database, campaignRow, userId, role) {
   const normalizedRole = String(role || 'vendedor').toLowerCase();
-  if (normalizedRole === 'gerencial' || normalizedRole === 'admin') {
+  if (normalizedRole === 'gerencial' || normalizedRole === 'admin' || normalizedRole === 'vendedor') {
     return true;
   }
 

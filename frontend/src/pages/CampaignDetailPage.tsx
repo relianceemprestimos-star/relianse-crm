@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Archive, ClipboardList, FileSpreadsheet, Plus, RotateCcw, Users } from 'lucide-react';
+import { Archive, ClipboardList, FileSpreadsheet, Plus, Users } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 import { api } from '../lib/api';
 import type { Campaign } from '../types';
-import { useAuth } from '../components/AuthProvider';
 import { Badge, Button, Card, SectionHeader, StatCard } from '../components/ui';
 
 function toneFromStatus(status: Campaign['status']) {
@@ -17,8 +16,6 @@ function toneFromStatus(status: Campaign['status']) {
 export default function CampaignDetailPage() {
   const navigate = useNavigate();
   const { id } = useParams();
-  const { user } = useAuth();
-  const canManage = user.role === 'gerencial' || user.role === 'admin';
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -97,26 +94,17 @@ export default function CampaignDetailPage() {
             <p className="mt-2 text-base text-slate-300">{campaign.description || 'Sem descrição cadastrada.'}</p>
           </div>
           <div className="flex items-center gap-3">
-            {canManage ? (
-              <>
-                <Button variant="secondary" onClick={() => navigate(`/upload?campaign_id=${campaign.id}`)}>
-                  <FileSpreadsheet size={16} />
-                  Subir nova base
-                </Button>
-                <Button variant="secondary" onClick={() => navigate(`/campanhas?edit=${campaign.id}`)}>
-                  Editar campanha
-                </Button>
-                <Button variant="ghost" onClick={async () => { await api.archiveCampaign(campaign.id, true); toast.success('Campanha arquivada.'); navigate('/campanhas'); }}>
-                  <Archive size={16} />
-                  Inativar campanha
-                </Button>
-              </>
-            ) : (
-              <Button variant="secondary" onClick={() => navigate(`/fila?campaign_id=${campaign.id}`)}>
-                <RotateCcw size={16} />
-                Continuar atendimento
-              </Button>
-            )}
+            <Button variant="secondary" onClick={() => navigate(`/upload?campaign_id=${campaign.id}`)}>
+              <FileSpreadsheet size={16} />
+              Subir nova base
+            </Button>
+            <Button variant="secondary" onClick={() => navigate(`/campanhas?edit=${campaign.id}`)}>
+              Editar campanha
+            </Button>
+            <Button variant="ghost" onClick={async () => { await api.archiveCampaign(campaign.id, true); toast.success('Campanha arquivada.'); navigate('/campanhas'); }}>
+              <Archive size={16} />
+              Inativar campanha
+            </Button>
           </div>
         </div>
       </Card>

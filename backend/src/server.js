@@ -142,6 +142,7 @@ const upload = multer({
 const port = Number(process.env.PORT || 3001);
 const defaultUserId = 1;
 const privilegedRoles = new Set(['admin', 'gerencial']);
+const operationalRoles = ['gerencial', 'vendedor'];
 
 function getRequestRole(req) {
   return String(req.user?.role || req.get('x-crm-role') || req.get('x-user-role') || req.body?.role || req.query?.role || 'vendedor').toLowerCase();
@@ -244,12 +245,12 @@ app.post('/api/auth/change-password', (req, res) => {
   }
 });
 app.use('/api/users', roleMiddleware(['gerencial']));
-app.use('/api/bases', roleMiddleware(['gerencial']));
-app.use('/api/upload', roleMiddleware(['gerencial']));
-app.use('/api/settings', roleMiddleware(['gerencial']));
-app.use('/api/reports', roleMiddleware(['gerencial']));
-app.use('/api/ribeirao', roleMiddleware(['gerencial']));
-app.use('/api/phone-lookup', roleMiddleware(['gerencial']));
+app.use('/api/bases', roleMiddleware(operationalRoles));
+app.use('/api/upload', roleMiddleware(operationalRoles));
+app.use('/api/settings', roleMiddleware(operationalRoles));
+app.use('/api/reports', roleMiddleware(operationalRoles));
+app.use('/api/ribeirao', roleMiddleware(operationalRoles));
+app.use('/api/phone-lookup', roleMiddleware(operationalRoles));
 
 app.get('/api/users', (_req, res) => {
   res.json({ users: getUsers() });
@@ -391,7 +392,7 @@ app.get('/api/campaigns/:id', (req, res) => {
   return res.json({ campaign });
 });
 
-app.post('/api/campaigns', requirePrivilegedRole, (req, res) => {
+app.post('/api/campaigns', roleMiddleware(operationalRoles), (req, res) => {
   try {
     const campaign = createCampaignRecord({
       name: String(req.body.name || req.body.nome || '').trim(),
@@ -413,7 +414,7 @@ app.post('/api/campaigns', requirePrivilegedRole, (req, res) => {
   }
 });
 
-app.put('/api/campaigns/:id', requirePrivilegedRole, (req, res) => {
+app.put('/api/campaigns/:id', roleMiddleware(operationalRoles), (req, res) => {
   try {
     const id = Number(req.params.id);
     const campaign = updateCampaignRecord(id, {
@@ -436,7 +437,7 @@ app.put('/api/campaigns/:id', requirePrivilegedRole, (req, res) => {
   }
 });
 
-app.post('/api/campaigns/:id/archive', requirePrivilegedRole, (req, res) => {
+app.post('/api/campaigns/:id/archive', roleMiddleware(operationalRoles), (req, res) => {
   try {
     const id = Number(req.params.id);
     const archived = req.body.archived !== false;
@@ -494,11 +495,11 @@ app.post('/api/settings', (req, res) => {
   res.json({ settings });
 });
 
-app.get('/api/ribeirao/config', requirePrivilegedRole, (_req, res) => {
+app.get('/api/ribeirao/config', roleMiddleware(operationalRoles), (_req, res) => {
   return res.json({ config: getRibeiraoConfigStatus() });
 });
 
-app.get('/api/ribeirao/diagnostics', requirePrivilegedRole, (_req, res) => {
+app.get('/api/ribeirao/diagnostics', roleMiddleware(operationalRoles), (_req, res) => {
   return res.json({ diagnostics: getRibeiraoDiagnostics() });
 });
 
@@ -553,7 +554,7 @@ app.get('/api/clients', (req, res) => {
   res.json(data);
 });
 
-app.get('/api/clients/export', requirePrivilegedRole, (req, res) => {
+app.get('/api/clients/export', roleMiddleware(operationalRoles), (req, res) => {
   const data = listClients({ ...(req.query || {}), include_archived: req.query?.include_archived || '1' });
   const rows = (data.clients || []).map((client) => {
     const phones = client.phones || [];
@@ -895,7 +896,7 @@ app.post('/api/phone-lookup/worker/run', async (req, res) => {
   }
 });
 
-app.post('/api/ribeirao/session/start', requirePrivilegedRole, async (req, res) => {
+app.post('/api/ribeirao/session/start', roleMiddleware(operationalRoles), async (req, res) => {
   const userId = getAuthenticatedUserId(req);
   const login = String(req.body.login || req.body.username || '').trim();
   const password = String(req.body.password || '').trim();
@@ -946,7 +947,7 @@ app.post('/api/ribeirao/session/start', requirePrivilegedRole, async (req, res) 
   }
 });
 
-app.get('/api/ribeirao/session/:id/status', requirePrivilegedRole, (req, res) => {
+app.get('/api/ribeirao/session/:id/status', roleMiddleware(operationalRoles), (req, res) => {
   const sessionId = Number(req.params.id);
   const status = getRibeiraoSessionStatus(sessionId);
   if (!status) {
@@ -955,7 +956,7 @@ app.get('/api/ribeirao/session/:id/status', requirePrivilegedRole, (req, res) =>
   return res.json({ session: status });
 });
 
-app.post('/api/ribeirao/query', requirePrivilegedRole, async (req, res) => {
+app.post('/api/ribeirao/query', roleMiddleware(operationalRoles), async (req, res) => {
   try {
     const userId = getAuthenticatedUserId(req);
     const sessionId = Number(req.body.session_id || req.body.sessionId || 0);
@@ -1054,7 +1055,7 @@ app.post('/api/ribeirao/query', requirePrivilegedRole, async (req, res) => {
   }
 });
 
-app.post('/api/ribeirao/batch/upload-preview', requirePrivilegedRole, upload.single('file'), (req, res) => {
+app.post('/api/ribeirao/batch/upload-preview', roleMiddleware(operationalRoles), upload.single('file'), (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ message: 'Envie uma planilha válida.' });
@@ -1177,20 +1178,20 @@ async function handleBatchStart(req, res) {
   }
 }
 
-app.post('/api/ribeirao/batch/start', requirePrivilegedRole, (req, res) => {
+app.post('/api/ribeirao/batch/start', roleMiddleware(operationalRoles), (req, res) => {
   void handleBatchStart(req, res);
 });
 
-app.post('/api/ribeirao/batch', requirePrivilegedRole, (req, res) => {
+app.post('/api/ribeirao/batch', roleMiddleware(operationalRoles), (req, res) => {
   void handleBatchStart(req, res);
 });
 
-app.get('/api/ribeirao/history', requirePrivilegedRole, (req, res) => {
+app.get('/api/ribeirao/history', roleMiddleware(operationalRoles), (req, res) => {
   const rows = listRibeiraoHistory(req.query || {});
   return res.json({ rows });
 });
 
-app.get('/api/ribeirao/history/:id', requirePrivilegedRole, (req, res) => {
+app.get('/api/ribeirao/history/:id', roleMiddleware(operationalRoles), (req, res) => {
   const item = getRibeiraoHistoryById(Number(req.params.id));
   if (!item) {
     return res.status(404).json({ message: 'Consulta nao encontrada.' });
@@ -1198,7 +1199,7 @@ app.get('/api/ribeirao/history/:id', requirePrivilegedRole, (req, res) => {
   return res.json({ item });
 });
 
-app.post('/api/ribeirao/history/:id/apply', requirePrivilegedRole, (req, res) => {
+app.post('/api/ribeirao/history/:id/apply', roleMiddleware(operationalRoles), (req, res) => {
   const queryId = Number(req.params.id);
   const clientId = Number(req.body.client_id || req.body.clientId || 0);
   const baseId = req.body.base_id || req.body.baseId ? Number(req.body.base_id || req.body.baseId) : null;
@@ -1222,12 +1223,12 @@ app.post('/api/ribeirao/history/:id/apply', requirePrivilegedRole, (req, res) =>
   return res.json({ client: client.client || client });
 });
 
-app.get('/api/ribeirao/batch/history', requirePrivilegedRole, (req, res) => {
+app.get('/api/ribeirao/batch/history', roleMiddleware(operationalRoles), (req, res) => {
   const rows = getRibeiraoBatchHistory(req.query || {});
   return res.json({ rows });
 });
 
-app.get('/api/ribeirao/batch/:id/status', requirePrivilegedRole, (req, res) => {
+app.get('/api/ribeirao/batch/:id/status', roleMiddleware(operationalRoles), (req, res) => {
   const batch = getRibeiraoBatchStatus(Number(req.params.id));
   if (!batch) {
     return res.status(404).json({ message: 'Lote nao encontrado.' });
@@ -1235,7 +1236,7 @@ app.get('/api/ribeirao/batch/:id/status', requirePrivilegedRole, (req, res) => {
   return res.json({ batch });
 });
 
-app.post('/api/ribeirao/batch/:id/pause', requirePrivilegedRole, (req, res) => {
+app.post('/api/ribeirao/batch/:id/pause', roleMiddleware(operationalRoles), (req, res) => {
   const batch = pauseRibeiraoBatch(Number(req.params.id));
   if (!batch) {
     return res.status(404).json({ message: 'Lote nao encontrado.' });
@@ -1243,7 +1244,7 @@ app.post('/api/ribeirao/batch/:id/pause', requirePrivilegedRole, (req, res) => {
   return res.json({ batch });
 });
 
-app.post('/api/ribeirao/batch/:id/resume', requirePrivilegedRole, (req, res) => {
+app.post('/api/ribeirao/batch/:id/resume', roleMiddleware(operationalRoles), (req, res) => {
   const batch = resumeRibeiraoBatch(Number(req.params.id));
   if (!batch) {
     return res.status(404).json({ message: 'Lote nao encontrado.' });
@@ -1251,7 +1252,7 @@ app.post('/api/ribeirao/batch/:id/resume', requirePrivilegedRole, (req, res) => 
   return res.json({ batch });
 });
 
-app.post('/api/ribeirao/batch/:id/cancel', requirePrivilegedRole, (req, res) => {
+app.post('/api/ribeirao/batch/:id/cancel', roleMiddleware(operationalRoles), (req, res) => {
   const batch = cancelRibeiraoBatch(Number(req.params.id));
   if (!batch) {
     return res.status(404).json({ message: 'Lote nao encontrado.' });
@@ -1259,7 +1260,7 @@ app.post('/api/ribeirao/batch/:id/cancel', requirePrivilegedRole, (req, res) => 
   return res.json({ batch });
 });
 
-app.get('/api/ribeirao/batch/:id/results', requirePrivilegedRole, (req, res) => {
+app.get('/api/ribeirao/batch/:id/results', roleMiddleware(operationalRoles), (req, res) => {
   const batch = getRibeiraoBatchStatus(Number(req.params.id));
   if (!batch) {
     return res.status(404).json({ message: 'Lote nao encontrado.' });
@@ -1268,7 +1269,7 @@ app.get('/api/ribeirao/batch/:id/results', requirePrivilegedRole, (req, res) => 
   return res.json({ batch, rows });
 });
 
-app.get('/api/ribeirao/batch/:id/export', requirePrivilegedRole, (req, res) => {
+app.get('/api/ribeirao/batch/:id/export', roleMiddleware(operationalRoles), (req, res) => {
   const batch = getRibeiraoBatchStatus(Number(req.params.id));
   if (!batch) {
     return res.status(404).json({ message: 'Lote nao encontrado.' });

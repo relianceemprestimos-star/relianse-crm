@@ -32,15 +32,15 @@ export default function App() {
           <Route path="/fila" element={<QueuePage />} />
           <Route path="/atendimento" element={<AttendancePage />} />
           <Route path="/whatsapp" element={<WhatsAppPage />} />
+          <Route path="/upload" element={<UploadPage />} />
+          <Route path="/bases" element={<BasesPage />} />
+          <Route path="/relatorios" element={<ReportsPage />} />
+          <Route path="/consulta-ribeirao" element={<RibeiraoPage />} />
+          <Route path="/consulta-telefones" element={<PhoneLookupPage />} />
+          <Route path="/configuracoes" element={<SettingsPage />} />
 
           <Route element={<RoleGuard allowedRoles={['gerencial']} />}>
-            <Route path="/upload" element={<UploadPage />} />
-            <Route path="/bases" element={<BasesPage />} />
-            <Route path="/relatorios" element={<ReportsPage />} />
-            <Route path="/consulta-ribeirao" element={<RibeiraoPage />} />
-            <Route path="/consulta-telefones" element={<PhoneLookupPage />} />
             <Route path="/usuarios" element={<UsersPage />} />
-            <Route path="/configuracoes" element={<SettingsPage />} />
           </Route>
         </Route>
       </Route>

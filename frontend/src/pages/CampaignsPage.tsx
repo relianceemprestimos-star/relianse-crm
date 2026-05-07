@@ -37,7 +37,7 @@ function statusTone(status: Campaign['status']) {
 export default function CampaignsPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const canManage = user.role === 'gerencial' || user.role === 'admin';
+  const canAssignUsers = user.role === 'gerencial' || user.role === 'admin';
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -52,8 +52,8 @@ export default function CampaignsPage() {
       try {
         setLoading(true);
         const [campaignResponse, usersResponse] = await Promise.all([
-          api.getCampaigns({ include_archived: canManage ? '1' : '0' }),
-          canManage ? api.getUsers() : Promise.resolve({ users: [] as UserRecord[] }),
+          api.getCampaigns({ include_archived: '1' }),
+          canAssignUsers ? api.getUsers() : Promise.resolve({ users: [] as UserRecord[] }),
         ]);
         if (!active) return;
         setCampaigns(campaignResponse.campaigns || []);
@@ -69,7 +69,7 @@ export default function CampaignsPage() {
     return () => {
       active = false;
     };
-  }, [canManage]);
+  }, [canAssignUsers]);
 
   const totals = useMemo(
     () => ({
@@ -116,7 +116,7 @@ export default function CampaignsPage() {
         product_focus: form.product_focus,
         status: form.status,
         internal_notes: form.internal_notes.trim(),
-        user_ids: form.user_ids,
+        user_ids: canAssignUsers ? form.user_ids : undefined,
         role: 'vendedor',
       };
 
@@ -128,7 +128,7 @@ export default function CampaignsPage() {
         toast.success('Campanha criada com sucesso.');
       }
 
-      const response = await api.getCampaigns({ include_archived: canManage ? '1' : '0' });
+      const response = await api.getCampaigns({ include_archived: '1' });
       setCampaigns(response.campaigns || []);
       setEditing(null);
       setForm(initialForm);
@@ -146,7 +146,7 @@ export default function CampaignsPage() {
     try {
       await api.archiveCampaign(campaign.id, true);
       toast.success('Campanha arquivada.');
-      const response = await api.getCampaigns({ include_archived: canManage ? '1' : '0' });
+      const response = await api.getCampaigns({ include_archived: '1' });
       setCampaigns(response.campaigns || []);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Falha ao arquivar campanha.');
@@ -159,12 +159,10 @@ export default function CampaignsPage() {
         title="Campanhas"
         description="Organize suas bases por convênio, órgão ou estratégia de atendimento."
         action={
-          canManage ? (
-            <Button onClick={openCreate}>
-              <Plus size={16} />
-              Nova campanha
-            </Button>
-          ) : null
+          <Button onClick={openCreate}>
+            <Plus size={16} />
+            Nova campanha
+          </Button>
         }
       />
 
@@ -223,22 +221,18 @@ export default function CampaignsPage() {
                 <Button variant="secondary" onClick={() => navigate(`/relatorios?campaign_id=${campaign.id}`)}>
                   Relatório
                 </Button>
-                {canManage ? (
-                  <>
-                    <Button variant="secondary" onClick={() => navigate(`/upload?campaign_id=${campaign.id}`)}>
-                      <Upload size={16} />
-                      Subir base
-                    </Button>
-                    <Button variant="secondary" onClick={() => openEdit(campaign)}>
-                      <Edit3 size={16} />
-                      Editar
-                    </Button>
-                    <Button variant="ghost" onClick={() => archiveCampaign(campaign)}>
-                      <Archive size={16} />
-                      Arquivar
-                    </Button>
-                  </>
-                ) : null}
+                <Button variant="secondary" onClick={() => navigate(`/upload?campaign_id=${campaign.id}`)}>
+                  <Upload size={16} />
+                  Subir base
+                </Button>
+                <Button variant="secondary" onClick={() => openEdit(campaign)}>
+                  <Edit3 size={16} />
+                  Editar
+                </Button>
+                <Button variant="ghost" onClick={() => archiveCampaign(campaign)}>
+                  <Archive size={16} />
+                  Arquivar
+                </Button>
               </div>
             </Card>
           ))}
@@ -293,7 +287,7 @@ export default function CampaignsPage() {
               </Select>
             </label>
           </div>
-          {canManage ? (
+          {canAssignUsers ? (
             <label className="block text-sm text-slate-300">
               Vendedores autorizados
               <Select
