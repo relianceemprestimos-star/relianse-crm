@@ -3432,7 +3432,7 @@ export function getValidClientConsultationByCpf(cpf, { now = nowIso() } = {}) {
       SELECT id
       FROM client_consultations
       WHERE cpf = ?
-        AND status != 'expired'
+        AND status = 'success'
         AND datetime(expires_at) > datetime(?)
       ORDER BY datetime(consulted_at) DESC, id DESC
       LIMIT 1
