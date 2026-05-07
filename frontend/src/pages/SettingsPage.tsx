@@ -228,7 +228,7 @@ export default function SettingsPage() {
               </SectionBlock>
 
               {user?.role === 'gerencial' ? (
-                <SectionBlock icon={<Users size={18} />} title="Consulta RibeirÃ£o">
+                <SectionBlock icon={<Users size={18} />} title="Consulta de Margem">
                   <div className="space-y-3">
                     <div className="rounded-2xl border border-border bg-bg/60 p-4">
                       <div className="flex flex-wrap items-center gap-3">

@@ -42,6 +42,14 @@ type ProductView = {
 type TabKey = 'individual' | 'batch' | 'history';
 type BatchSourceMode = 'upload' | 'base';
 
+const MARGIN_CONNECTIONS = [
+  { value: 'prefeitura-ribeirao-preto', label: 'Prefeitura de Ribeirão Preto', enabled: true },
+  { value: 'governo-amapa', label: 'Governo do Amapá', enabled: false },
+  { value: 'governo-sp-tjsp', label: 'Governo de SP / Tribunal de Justiça de SP', enabled: false },
+] as const;
+
+const RETURN_CHANNEL = 'Portal';
+
 const HISTORY_FILTER_DEFAULTS = {
   from: '',
   to: '',
@@ -55,7 +63,8 @@ const BATCH_SESSION_KEY = 'relianse.ribeirao.batchId';
 
 export default function RibeiraoPage() {
   const sessionSession = getAccessSession();
-  const [activeTab, setActiveTab] = useState<TabKey>('individual');
+  const [activeTab, setActiveTab] = useState<TabKey>('batch');
+  const [selectedConnection, setSelectedConnection] = useState('');
   const [login, setLogin] = useState('');
   const [password, setPassword] = useState('');
   const [session, setSession] = useState<RibeiraoSession | null>(null);
@@ -398,6 +407,14 @@ export default function RibeiraoPage() {
   }
 
   async function handleStartBatch() {
+    if (!selectedConnection) {
+      toast.error('Selecione uma conexão antes de iniciar a consulta.');
+      return;
+    }
+    if (selectedConnection !== 'prefeitura-ribeirao-preto') {
+      toast.error('Esta conexão ainda está em preparação. Use Prefeitura de Ribeirão Preto por enquanto.');
+      return;
+    }
     if (!sessionReady || !session?.id) {
       toast.error('Para consultar em lote, primeiro conecte a sessão com o averbador.');
       return;
@@ -530,12 +547,15 @@ export default function RibeiraoPage() {
         : selectedBase
           ? `${selectedBase.total_clientes} clientes na base`
           : 'Selecione uma base importada';
+  const selectedConnectionLabel = getMarginConnectionLabel(selectedConnection);
+  const batchCpfCount = batchSourceMode === 'upload' ? batchPreview?.valid_rows || 0 : selectedBase?.total_clientes || 0;
+  const canStartMarginBatch = Boolean(selectedConnection && batchSourceMode === 'upload' && batchPreview?.cpfs?.length);
 
   return (
     <div className="space-y-8">
       <SectionHeader
-        title="Consulta Ribeirão"
-        description="Consulte a margem da Prefeitura de Ribeirão Preto por CPF, com acesso autorizado ao averbador e histórico protegido por perfil."
+        title="Consulta de Margem"
+        description="Consulte margens em lote por conexão autorizada, com arquivo de CPFs e retorno pelo portal."
         action={<Badge tone="accent">Perfil: {sessionSession.role}</Badge>}
       />
 
@@ -837,6 +857,184 @@ export default function RibeiraoPage() {
       ) : null}
 
       {activeTab === 'batch' ? (
+        <div className="space-y-6">
+          <div className="grid gap-6 xl:grid-cols-[1fr_380px]">
+            <div className="space-y-5">
+              <Card className="border-cyan-400/15 bg-gradient-to-br from-[#07131d] via-panel to-[#07131d] p-6 shadow-[0_24px_80px_rgba(0,0,0,0.28)]">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-300/80">1. Conexão</p>
+                    <h3 className="mt-2 text-xl font-bold text-white">Credenciais do portal</h3>
+                    <p className="mt-1 text-sm text-slate-400">Selecione a conexão autorizada para consulta de margem.</p>
+                  </div>
+                  <Badge tone={selectedConnection ? 'success' : 'neutral'}>{selectedConnection ? 'Selecionada' : 'Pendente'}</Badge>
+                </div>
+
+                <label className="mt-5 block text-sm font-medium text-slate-300">
+                  Credenciais do portal
+                  <Select
+                    className="mt-2 h-14 rounded-2xl border-cyan-400/20 bg-[#071018] px-4 text-base text-white shadow-inner shadow-black/30"
+                    value={selectedConnection}
+                    onChange={(event) => setSelectedConnection(event.target.value)}
+                  >
+                    <option value="">— selecione a conexão —</option>
+                    <option value="prefeitura-ribeirao-preto">Prefeitura de Ribeirão Preto</option>
+                    <option value="governo-amapa">Governo do Amapá</option>
+                    <optgroup label="Governo de SP">
+                      <option value="governo-sp-tjsp">Tribunal de Justiça de SP</option>
+                    </optgroup>
+                  </Select>
+                </label>
+              </Card>
+
+              <Card className="border-cyan-400/15 bg-gradient-to-br from-[#07131d] via-panel to-[#07131d] p-6 shadow-[0_24px_80px_rgba(0,0,0,0.28)]">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-300/80">2. Arquivo CSV</p>
+                    <h3 className="mt-2 text-xl font-bold text-white">Uma coluna de CPFs, com ou sem formatação</h3>
+                  </div>
+                  <Badge tone={batchPreview?.valid_rows ? 'success' : 'neutral'}>{batchPreview?.valid_rows || 0} CPFs</Badge>
+                </div>
+
+                <label className="mt-5 flex min-h-[170px] cursor-pointer flex-col items-center justify-center rounded-[28px] border border-dashed border-cyan-300/35 bg-[#061018]/80 px-6 py-8 text-center transition hover:border-lime-300/70 hover:bg-lime-300/5">
+                  <Upload size={28} className="text-cyan-300" />
+                  <span className="mt-3 text-lg font-bold text-white">Clique ou arraste o CSV para esta área</span>
+                  <span className="mt-1 text-sm text-slate-400">.csv ou .txt • máx. 450 CPFs</span>
+                  <input
+                    className="hidden"
+                    type="file"
+                    accept=".csv,.txt"
+                    onChange={(event) => void handleBatchFileSelect(event.target.files?.[0] || null)}
+                  />
+                </label>
+
+                <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-slate-400">
+                  {batchPreviewFileName ? (
+                    <span className="text-slate-200">{batchPreviewFileName} • {batchSourceSummary}</span>
+                  ) : (
+                    'Apenas uma coluna será considerada para leitura dos CPFs.'
+                  )}
+                </div>
+              </Card>
+
+              <Card className="border-cyan-400/15 bg-gradient-to-br from-[#07131d] via-panel to-[#07131d] p-6 shadow-[0_24px_80px_rgba(0,0,0,0.28)]">
+                <p className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-300/80">3. Retorno</p>
+                <h3 className="mt-2 text-xl font-bold text-white">Como receber os resultados</h3>
+                <label className="mt-5 block text-sm font-medium text-slate-300">
+                  Retorno
+                  <Select className="mt-2 h-14 rounded-2xl border-cyan-400/20 bg-[#071018] px-4 text-base text-white" value="portal" disabled>
+                    <option value="portal">Apenas Portal</option>
+                  </Select>
+                </label>
+              </Card>
+            </div>
+
+            <Card className="sticky top-5 h-fit border-cyan-400/20 bg-gradient-to-br from-[#081a22] via-panel to-[#071018] p-6 shadow-[0_24px_80px_rgba(0,0,0,0.35)]">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm text-slate-400">Resumo</p>
+                  <h3 className="mt-1 text-2xl font-bold text-white">Pronto para consulta</h3>
+                </div>
+                <Badge tone={canStartMarginBatch ? 'success' : 'neutral'}>{canStartMarginBatch ? 'Liberado' : 'Aguardando'}</Badge>
+              </div>
+
+              <div className="mt-6 space-y-3">
+                <SummaryRow label="Conexão" value={selectedConnectionLabel || '—'} />
+                <SummaryRow label="CPFs" value={batchCpfCount} />
+                <SummaryRow label="Saldo restante" value={0} />
+                <SummaryRow label="Retorno" value={RETURN_CHANNEL} />
+              </div>
+
+              <Button
+                className="mt-7 w-full rounded-2xl border border-lime-200/30 bg-lime-300 px-5 py-5 text-base font-black text-slate-950 shadow-[0_18px_50px_rgba(190,242,100,0.2)] transition hover:bg-lime-200 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/10 disabled:text-slate-500 disabled:shadow-none"
+                onClick={() => void handleStartBatch()}
+                disabled={batchStartLoading || !canStartMarginBatch}
+              >
+                <Search size={18} />
+                {batchStartLoading ? 'Iniciando lote...' : 'Consultar Margem em Lote'}
+              </Button>
+
+              {!canStartMarginBatch ? (
+                <p className="mt-3 text-center text-sm text-amber-100/80">Selecione uma conexão e envie um arquivo com CPFs.</p>
+              ) : null}
+              <p className="mt-4 text-center text-xs font-semibold uppercase tracking-[0.22em] text-cyan-200/80">
+                Conexão segura e criptografada
+              </p>
+
+              {currentBatch ? (
+                <div className="mt-6 rounded-3xl border border-white/10 bg-black/20 p-4">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-slate-300">Lote #{currentBatch.id}</span>
+                    <span className="text-slate-500">{currentBatch.processed_count}/{currentBatch.total_cpfs}</span>
+                  </div>
+                  <div className="mt-3 h-2 rounded-full bg-white/10">
+                    <div className="h-2 rounded-full bg-lime-300 transition-all" style={{ width: `${batchProgress}%` }} />
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button variant="secondary" className="px-3 py-2" onClick={() => void handlePauseBatch()} disabled={!isBatchActive(currentBatch?.status)}>
+                      Pausar
+                    </Button>
+                    <Button variant="secondary" className="px-3 py-2" onClick={() => void handleResumeBatch()} disabled={currentBatch?.status !== 'pausado' && currentBatch?.status !== 'aguardando_captcha' && currentBatch?.status !== 'pausado_sessao_expirada'}>
+                      Continuar
+                    </Button>
+                    <Button variant="ghost" className="px-3 py-2" onClick={() => void handleExportBatch(currentBatch.id)}>
+                      Exportar
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+            </Card>
+          </div>
+
+          <Card className="overflow-hidden border-cyan-400/15 bg-gradient-to-br from-[#07131d] via-panel to-[#07131d] shadow-[0_24px_80px_rgba(0,0,0,0.25)]">
+            <div className="flex flex-col gap-3 border-b border-cyan-400/10 px-6 py-5 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h3 className="text-xl font-bold text-white">Consultas recentes</h3>
+                <p className="mt-1 text-sm text-slate-500">Últimos lotes enviados para consulta de margem.</p>
+              </div>
+              <Badge tone="neutral">{batchHistory.length} registros</Badge>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="min-w-[900px] text-left text-sm">
+                <thead className="bg-[#050d14] text-slate-400">
+                  <tr>
+                    {['ID', 'Conexão', 'CPFs', 'Data / Hora', 'Retorno', 'Status'].map((column) => (
+                      <th key={column} className="px-6 py-4 font-medium">
+                        {column}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {batchHistory.length ? (
+                    batchHistory.slice(0, 8).map((batch) => (
+                      <tr key={batch.id} className="border-t border-white/10">
+                        <td className="px-6 py-4 font-semibold text-white">#{batch.id}</td>
+                        <td className="px-6 py-4 text-slate-300">{batchConnectionLabel(batch)}</td>
+                        <td className="px-6 py-4 text-slate-300">{batch.total_cpfs}</td>
+                        <td className="px-6 py-4 text-slate-300">{formatBatchDate(batch.created_at)}</td>
+                        <td className="px-6 py-4 text-slate-300">Portal</td>
+                        <td className="px-6 py-4">
+                          <Badge tone={batchStatusTone(batch.status)}>{batchStatusLabel(batch.status)}</Badge>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={6} className="px-6 py-8 text-center text-slate-500">
+                        Nenhuma consulta recente encontrada.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        </div>
+      ) : null}
+
+      {false && activeTab === 'batch' ? (
         <div className="space-y-6">
           <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
             <Card className="p-6">
@@ -1311,6 +1509,29 @@ export default function RibeiraoPage() {
       ) : null}
     </div>
   );
+}
+
+function SummaryRow({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+      <span className="text-sm text-slate-400">{label}</span>
+      <span className="text-right text-sm font-bold text-white">{value}</span>
+    </div>
+  );
+}
+
+function getMarginConnectionLabel(value: string) {
+  return MARGIN_CONNECTIONS.find((connection) => connection.value === value)?.label || '';
+}
+
+function batchConnectionLabel(batch: RibeiraoBatchRecord) {
+  if (String(batch.base_name || batch.source_file_name || '').toLowerCase().includes('amap')) {
+    return 'Governo do Amapá';
+  }
+  if (String(batch.base_name || batch.source_file_name || '').toLowerCase().includes('tjsp')) {
+    return 'Governo de SP / Tribunal de Justiça de SP';
+  }
+  return 'Prefeitura de Ribeirão Preto';
 }
 
 function MetricCard({ label, value, icon }: { label: string; value: number; icon: ReactNode }) {
