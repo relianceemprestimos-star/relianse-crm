@@ -246,6 +246,50 @@ export interface PhoneLookupHistoryItem {
   emails?: Array<{ email: string; is_primary?: boolean }>;
 }
 
+export interface CredentialPortalConfig {
+  id: string;
+  name: string;
+  url: string;
+  requiresCaptcha: boolean;
+  requiresAssistedLogin: boolean;
+  providerStatus?: string;
+}
+
+export interface AverbadorCredential {
+  id: number;
+  portal_id: string;
+  portal_name: string;
+  portal_url: string;
+  portal_host?: string;
+  login: string;
+  has_password: boolean;
+  requires_captcha: boolean;
+  requires_assisted_login: boolean;
+  session_status: string;
+  session_status_label?: string;
+  last_access_at?: string | null;
+  session_expires_at?: string | null;
+  last_test_at?: string | null;
+  last_error?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CredentialConnectionLog {
+  id: number;
+  credential_id?: number | null;
+  portal_id: string;
+  portal_name?: string;
+  portal_url?: string;
+  action: string;
+  status: string;
+  message?: string;
+  error_message?: string;
+  created_at: string;
+  created_by?: number | null;
+  created_by_name?: string;
+}
+
 export interface DashboardData {
   stats: Record<string, number>;
   productStats?: Array<{

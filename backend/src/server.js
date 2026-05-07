@@ -86,6 +86,20 @@ import {
   savePhonesToClient,
   searchPhones,
 } from './services/phone_lookup/phoneLookupService.js';
+import {
+  confirmAssistedLogin,
+  getCredentialByPortal,
+  getCredentialGate,
+  getCredentialLogs,
+  getCredentialPortals,
+  getCredentialSecretByPortal,
+  listCredentials,
+  saveCredential,
+  startAssistedLogin,
+  testCredential,
+  updateCredential,
+} from './services/credentials/credentialService.js';
+import { normalizePortalId } from './services/credentials/portalConfigs.js';
 
 dotenv.config();
 await initDb();
@@ -251,6 +265,77 @@ app.use('/api/settings', roleMiddleware(operationalRoles));
 app.use('/api/reports', roleMiddleware(operationalRoles));
 app.use('/api/ribeirao', roleMiddleware(operationalRoles));
 app.use('/api/phone-lookup', roleMiddleware(operationalRoles));
+
+app.get('/api/credentials/portals', (_req, res) => {
+  return res.json({ portals: getCredentialPortals() });
+});
+
+app.get('/api/credentials/logs', roleMiddleware(['gerencial']), (req, res) => {
+  return res.json({ rows: getCredentialLogs(req.query || {}) });
+});
+
+app.get('/api/credentials', roleMiddleware(['gerencial']), (_req, res) => {
+  return res.json({ credentials: listCredentials() });
+});
+
+app.get('/api/credentials/:portalId', (req, res) => {
+  const credential = getCredentialByPortal(req.params.portalId);
+  if (!credential) {
+    return res.status(404).json({ message: 'Portal de credencial não encontrado.' });
+  }
+  if (!privilegedRoles.has(getRequestRole(req))) {
+    return res.json({ credential: { ...credential, login: '' } });
+  }
+  return res.json({ credential });
+});
+
+app.post('/api/credentials', roleMiddleware(['gerencial']), (req, res) => {
+  try {
+    const credential = saveCredential(req.body || {}, getAuthenticatedUserId(req));
+    return res.json({ credential });
+  } catch (error) {
+    return res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao salvar credencial.' });
+  }
+});
+
+app.put('/api/credentials/:id', roleMiddleware(['gerencial']), (req, res) => {
+  try {
+    const credential = updateCredential(Number(req.params.id), req.body || {}, getAuthenticatedUserId(req));
+    if (!credential) {
+      return res.status(404).json({ message: 'Credencial não encontrada.' });
+    }
+    return res.json({ credential });
+  } catch (error) {
+    return res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao atualizar credencial.' });
+  }
+});
+
+app.post('/api/credentials/:id/test', roleMiddleware(['gerencial']), async (req, res) => {
+  try {
+    const credential = await testCredential(Number(req.params.id), getAuthenticatedUserId(req));
+    return res.json({ credential });
+  } catch (error) {
+    return res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao testar conexão.' });
+  }
+});
+
+app.post('/api/credentials/:id/assisted-login/start', roleMiddleware(['gerencial']), (req, res) => {
+  try {
+    const result = startAssistedLogin(Number(req.params.id), getAuthenticatedUserId(req));
+    return res.json(result);
+  } catch (error) {
+    return res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao iniciar login assistido.' });
+  }
+});
+
+app.post('/api/credentials/:id/assisted-login/confirm', roleMiddleware(['gerencial']), (req, res) => {
+  try {
+    const credential = confirmAssistedLogin(Number(req.params.id), getAuthenticatedUserId(req));
+    return res.json({ credential });
+  } catch (error) {
+    return res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao confirmar sessão assistida.' });
+  }
+});
 
 app.get('/api/users', (_req, res) => {
   res.json({ users: getUsers() });
@@ -1046,6 +1131,10 @@ app.post('/api/ribeirao/query', roleMiddleware(operationalRoles), async (req, re
       SESSION_EXPIRED: 409,
       PORTAL_UNAVAILABLE: 503,
       INVALID_CPF: 400,
+      CREDENTIAL_NOT_CONFIGURED: 409,
+      CREDENTIAL_SESSION_EXPIRED: 409,
+      ASSISTED_LOGIN_REQUIRED: 409,
+      SOURCE_NOT_IMPLEMENTED: 501,
     };
     return res.status(statusMap[errorCode] || 400).json({
       success: false,
@@ -1097,9 +1186,12 @@ function parseBatchCpfs(payload) {
 async function handleBatchStart(req, res) {
   try {
     const userId = getAuthenticatedUserId(req);
-    const sessionId = Number(req.body.session_id || req.body.sessionId || 0);
-    const login = String(req.body.login || req.body.username || '').trim();
-    const password = String(req.body.password || '').trim();
+    let sessionId = Number(req.body.session_id || req.body.sessionId || 0);
+    const portalId = normalizePortalId(req.body.portal_id || req.body.portalId || 'prefeitura_ribeirao_preto');
+    const credentialGate = getCredentialGate(portalId);
+    const credentialSecret = getCredentialSecretByPortal(portalId);
+    const login = String(req.body.login || req.body.username || credentialSecret?.login || '').trim();
+    const password = String(req.body.password || credentialSecret?.password || '').trim();
     const sourceType = String(req.body.source_type || req.body.sourceType || 'upload').trim().toLowerCase();
     const sourceFileName = String(req.body.source_file_name || req.body.sourceFileName || '').trim();
     const baseIdRaw = req.body.base_id ?? req.body.baseId ?? null;
@@ -1107,12 +1199,42 @@ async function handleBatchStart(req, res) {
     const delaySecondsMin = Number(req.body.delay_seconds_min || req.body.delaySecondsMin || 3);
     const delaySecondsMax = Number(req.body.delay_seconds_max || req.body.delaySecondsMax || 8);
 
-    if (!sessionId) {
-      return res.status(400).json({
+    if (portalId !== 'prefeitura_ribeirao_preto') {
+      return res.status(501).json({
         success: false,
-        code: 'NO_ACTIVE_SESSION',
-        message: 'Nenhuma sessÃ£o ativa com o portal da Prefeitura. Inicie a sessÃ£o antes de consultar em lote.',
+        code: 'SOURCE_NOT_IMPLEMENTED',
+        message: 'Fonte ainda não implementada para consulta em lote. O portal já pode ser configurado em Credenciais.',
       });
+    }
+
+    if (!credentialGate.allowed) {
+      return res.status(409).json({
+        success: false,
+        code: credentialGate.code,
+        message: credentialGate.message,
+        credential: credentialGate.credential,
+      });
+    }
+
+    if (!sessionId) {
+      const startedSession = await startRibeiraoSession({
+        userId,
+        login,
+        password,
+        timeoutSeconds: Number(req.body.timeout_seconds || req.body.timeoutSeconds || 900),
+        slowMo: Number(req.body.slow_mo || req.body.slowMo || 0),
+        userName: req.user?.name || '',
+        role: req.user?.role || 'gerencial',
+      });
+      if (!startedSession?.id || !String(startedSession.status || '').includes('conect')) {
+        return res.status(409).json({
+          success: false,
+          code: startedSession?.error_code || 'NO_ACTIVE_SESSION',
+          message: startedSession?.error_message || startedSession?.message || 'Não foi possível conectar ao portal com a credencial salva.',
+          session: startedSession,
+        });
+      }
+      sessionId = Number(startedSession.id);
     }
 
     const gate = getRibeiraoSessionGate(sessionId);
@@ -1169,6 +1291,10 @@ async function handleBatchStart(req, res) {
       SESSION_EXPIRED: 409,
       PORTAL_UNAVAILABLE: 503,
       INVALID_CPF: 400,
+      CREDENTIAL_NOT_CONFIGURED: 409,
+      CREDENTIAL_SESSION_EXPIRED: 409,
+      ASSISTED_LOGIN_REQUIRED: 409,
+      SOURCE_NOT_IMPLEMENTED: 501,
     };
     return res.status(statusMap[errorCode] || 400).json({
       success: false,

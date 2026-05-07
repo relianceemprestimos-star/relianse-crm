@@ -15,6 +15,7 @@ import WhatsAppPage from './pages/WhatsAppPage';
 import SettingsPage from './pages/SettingsPage';
 import RibeiraoPage from './pages/RibeiraoPage';
 import PhoneLookupPage from './pages/PhoneLookupPage';
+import CredentialsPage from './pages/CredentialsPage';
 import UsersPage from './pages/UsersPage';
 import LoginPage from './pages/LoginPage';
 
@@ -41,6 +42,7 @@ export default function App() {
           <Route path="/configuracoes" element={<SettingsPage />} />
 
           <Route element={<RoleGuard allowedRoles={['gerencial']} />}>
+            <Route path="/credenciais" element={<CredentialsPage />} />
             <Route path="/usuarios" element={<UsersPage />} />
           </Route>
         </Route>

@@ -19,6 +19,7 @@ import { ApiError, api } from '../lib/api';
 import { formatCurrencyDisplay } from '../lib/margins';
 import { getAccessSession } from '../lib/session';
 import type {
+  AverbadorCredential,
   Base,
   RibeiraoBatchPreview,
   RibeiraoBatchRecord,
@@ -65,6 +66,7 @@ export default function RibeiraoPage() {
   const sessionSession = getAccessSession();
   const [activeTab, setActiveTab] = useState<TabKey>('batch');
   const [selectedConnection, setSelectedConnection] = useState('');
+  const [selectedCredential, setSelectedCredential] = useState<AverbadorCredential | null>(null);
   const [login, setLogin] = useState('');
   const [password, setPassword] = useState('');
   const [session, setSession] = useState<RibeiraoSession | null>(null);
@@ -114,6 +116,14 @@ export default function RibeiraoPage() {
       window.localStorage.setItem(ROLE_SESSION_KEY, String(sessionId));
     }
   }, [session?.id]);
+
+  useEffect(() => {
+    if (!selectedConnection) {
+      setSelectedCredential(null);
+      return;
+    }
+    void loadSelectedCredential(selectedConnection);
+  }, [selectedConnection]);
 
   useEffect(() => {
     const batchId = currentBatch?.id;
@@ -188,6 +198,19 @@ export default function RibeiraoPage() {
     } catch (error) {
       setRibeiraoDiagnostics(null);
       toast.error(error instanceof Error ? error.message : 'Falha ao carregar configuração do averbador.');
+    }
+  }
+
+  async function loadSelectedCredential(connection: string) {
+    try {
+      const response = await api.getCredential(normalizeMarginConnectionValue(connection));
+      setSelectedCredential(response.credential);
+    } catch (error) {
+      setSelectedCredential(null);
+      if (error instanceof ApiError && error.status === 404) {
+        return;
+      }
+      toast.error(error instanceof Error ? error.message : 'Falha ao verificar credencial do portal.');
     }
   }
 
@@ -341,7 +364,7 @@ export default function RibeiraoPage() {
       toast.error(getSessionBlockingMessage(session));
       return;
     }
-    const sessionId = session.id;
+    const sessionId = Number(session?.id || 0);
 
     const digits = cpf.replace(/\D/g, '');
     if (digits.length !== 11) {
@@ -411,16 +434,25 @@ export default function RibeiraoPage() {
       toast.error('Selecione uma conexão antes de iniciar a consulta.');
       return;
     }
-    if (selectedConnection !== 'prefeitura_ribeirao_preto') {
-      toast.error('Esta conexão ainda está em preparação. Use Prefeitura de Ribeirão Preto por enquanto.');
+    const normalizedConnection = normalizeMarginConnectionValue(selectedConnection);
+    if (normalizedConnection !== 'prefeitura_ribeirao_preto') {
+      toast.error('Fonte ainda não implementada. Configure a credencial para deixar o portal pronto.');
       return;
     }
-    if (!sessionReady || !session?.id) {
+    if (!selectedCredential?.has_password) {
+      toast.error('Credencial não configurada. Acesse a aba Credenciais para conectar este portal.');
+      return;
+    }
+    if (selectedCredential.session_status === 'sessao_expirada') {
+      toast.error('Sessão expirada. Reconecte ou execute login assistido na aba Credenciais.');
+      return;
+    }
+    if (false && (!sessionReady || !session?.id)) {
       toast.error('Para consultar em lote, primeiro conecte a sessão com o averbador.');
       return;
     }
     const sessionId = session.id;
-    if (!login.trim() || !password.trim()) {
+    if (false && (!login.trim() || !password.trim())) {
       toast.error('Informe login e senha da sessão.');
       return;
     }
@@ -445,6 +477,7 @@ export default function RibeiraoPage() {
       setBatchStartLoading(true);
       const response = await api.startRibeiraoBatch({
         session_id: sessionId,
+        portal_id: normalizedConnection,
         login: login.trim(),
         password,
         delay_seconds_min: delayMin,
@@ -930,6 +963,20 @@ export default function RibeiraoPage() {
                 <SummaryRow label="Saldo restante" value={0} />
                 <SummaryRow label="Retorno" value={RETURN_CHANNEL} />
               </div>
+
+              {selectedConnection ? (
+                <div className="mt-5 rounded-2xl border border-border bg-slate-950/45 px-4 py-3 text-sm text-slate-300">
+                  {selectedCredential?.has_password && selectedCredential?.login ? (
+                    <p>
+                      Credencial vinculada: <span className="font-semibold text-white">{selectedCredential.session_status_label || selectedCredential.session_status}</span>
+                    </p>
+                  ) : (
+                    <p className="text-amber-100">
+                      Credencial não configurada. Acesse a aba Credenciais para conectar este portal.
+                    </p>
+                  )}
+                </div>
+              ) : null}
 
               <Button
                 className="mt-7 w-full rounded-2xl border border-lime-200/30 bg-lime-300 px-5 py-5 text-base font-black text-slate-950 shadow-[0_18px_50px_rgba(190,242,100,0.2)] transition hover:bg-lime-200 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/10 disabled:text-slate-500 disabled:shadow-none"
@@ -1508,6 +1555,13 @@ function SummaryRow({ label, value }: { label: string; value: ReactNode }) {
 
 function getMarginConnectionLabel(value: string) {
   return MARGIN_CONNECTIONS.find((connection) => connection.value === value)?.label || '';
+}
+
+function normalizeMarginConnectionValue(value: string) {
+  if (value === 'prefeitura-ribeirao-preto') return 'prefeitura_ribeirao_preto';
+  if (value === 'governo-amapa') return 'governo_amapa';
+  if (value === 'governo-sp-tjsp') return 'governo_sp';
+  return value;
 }
 
 function batchConnectionLabel(batch: RibeiraoBatchRecord) {

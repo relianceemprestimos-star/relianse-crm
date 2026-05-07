@@ -1134,6 +1134,60 @@ function initSchema(database) {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
       FOREIGN KEY (base_id) REFERENCES bases(id) ON DELETE SET NULL
     );
+
+    CREATE TABLE IF NOT EXISTS averbador_credentials (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      portal_id TEXT NOT NULL,
+      portal_name TEXT NOT NULL DEFAULT '',
+      portal_url TEXT NOT NULL DEFAULT '',
+      login TEXT NOT NULL DEFAULT '',
+      encrypted_password TEXT NOT NULL DEFAULT '',
+      requires_captcha INTEGER NOT NULL DEFAULT 0,
+      requires_assisted_login INTEGER NOT NULL DEFAULT 0,
+      session_status TEXT NOT NULL DEFAULT 'nao_conectado',
+      last_access_at TEXT,
+      session_expires_at TEXT,
+      last_test_at TEXT,
+      last_error TEXT NOT NULL DEFAULT '',
+      created_by INTEGER,
+      updated_by INTEGER,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+      FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_averbador_credentials_portal_id ON averbador_credentials(portal_id);
+
+    CREATE TABLE IF NOT EXISTS averbador_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      credential_id INTEGER NOT NULL,
+      portal_id TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'nao_conectado',
+      storage_state_path TEXT NOT NULL DEFAULT '',
+      cookies_path TEXT NOT NULL DEFAULT '',
+      last_login_at TEXT,
+      expires_at TEXT,
+      requires_manual_action INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (credential_id) REFERENCES averbador_credentials(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS credential_connection_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      credential_id INTEGER,
+      portal_id TEXT NOT NULL DEFAULT '',
+      action TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT '',
+      message TEXT NOT NULL DEFAULT '',
+      error_message TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      created_by INTEGER,
+      FOREIGN KEY (credential_id) REFERENCES averbador_credentials(id) ON DELETE SET NULL,
+      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+    );
   `);
 
   ensureColumns(database, 'clients', [
@@ -1334,6 +1388,50 @@ function initSchema(database) {
     'not_found_count INTEGER NOT NULL DEFAULT 0',
   ]);
 
+  ensureColumns(database, 'averbador_credentials', [
+    'portal_id TEXT NOT NULL DEFAULT \'\'',
+    'portal_name TEXT NOT NULL DEFAULT \'\'',
+    'portal_url TEXT NOT NULL DEFAULT \'\'',
+    'login TEXT NOT NULL DEFAULT \'\'',
+    'encrypted_password TEXT NOT NULL DEFAULT \'\'',
+    'requires_captcha INTEGER NOT NULL DEFAULT 0',
+    'requires_assisted_login INTEGER NOT NULL DEFAULT 0',
+    'session_status TEXT NOT NULL DEFAULT \'nao_conectado\'',
+    'last_access_at TEXT',
+    'session_expires_at TEXT',
+    'last_test_at TEXT',
+    'last_error TEXT NOT NULL DEFAULT \'\'',
+    'created_by INTEGER',
+    'updated_by INTEGER',
+    'created_at TEXT NOT NULL DEFAULT \'\'',
+    'updated_at TEXT NOT NULL DEFAULT \'\'',
+  ]);
+
+  ensureColumns(database, 'averbador_sessions', [
+    'credential_id INTEGER NOT NULL DEFAULT 0',
+    'portal_id TEXT NOT NULL DEFAULT \'\'',
+    'status TEXT NOT NULL DEFAULT \'nao_conectado\'',
+    'storage_state_path TEXT NOT NULL DEFAULT \'\'',
+    'cookies_path TEXT NOT NULL DEFAULT \'\'',
+    'last_login_at TEXT',
+    'expires_at TEXT',
+    'requires_manual_action INTEGER NOT NULL DEFAULT 0',
+    'last_error TEXT NOT NULL DEFAULT \'\'',
+    'created_at TEXT NOT NULL DEFAULT \'\'',
+    'updated_at TEXT NOT NULL DEFAULT \'\'',
+  ]);
+
+  ensureColumns(database, 'credential_connection_logs', [
+    'credential_id INTEGER',
+    'portal_id TEXT NOT NULL DEFAULT \'\'',
+    'action TEXT NOT NULL DEFAULT \'\'',
+    'status TEXT NOT NULL DEFAULT \'\'',
+    'message TEXT NOT NULL DEFAULT \'\'',
+    'error_message TEXT NOT NULL DEFAULT \'\'',
+    'created_at TEXT NOT NULL DEFAULT \'\'',
+    'created_by INTEGER',
+  ]);
+
   database.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_base_cpf ON clients(base_id, cpf)');
   database.exec('CREATE INDEX IF NOT EXISTS idx_client_phones_client ON client_phones(client_id)');
   database.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_client_phones_unique ON client_phones(client_id, normalized_phone, source)');
@@ -1345,6 +1443,9 @@ function initSchema(database) {
   database.exec('CREATE INDEX IF NOT EXISTS idx_client_consultation_phones_consultation ON client_consultation_phones(consultation_id)');
   database.exec('CREATE INDEX IF NOT EXISTS idx_client_consultation_addresses_consultation ON client_consultation_addresses(consultation_id)');
   database.exec('CREATE INDEX IF NOT EXISTS idx_client_consultation_emails_consultation ON client_consultation_emails(consultation_id)');
+  database.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_averbador_credentials_portal_id ON averbador_credentials(portal_id)');
+  database.exec('CREATE INDEX IF NOT EXISTS idx_averbador_sessions_credential ON averbador_sessions(credential_id, updated_at)');
+  database.exec('CREATE INDEX IF NOT EXISTS idx_credential_connection_logs_created ON credential_connection_logs(created_at)');
 }
 
 function ensureColumns(database, table, columns) {
@@ -4428,6 +4529,290 @@ export function recordUserLogin(id) {
     .prepare('UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?')
     .run(nowIso(), nowIso(), id);
   return getUserById(id);
+}
+
+function mapAverbadorCredentialRow(row) {
+  if (!row) {
+    return null;
+  }
+  return {
+    ...row,
+    id: Number(row.id),
+    requires_captcha: Boolean(Number(row.requires_captcha || 0)),
+    requires_assisted_login: Boolean(Number(row.requires_assisted_login || 0)),
+    created_by: row.created_by === null || row.created_by === undefined ? null : Number(row.created_by),
+    updated_by: row.updated_by === null || row.updated_by === undefined ? null : Number(row.updated_by),
+  };
+}
+
+export function listAverbadorCredentials() {
+  const database = getDb();
+  return queryAll(
+    database,
+    `
+      SELECT *
+      FROM averbador_credentials
+      ORDER BY portal_name ASC, portal_id ASC
+    `
+  ).map(mapAverbadorCredentialRow);
+}
+
+export function getAverbadorCredentialById(id) {
+  const database = getDb();
+  return mapAverbadorCredentialRow(queryOne(database, 'SELECT * FROM averbador_credentials WHERE id = ? LIMIT 1', [Number(id)]));
+}
+
+export function getAverbadorCredentialByPortalId(portalId) {
+  const database = getDb();
+  return mapAverbadorCredentialRow(
+    queryOne(database, 'SELECT * FROM averbador_credentials WHERE portal_id = ? LIMIT 1', [String(portalId || '')])
+  );
+}
+
+export function upsertAverbadorCredential(input = {}) {
+  const database = getDb();
+  const now = nowIso();
+  const portalId = String(input.portal_id || input.portalId || '').trim();
+  const current = getAverbadorCredentialByPortalId(portalId);
+  const payload = {
+    portal_name: String(input.portal_name || input.portalName || current?.portal_name || ''),
+    portal_url: String(input.portal_url || input.portalUrl || current?.portal_url || ''),
+    login: String(input.login || current?.login || ''),
+    encrypted_password:
+      input.encrypted_password !== undefined
+        ? String(input.encrypted_password || '')
+        : String(current?.encrypted_password || ''),
+    requires_captcha: input.requires_captcha || input.requiresCaptcha ? 1 : 0,
+    requires_assisted_login: input.requires_assisted_login || input.requiresAssistedLogin ? 1 : 0,
+    session_status: String(input.session_status || input.sessionStatus || current?.session_status || 'nao_conectado'),
+    last_access_at: input.last_access_at ?? input.lastAccessAt ?? current?.last_access_at ?? null,
+    session_expires_at: input.session_expires_at ?? input.sessionExpiresAt ?? current?.session_expires_at ?? null,
+    last_test_at: input.last_test_at ?? input.lastTestAt ?? current?.last_test_at ?? null,
+    last_error: String(input.last_error ?? input.lastError ?? current?.last_error ?? ''),
+    updated_by: input.updated_by ?? input.updatedBy ?? current?.updated_by ?? null,
+  };
+
+  if (current) {
+    database
+      .prepare(
+        `
+          UPDATE averbador_credentials
+          SET portal_name = ?,
+              portal_url = ?,
+              login = ?,
+              encrypted_password = ?,
+              requires_captcha = ?,
+              requires_assisted_login = ?,
+              session_status = ?,
+              last_access_at = ?,
+              session_expires_at = ?,
+              last_test_at = ?,
+              last_error = ?,
+              updated_by = ?,
+              updated_at = ?
+          WHERE id = ?
+        `
+      )
+      .run(
+        payload.portal_name,
+        payload.portal_url,
+        payload.login,
+        payload.encrypted_password,
+        payload.requires_captcha,
+        payload.requires_assisted_login,
+        payload.session_status,
+        payload.last_access_at,
+        payload.session_expires_at,
+        payload.last_test_at,
+        payload.last_error,
+        payload.updated_by,
+        now,
+        current.id
+      );
+    return getAverbadorCredentialById(current.id);
+  }
+
+  const result = database
+    .prepare(
+      `
+        INSERT INTO averbador_credentials (
+          portal_id,
+          portal_name,
+          portal_url,
+          login,
+          encrypted_password,
+          requires_captcha,
+          requires_assisted_login,
+          session_status,
+          last_access_at,
+          session_expires_at,
+          last_test_at,
+          last_error,
+          created_by,
+          updated_by,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `
+    )
+    .run(
+      portalId,
+      payload.portal_name,
+      payload.portal_url,
+      payload.login,
+      payload.encrypted_password,
+      payload.requires_captcha,
+      payload.requires_assisted_login,
+      payload.session_status,
+      payload.last_access_at,
+      payload.session_expires_at,
+      payload.last_test_at,
+      payload.last_error,
+      input.created_by ?? input.createdBy ?? null,
+      payload.updated_by,
+      now,
+      now
+    );
+
+  return getAverbadorCredentialById(Number(result?.lastInsertRowid || 0));
+}
+
+export function updateAverbadorCredentialById(id, input = {}) {
+  const current = getAverbadorCredentialById(id);
+  if (!current) {
+    return null;
+  }
+  return upsertAverbadorCredential({ ...current, ...input, portal_id: current.portal_id });
+}
+
+export function upsertAverbadorSession(input = {}) {
+  const database = getDb();
+  const now = nowIso();
+  const credentialId = Number(input.credential_id || input.credentialId || 0);
+  const current = queryOne(
+    database,
+    'SELECT * FROM averbador_sessions WHERE credential_id = ? ORDER BY datetime(updated_at) DESC, id DESC LIMIT 1',
+    [credentialId]
+  );
+  const status = String(input.status || current?.status || 'nao_conectado');
+  const portalId = String(input.portal_id || input.portalId || current?.portal_id || '');
+  const storageStatePath = String(input.storage_state_path || input.storageStatePath || current?.storage_state_path || '');
+  const cookiesPath = String(input.cookies_path || input.cookiesPath || current?.cookies_path || '');
+  const lastLoginAt = input.last_login_at ?? input.lastLoginAt ?? current?.last_login_at ?? null;
+  const expiresAt = input.expires_at ?? input.expiresAt ?? current?.expires_at ?? null;
+  const requiresManualAction = input.requires_manual_action || input.requiresManualAction ? 1 : 0;
+  const lastError = String(input.last_error ?? input.lastError ?? current?.last_error ?? '');
+
+  if (current) {
+    database
+      .prepare(
+        `
+          UPDATE averbador_sessions
+          SET portal_id = ?,
+              status = ?,
+              storage_state_path = ?,
+              cookies_path = ?,
+              last_login_at = ?,
+              expires_at = ?,
+              requires_manual_action = ?,
+              last_error = ?,
+              updated_at = ?
+          WHERE id = ?
+        `
+      )
+      .run(portalId, status, storageStatePath, cookiesPath, lastLoginAt, expiresAt, requiresManualAction, lastError, now, current.id);
+    return queryOne(database, 'SELECT * FROM averbador_sessions WHERE id = ? LIMIT 1', [current.id]);
+  }
+
+  const result = database
+    .prepare(
+      `
+        INSERT INTO averbador_sessions (
+          credential_id,
+          portal_id,
+          status,
+          storage_state_path,
+          cookies_path,
+          last_login_at,
+          expires_at,
+          requires_manual_action,
+          last_error,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `
+    )
+    .run(credentialId, portalId, status, storageStatePath, cookiesPath, lastLoginAt, expiresAt, requiresManualAction, lastError, now, now);
+
+  return queryOne(database, 'SELECT * FROM averbador_sessions WHERE id = ? LIMIT 1', [Number(result?.lastInsertRowid || 0)]);
+}
+
+export function insertCredentialConnectionLog(input = {}) {
+  const database = getDb();
+  const now = nowIso();
+  const result = database
+    .prepare(
+      `
+        INSERT INTO credential_connection_logs (
+          credential_id,
+          portal_id,
+          action,
+          status,
+          message,
+          error_message,
+          created_at,
+          created_by
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `
+    )
+    .run(
+      input.credential_id ?? input.credentialId ?? null,
+      String(input.portal_id || input.portalId || ''),
+      String(input.action || ''),
+      String(input.status || ''),
+      String(input.message || ''),
+      String(input.error_message || input.errorMessage || ''),
+      now,
+      input.created_by ?? input.createdBy ?? null
+    );
+  return queryOne(database, 'SELECT * FROM credential_connection_logs WHERE id = ? LIMIT 1', [Number(result?.lastInsertRowid || 0)]);
+}
+
+export function listCredentialConnectionLogs(params = {}) {
+  const database = getDb();
+  const values = [];
+  const clauses = [];
+  if (params.portal_id || params.portalId) {
+    clauses.push('l.portal_id = ?');
+    values.push(String(params.portal_id || params.portalId));
+  }
+  if (params.credential_id || params.credentialId) {
+    clauses.push('l.credential_id = ?');
+    values.push(Number(params.credential_id || params.credentialId));
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+  return queryAll(
+    database,
+    `
+      SELECT
+        l.*,
+        c.portal_name,
+        c.portal_url,
+        u.name AS created_by_name
+      FROM credential_connection_logs l
+      LEFT JOIN averbador_credentials c ON c.id = l.credential_id
+      LEFT JOIN users u ON u.id = l.created_by
+      ${where}
+      ORDER BY datetime(l.created_at) DESC, l.id DESC
+      LIMIT 200
+    `,
+    values
+  ).map((row) => ({
+    ...row,
+    id: Number(row.id),
+    credential_id: row.credential_id === null || row.credential_id === undefined ? null : Number(row.credential_id),
+    created_by: row.created_by === null || row.created_by === undefined ? null : Number(row.created_by),
+  }));
 }
 
 export function createRibeiraoBatchRecord({

@@ -25,6 +25,9 @@ import type {
   ClientEnrichmentData,
   PhoneLookupJob,
   PhoneLookupHistoryItem,
+  AverbadorCredential,
+  CredentialConnectionLog,
+  CredentialPortalConfig,
 } from '../types';
 import { clearAuthSession, getAccessSession, getAuthToken } from './session';
 
@@ -232,6 +235,36 @@ export const api = {
   getSettings: () => request<{ settings: Settings }>('/api/settings'),
   getRibeiraoConfig: () => request<{ config: RibeiraoConfigStatus }>('/api/ribeirao/config'),
   getRibeiraoDiagnostics: () => request<{ diagnostics: RibeiraoDiagnostics }>('/api/ribeirao/diagnostics'),
+  getCredentialPortals: () => request<{ portals: CredentialPortalConfig[] }>('/api/credentials/portals'),
+  getCredentials: () => request<{ credentials: AverbadorCredential[] }>('/api/credentials'),
+  getCredential: (portalId: string) => request<{ credential: AverbadorCredential }>(`/api/credentials/${portalId}`),
+  saveCredential: (payload: { portal_id: string; portal_url?: string; login?: string; password?: string }) =>
+    request<{ credential: AverbadorCredential }>('/api/credentials', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updateCredential: (id: number, payload: { portal_url?: string; login?: string; password?: string }) =>
+    request<{ credential: AverbadorCredential }>(`/api/credentials/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  testCredential: (id: number) =>
+    request<{ credential: AverbadorCredential }>(`/api/credentials/${id}/test`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+  startAssistedLogin: (id: number) =>
+    request<{ credential: AverbadorCredential; portal_url: string; message: string }>(`/api/credentials/${id}/assisted-login/start`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+  confirmAssistedLogin: (id: number) =>
+    request<{ credential: AverbadorCredential }>(`/api/credentials/${id}/assisted-login/confirm`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+  getCredentialLogs: (filters: Record<string, string | number | undefined | null> = {}) =>
+    request<{ rows: CredentialConnectionLog[] }>(`/api/credentials/logs${buildQuery(filters)}`),
   getBases: (filters: Record<string, string | number | undefined | null> = {}) =>
     request<{ bases: Base[] }>(`/api/bases${buildQuery(filters)}`),
   renameBase: (id: number, nome_base: string) =>
@@ -519,6 +552,7 @@ export const api = {
   startRibeiraoBatch: (payload: {
     cpfs?: string[];
     session_id: number;
+    portal_id?: string;
     login?: string;
     password?: string;
     source_type?: RibeiraoBatchSourceType | 'upload' | 'base';

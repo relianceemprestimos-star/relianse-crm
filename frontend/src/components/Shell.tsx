@@ -9,6 +9,7 @@ import {
   ClipboardList,
   Files,
   Flag,
+  KeyRound,
   Landmark,
   LayoutDashboard,
   Layers3,
@@ -42,6 +43,7 @@ const navItems: NavItem[] = [
   { to: '/whatsapp', label: 'WhatsApp Web', icon: MessagesSquare, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/consulta-margem', label: 'Consulta de Margem', icon: Landmark, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/consulta-telefones', label: 'Consulta de Telefones', icon: PhoneCall, allowedRoles: ['gerencial', 'vendedor'] },
+  { to: '/credenciais', label: 'Credenciais', icon: KeyRound, allowedRoles: ['gerencial'] },
   { to: '/usuarios', label: 'Usuários', icon: Users, allowedRoles: ['gerencial'] },
   { to: '/configuracoes', label: 'Configurações', icon: Settings, allowedRoles: ['gerencial', 'vendedor'] },
 ];
@@ -59,6 +61,7 @@ const pageTitles: Record<string, string> = {
   '/consulta-margem': 'Consulta de Margem',
   '/consulta-ribeirao': 'Consulta de Margem',
   '/consulta-telefones': 'Consulta de Telefones',
+  '/credenciais': 'Credenciais',
   '/usuarios': 'Usuários',
   '/configuracoes': 'Configurações',
 };
