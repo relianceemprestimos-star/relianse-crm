@@ -1,208 +1,305 @@
 # Relianse CRM
 
-CRM escuro e moderno para atendimento, com:
+CRM operacional para a Relianse, empresa de credito consignado para servidores publicos, prefeituras, governos e convenios. O sistema centraliza bases de clientes, campanhas, fila de atendimento, historico comercial, relatorios, Consulta Ribeirao e consulta cadastral/telefones via Nova Vida.
 
-- login e perfis de acesso
-- cadastro de usuarios e troca de senha
-- upload e separacao de bases
-- fila e atendimento cliente por cliente
-- WhatsApp Web
-- Consulta Ribeirao individual e em lote
-- relatorios
-- persistencia em SQLite
+## Objetivo do projeto
 
-## Estrutura
+- Importar bases Excel/CSV de clientes.
+- Organizar clientes por campanhas e convenios.
+- Priorizar atendimento por margem disponivel.
+- Registrar atendimentos, retornos e status comerciais.
+- Consultar margem no portal Ribeirao/SAEC quando configurado.
+- Consultar telefones e dados cadastrais no Nova Vida quando configurado.
+- Exportar dados operacionais para acompanhamento comercial.
 
-- `frontend/` - React + Vite + TypeScript
-- `backend/` - Node.js + Express + SQLite
-- `docker-compose.yml` - stack de producao
-- `Caddyfile` - proxy reverso com HTTPS automatico
-- `scripts/backup.sh` - backup manual
+## Tecnologias usadas
 
-## Dominios de producao
+- Frontend: React, Vite, TypeScript, Tailwind CSS.
+- Backend: Node.js, Express, sql.js/SQLite, JWT, bcrypt.
+- Automacoes: Python, Playwright.
+- Docker: Docker Compose com backend, frontend Nginx e Caddy.
+- Banco: SQLite persistido em volume/pasta `data/`.
 
-Dominio principal:
-
-```text
-https://reliancecrm.com.br
-```
-
-Redirecionamento:
+## Estrutura de pastas
 
 ```text
-https://www.reliancecrm.com.br -> https://reliancecrm.com.br
+backend/                         Backend Node/Express
+backend/src/db.js                 Schema, persistencia e regras principais
+backend/src/server.js             Rotas HTTP da API
+backend/src/services/             Integracoes e workers
+backend/src/services/averbadores/ Consulta Ribeirao
+backend/src/services/phone_lookup Consulta Nova Vida
+frontend/                         Frontend React/Vite
+frontend/src/pages/               Telas do CRM
+docs/                             Documentacao operacional
+scripts/                          Scripts auxiliares
+data/                             Banco e sessoes locais, nao versionar
+uploads/                          Uploads locais, nao versionar
+logs/                             Logs locais, nao versionar
+docker-compose.yml                Stack de producao/local Docker
+Caddyfile                         Proxy HTTPS em producao
 ```
 
-## Execucao local
+## Configuracao de ambiente
 
-### Instalar dependencias
+Copie o exemplo e preencha manualmente os valores reais:
+
+```bash
+cp .env.example .env
+```
+
+Variaveis principais:
+
+```text
+CRM_DOMAIN
+CRM_WWW_DOMAIN
+APP_URL
+FRONTEND_URL
+BACKEND_URL
+CORS_ORIGIN
+BACKEND_PORT
+SQLITE_PATH
+DATABASE_PATH
+UPLOAD_DIR
+LOG_DIR
+JWT_SECRET
+VITE_API_URL
+PYTHON_BIN
+RIBEIRAO_AVERBADOR_URL
+RIBEIRAO_AVERBADOR_CONSULTA_URL
+RIBEIRAO_AVERBADOR_LOGIN
+RIBEIRAO_AVERBADOR_PASSWORD
+RIBEIRAO_AVERBADOR_ORGAO
+RIBEIRAO_HEADLESS
+PHONE_LOOKUP_ENABLED
+PHONE_LOOKUP_MAX_PER_RUN
+PHONE_LOOKUP_DELAY_SECONDS
+NOVA_VIDA_URL
+NOVA_VIDA_USERNAME
+NOVA_VIDA_USER
+NOVA_VIDA_CLIENT
+NOVA_VIDA_PASSWORD
+NOVA_VIDA_HEADLESS
+NOVA_VIDA_STORAGE_STATE
+```
+
+Nunca commite `.env`, bancos SQLite, logs, sessoes de navegador, planilhas reais ou arquivos de clientes.
+
+## Instalar localmente
+
+Requisitos:
+
+- Node.js compativel com o projeto.
+- npm.
+- Python 3.
+
+Instalacao:
 
 ```bash
 npm install
 ```
 
-### Rodar em desenvolvimento
+Rodar em desenvolvimento:
 
 ```bash
 npm run dev
 ```
 
-O frontend sobe em `http://localhost:5173` e o backend em `http://localhost:3001`.
+Padrao local:
 
-## Produção com Docker
+- Frontend: `http://localhost:5173`
+- Backend: `http://localhost:3001`
 
-### 1. Preparar a VPS
+Scripts uteis:
 
 ```bash
-ssh root@IP_DA_VPS
+npm run dev
+npm run dev:backend
+npm run dev:frontend
+npm run build --workspace frontend
+npm run migrate --workspace backend
+npm run seed --workspace backend
+```
+
+## Rodar com Docker
+
+Prepare o `.env` e execute:
+
+```bash
+docker compose up -d --build
+```
+
+Verificar containers:
+
+```bash
+docker compose ps
+docker compose logs --tail=100 backend
+docker compose logs --tail=100 frontend
+```
+
+Healthcheck:
+
+```bash
+curl http://localhost/api/health
+```
+
+Em VPS com dominio apontado para o servidor:
+
+```bash
+curl https://SEU_DOMINIO_AQUI/api/health
+```
+
+## Rodar na VPS
+
+Instalar dependencias basicas:
+
+```bash
 apt update && apt upgrade -y
 apt install -y git docker.io docker-compose-plugin
 systemctl enable --now docker
 ```
 
-### 2. Clonar o projeto
+Clonar:
 
 ```bash
-cd /opt
-git clone URL_DO_REPOSITORIO relianse-crm
-cd relianse-crm
-```
-
-### 3. Configurar ambiente
-
-```bash
+cd /root
+git clone https://github.com/relianceemprestimos-star/relianse-crm.git relianse-crm-main
+cd relianse-crm-main
 cp .env.example .env
 nano .env
 ```
 
-Preencha pelo menos:
-
-- `CRM_DOMAIN=reliancecrm.com.br`
-- `CRM_WWW_DOMAIN=www.reliancecrm.com.br`
-- `APP_URL=https://reliancecrm.com.br`
-- `FRONTEND_URL=https://reliancecrm.com.br`
-- `BACKEND_URL=https://reliancecrm.com.br/api`
-- `CORS_ORIGIN=https://reliancecrm.com.br`
-- `JWT_SECRET`
-- `RIBEIRAO_AVERBADOR_URL`
-- `RIBEIRAO_AVERBADOR_LOGIN`
-- `RIBEIRAO_AVERBADOR_PASSWORD`
-
-### 4. Subir a stack
+Subir:
 
 ```bash
 docker compose up -d --build
+docker compose ps
+docker compose logs -f backend
 ```
 
-### 5. Verificar
+Atualizar depois de novo commit:
 
 ```bash
-docker ps
-docker compose logs -f
-curl https://reliancecrm.com.br/api/health
-```
-
-### 6. Atualizar depois
-
-```bash
-git pull
+cd /root/relianse-crm-main
+git pull origin main
 docker compose up -d --build
+docker compose ps
 ```
 
-## DNS
+## Backup antes de mexer em producao
 
-Crie os registros no provedor do dominio:
+Antes de atualizar VPS ou banco real:
 
-- Tipo: `A`
-- Nome: `@`
-- Valor: IP da VPS
-
-- Tipo: `CNAME` ou `A`
-- Nome: `www`
-- Valor: `reliancecrm.com.br` ou IP da VPS
-
-Depois acesse:
-
-```text
-https://reliancecrm.com.br
+```bash
+mkdir -p /root/backups-relianse
+tar -czf /root/backups-relianse/relianse-$(date +%Y%m%d-%H%M%S).tar.gz data uploads logs .env
 ```
 
-O `www.reliancecrm.com.br` redireciona automaticamente para o dominio principal.
-
-## Banco e persistencia
-
-O projeto usa SQLite e persiste os dados em:
-
-- `./data`
-- `./uploads`
-- `./logs`
-
-No Docker, esses diretorios ficam bind-montados no host para nao perder dados em reinicializacoes.
-
-## Usuarios iniciais
-
-- Gerencial: `magali@admin` / `12345`
-- Vendedor: `vinicius@admin` / `12345`
-
-Troque as senhas apos o primeiro acesso.
-
-## Backup manual
-
-O script `scripts/backup.sh` cria um `.tar.gz` com:
-
-- `data`
-- `uploads`
-- `logs`
-- `backend/data` se existir
-
-Uso:
+Tambem existe:
 
 ```bash
 chmod +x scripts/backup.sh
 ./scripts/backup.sh
 ```
 
-## Consulta Ribeirao em producao
+## Funcionalidades principais
 
-A aba `Consulta Ribeirao` usa automacao com navegador.
+- Login e perfis gerencial/vendedor.
+- Upload de listas com preview e importacao.
+- Campanhas com clientes vinculados.
+- Bases e fila de clientes.
+- Atendimento cliente por cliente.
+- Relatorios.
+- WhatsApp Web estrutural.
+- Consulta Ribeirao individual/lote.
+- Consulta de Telefones/Dados Nova Vida.
 
-URL real encontrada no legado:
+## Consulta Ribeirao
 
-```text
-https://saec.consiglog.com.br/Login.aspx
+Configurar no `.env`:
+
+```env
+RIBEIRAO_AVERBADOR_URL=
+RIBEIRAO_AVERBADOR_CONSULTA_URL=
+RIBEIRAO_AVERBADOR_LOGIN=
+RIBEIRAO_AVERBADOR_PASSWORD=
+RIBEIRAO_AVERBADOR_ORGAO=
+RIBEIRAO_HEADLESS=true
 ```
 
-Se `RIBEIRAO_AVERBADOR_URL` estiver vazia na VPS, o backend retorna `MISSING_RIBEIRAO_URL` e a tela de Consulta Ribeirao bloqueia o botao de iniciar sessao com uma mensagem clara.
+Observacoes:
 
-Pontos importantes:
+- Em Docker/VPS, `RIBEIRAO_HEADLESS=true`.
+- O sistema nao burla CAPTCHA, certificado digital ou bloqueio manual.
+- Logs tecnicos ficam no backend; a UI deve mostrar mensagens classificadas.
 
-- nao burla CAPTCHA
-- se houver validacao manual, o fluxo pausa e aguarda o operador
-- a senha do portal nao e exposta no frontend
-- o worker legado do Ribeirao foi vendorizado dentro do backend para facilitar o deploy
-- Playwright e Python sao instalados na imagem do backend
-- em VPS/Docker, use `RIBEIRAO_HEADLESS=true`; `false` so funciona com DISPLAY/Xvfb disponível
-- se o Chromium nao subir, o backend retorna `BROWSER_LAUNCH_ERROR` com mensagem amigavel
+## Consulta Nova Vida
 
-Se o portal alterar o layout, apenas o modulo Ribeirao pode precisar de ajuste. O restante do CRM continua funcionando normalmente.
+Configurar no `.env`:
+
+```env
+PHONE_LOOKUP_ENABLED=true
+NOVA_VIDA_URL=
+NOVA_VIDA_USERNAME=
+NOVA_VIDA_USER=
+NOVA_VIDA_CLIENT=
+NOVA_VIDA_PASSWORD=
+NOVA_VIDA_HEADLESS=true
+NOVA_VIDA_STORAGE_STATE=/app/data/nova_vida_storage_state.json
+```
+
+A aba **Consulta de Telefones** tambem exibe dados cadastrais enriquecidos, quando retornados pela fonte:
+
+- nome completo;
+- CPF;
+- nascimento;
+- idade;
+- sexo;
+- mae/pai;
+- e-mails;
+- enderecos;
+- telefones;
+- dados brutos em `raw_data` para auditoria tecnica.
+
+Documentacao detalhada:
+
+- `docs/CONSULTA_TELEFONES_NOVA_VIDA.md`
+- `docs/CONSULTA_CADASTRAL_NOVA_VIDA.md`
+- `docs/INTEGRACAO_NOVA_VIDA.md`
+
+## Comandos de manutencao
+
+```bash
+git status
+git pull origin main
+npm install
+npm run build --workspace frontend
+node --check backend/src/server.js
+node --check backend/src/db.js
+python -m py_compile backend/src/services/phone_lookup/nova_vida_cli.py
+python -m py_compile backend/src/services/averbadores/ribeirao/ribeirao_cli.py
+docker compose config
+docker compose up -d --build
+docker compose logs -f backend
+docker compose exec backend env | grep -E "RIBEIRAO|NOVA_VIDA|PHONE_LOOKUP"
+```
 
 ## Seguranca
 
-- JWT com `JWT_SECRET` no `.env`
-- senha com hash `bcrypt`
-- `password_hash` nunca e devolvido ao frontend
-- CORS limitado ao dominio oficial em producao
-- upload limitado por tamanho e tipo
-- logs nao devem exibir senha, token ou CPF completo
+- Credenciais ficam somente em `.env` ou cofre seguro.
+- `.env`, bancos, logs, sessoes e uploads estao no `.gitignore`.
+- Nao enviar WhatsApp automaticamente sem comando humano.
+- Nao apagar banco real sem backup.
+- Nao consultar portais fora da finalidade comercial autorizada.
+- Nao expor senha, token, cookie ou dados pessoais completos em logs tecnicos.
 
-## Comandos rapidos
+## Transferencia para outro Codex
 
-```bash
-npm run migrate
-npm run seed
-npm run build:frontend
-npm run dev
-docker compose up -d --build
-docker compose logs -f
-docker compose restart
+Leia primeiro:
+
+```text
+INSTRUCOES_PARA_OUTRO_CODEX.md
+STATUS_DO_PROJETO.md
 ```
+
+Depois clone o repositorio, crie `.env` a partir de `.env.example`, instale dependencias e rode os comandos de validacao.

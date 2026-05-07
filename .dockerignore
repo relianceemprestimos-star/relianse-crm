@@ -1,5 +1,9 @@
 .git
 .gitignore
+.env
+.env.local
+.env.*.local
+.auth_login.json
 node_modules
 frontend/node_modules
 backend/node_modules
@@ -11,9 +15,16 @@ backend/data/*.sqlite
 backend/data/*.db
 data/*.sqlite
 data/*.db
+data/ribeirao_sessions
+backend/data/ribeirao_sessions
+backend/backend/data/ribeirao_sessions
+data/evidencias
+backend/data/evidencias
 uploads
 logs
 *.log
+*.pid
+tmp_*
+portal-*.png
 __pycache__
 *.pyc
-
