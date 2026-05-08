@@ -7,30 +7,22 @@ import {
   createWhatsappSendJobRecord,
   findClientByPhone,
   getClientById,
+  getLastWhatsappOutboundByPhone,
   getWhatsappConfigRecord,
   getWhatsappTemplateById,
   listWhatsappMessages,
   listWhatsappTemplates,
   saveWhatsappConfigRecord,
   saveWhatsappTemplateRecord,
+  updateClientWhatsappState,
   updateWhatsappMessageRecord,
 } from '../../db.js';
 import { cleanDigits, normalizePhoneToBrazilInternational } from '../../utils.js';
 import { MetaWhatsappProvider } from './meta_whatsapp_provider.js';
 import { UnofficialWhatsappProvider } from './unofficial_whatsapp_provider.js';
 import { WhatsappProviderError } from './whatsapp_provider_base.js';
-
-const BLOCKED_STATUSES = new Set([
-  'sem_interesse',
-  'sem interesse',
-  'bloqueado',
-  'nao_abordar',
-  'não_abordar',
-  'nao abordar',
-  'não abordar',
-  'finalizado_sem_interesse',
-  'finalizado sem interesse',
-]);
+import { canSendToClientByStatus, detectInboundIntent, maskPhone } from './whatsapp_rules_service.js';
+import { writeWhatsappLog } from './whatsapp_log_service.js';
 
 export class WhatsappServiceError extends Error {
   constructor(message, code = 'WHATSAPP_SERVICE_ERROR', status = 400) {
@@ -39,6 +31,10 @@ export class WhatsappServiceError extends Error {
     this.code = code;
     this.status = status;
   }
+}
+
+function nowIso() {
+  return new Date().toISOString();
 }
 
 function encryptionKey() {
@@ -74,10 +70,6 @@ function decryptSecret(value) {
   }
 }
 
-function nowIso() {
-  return new Date().toISOString();
-}
-
 function publicConfig(config) {
   if (!config) return null;
   const { encrypted_token: _encryptedToken, token: _token, ...safe } = config;
@@ -92,11 +84,13 @@ function envConfig() {
     provider: process.env.WHATSAPP_PROVIDER || 'unofficial',
     api_url: process.env.WHATSAPP_API_URL || '',
     token: process.env.WHATSAPP_API_TOKEN || '',
+    instance_id: process.env.WHATSAPP_INSTANCE_ID || '',
     default_country_code: process.env.WHATSAPP_DEFAULT_COUNTRY_CODE || '55',
     default_number: process.env.WHATSAPP_DEFAULT_NUMBER || '',
     enabled: String(process.env.WHATSAPP_ENABLED ?? 'true').toLowerCase() !== 'false',
-    send_delay_seconds: Number(process.env.WHATSAPP_SEND_DELAY_SECONDS || 5),
+    send_delay_seconds: Number(process.env.WHATSAPP_SEND_DELAY_SECONDS || 120),
     daily_limit_per_number: Number(process.env.WHATSAPP_DAILY_LIMIT_PER_NUMBER || 30),
+    manual_only: String(process.env.WHATSAPP_MANUAL_ONLY ?? 'true').toLowerCase() !== 'false',
     status: process.env.WHATSAPP_API_URL ? 'configured' : 'not_configured',
   };
 }
@@ -115,6 +109,7 @@ function getConfigWithSecret() {
     ...fallback,
     ...stored,
     api_url: stored.api_url || fallback.api_url,
+    instance_id: stored.instance_id || fallback.instance_id,
     default_country_code: stored.default_country_code || fallback.default_country_code,
     default_number: stored.default_number || fallback.default_number,
     token,
@@ -140,14 +135,6 @@ function resolveClient(clientId) {
   return result?.client || result || null;
 }
 
-function assertClientCanReceive(client) {
-  if (!client) return;
-  const status = String(client.status_atendimento || client.status || '').trim().toLowerCase();
-  if (BLOCKED_STATUSES.has(status)) {
-    throw new WhatsappServiceError('Cliente bloqueado, sem interesse ou marcado para nao abordar.', 'WHATSAPP_CLIENT_BLOCKED', 403);
-  }
-}
-
 function buildTemplateBody(template, variables = {}, client = null) {
   let body = String(template?.body || '');
   const replacements = {
@@ -155,10 +142,81 @@ function buildTemplateBody(template, variables = {}, client = null) {
     cpf: client?.cpf || variables.cpf || '',
     ...variables,
   };
-  Object.entries(replacements).forEach(([key, value]) => {
-    body = body.replace(new RegExp(`\\{${key}\\}`, 'g'), String(value ?? ''));
-  });
+  for (const [key, value] of Object.entries(replacements)) {
+    const safeValue = String(value ?? '');
+    body = body.replace(new RegExp(`\\{${key}\\}`, 'g'), safeValue);
+    body = body.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), safeValue);
+  }
   return body;
+}
+
+function validateClientRules(client) {
+  if (!client) return;
+  const status = String(client.status_atendimento || client.status || '').trim().toLowerCase();
+  if (!canSendToClientByStatus(status)) {
+    throw new WhatsappServiceError('Cliente bloqueado por regra de atendimento.', 'WHATSAPP_CLIENT_BLOCKED', 403);
+  }
+  if (Number(client.whatsapp_allowed ?? 1) !== 1) {
+    throw new WhatsappServiceError('Cliente sem permissão para WhatsApp.', 'WHATSAPP_NOT_ALLOWED', 403);
+  }
+  if (Number(client.whatsapp_opt_out ?? 0) === 1) {
+    throw new WhatsappServiceError('Cliente solicitou parar contato no WhatsApp.', 'WHATSAPP_OPTOUT', 403);
+  }
+  if (Number(client.whatsapp_blocked ?? 0) === 1) {
+    throw new WhatsappServiceError('Cliente bloqueado para contato no WhatsApp.', 'WHATSAPP_BLOCKED', 403);
+  }
+}
+
+function assertRateRules(config, targetPhone) {
+  const sentToday = countWhatsappMessagesSentToday({ phone: targetPhone, provider: config.provider });
+  const dailyLimit = Number(config.daily_limit_per_number || 30);
+  if (sentToday >= dailyLimit) {
+    throw new WhatsappServiceError('Limite diário por número atingido.', 'WHATSAPP_DAILY_LIMIT_REACHED', 429);
+  }
+
+  const delaySeconds = Math.max(0, Number(config.send_delay_seconds || 120));
+  if (delaySeconds > 0) {
+    const lastMessage = getLastWhatsappOutboundByPhone(targetPhone);
+    if (lastMessage) {
+      const sentAt = new Date(lastMessage.sent_at || lastMessage.created_at || 0).getTime();
+      if (!Number.isNaN(sentAt)) {
+        const elapsedSeconds = (Date.now() - sentAt) / 1000;
+        if (elapsedSeconds < delaySeconds) {
+          throw new WhatsappServiceError(`Aguarde ${Math.ceil(delaySeconds - elapsedSeconds)}s para novo envio nesse número.`, 'WHATSAPP_SEND_DELAY', 429);
+        }
+      }
+    }
+  }
+}
+
+function logSendAttempt({ client, phone, status, code = '', message = '' }) {
+  writeWhatsappLog(status === 'failed' ? 'error' : 'info', 'send_message', {
+    client_id: client?.id ?? null,
+    client_name: client?.name ?? '',
+    phone,
+    masked_phone: maskPhone(phone),
+    status,
+    code,
+    message,
+  });
+}
+
+async function runConnectionAction(action) {
+  const config = getConfigWithSecret();
+  if (!config.enabled) {
+    throw new WhatsappServiceError('WhatsApp API desativado.', 'WHATSAPP_DISABLED', 403);
+  }
+  const result = await getProvider(config)[action]();
+  saveWhatsappConfigRecord({
+    ...config,
+    status: result.connected ? 'connected' : result.status || 'pending',
+    qrcode: result.qrcode || '',
+    last_error: '',
+    last_test_at: nowIso(),
+    connected_at: result.connected ? nowIso() : config.connected_at,
+  });
+  writeWhatsappLog('info', action, { status: result.status || '', connected: Boolean(result.connected) });
+  return { config: getWhatsappConfig(), ...result };
 }
 
 export function getWhatsappConfig() {
@@ -169,7 +227,7 @@ export function saveWhatsappConfig(input = {}, userId = null) {
   const current = getConfigWithSecret();
   const token = input.token || input.api_token || input.whatsapp_api_token;
   const encryptedToken = token ? encryptSecret(token) : current.encrypted_token || '';
-  return saveWhatsappConfigRecord({
+  const config = saveWhatsappConfigRecord({
     provider: input.provider || current.provider || 'unofficial',
     api_url: input.api_url ?? current.api_url ?? '',
     encrypted_token: encryptedToken,
@@ -177,13 +235,15 @@ export function saveWhatsappConfig(input = {}, userId = null) {
     default_number: input.default_number ?? current.default_number ?? '',
     instance_id: input.instance_id ?? current.instance_id ?? '',
     enabled: input.enabled === undefined ? current.enabled : Boolean(input.enabled),
-    send_delay_seconds: Number(input.send_delay_seconds ?? current.send_delay_seconds ?? 5),
+    send_delay_seconds: Number(input.send_delay_seconds ?? current.send_delay_seconds ?? 120),
     daily_limit_per_number: Number(input.daily_limit_per_number ?? current.daily_limit_per_number ?? 30),
     status: input.status || current.status || 'configured',
     qrcode: input.qrcode ?? current.qrcode ?? '',
     last_error: '',
     updated_by: userId,
   });
+  writeWhatsappLog('info', 'save_config', { provider: config?.provider, api_url: config?.api_url, has_token: config?.has_token });
+  return config;
 }
 
 export async function getWhatsappStatus() {
@@ -206,61 +266,72 @@ export async function getWhatsappStatus() {
     });
     return { config: getWhatsappConfig(), ...status };
   } catch (error) {
-    saveWhatsappConfigRecord({ ...config, status: 'error', last_error: error.message || 'Erro ao consultar status.', last_test_at: nowIso() });
-    return { config: getWhatsappConfig(), connected: false, status: 'error', message: error.message, code: error.code };
+    saveWhatsappConfigRecord({
+      ...config,
+      status: 'error',
+      last_error: error instanceof Error ? error.message : 'Erro ao consultar status.',
+      last_test_at: nowIso(),
+    });
+    return {
+      config: getWhatsappConfig(),
+      connected: false,
+      status: 'error',
+      message: error instanceof Error ? error.message : 'Erro ao consultar status.',
+      code: error?.code || 'WHATSAPP_STATUS_ERROR',
+    };
   }
-}
-
-async function runConnectionAction(action) {
-  const config = getConfigWithSecret();
-  if (!config.enabled) {
-    throw new WhatsappServiceError('WhatsApp API desativado.', 'WHATSAPP_DISABLED', 403);
-  }
-  const provider = getProvider(config);
-  const result = await provider[action]();
-  saveWhatsappConfigRecord({
-    ...config,
-    status: result.connected ? 'connected' : result.status || 'pending',
-    qrcode: result.qrcode || '',
-    last_error: '',
-    last_test_at: nowIso(),
-    connected_at: result.connected ? nowIso() : config.connected_at,
-  });
-  return { config: getWhatsappConfig(), ...result };
 }
 
 export const connectWhatsapp = () => runConnectionAction('connect');
 export const reconnectWhatsapp = () => runConnectionAction('reconnect');
 export const testWhatsapp = () => runConnectionAction('getStatus');
 
+export async function getWhatsappQrCode() {
+  const config = getConfigWithSecret();
+  const result = await getProvider(config).getQrcode();
+  saveWhatsappConfigRecord({
+    ...config,
+    qrcode: result.qrcode || '',
+    status: result.status || config.status || 'unknown',
+    last_test_at: nowIso(),
+    connected_at: result.connected ? nowIso() : config.connected_at,
+  });
+  return { qrcode: result.qrcode || '', status: result.status || 'unknown', connected: Boolean(result.connected) };
+}
+
 export async function sendWhatsappMessage({ clientId, phone, message, templateId = null, userId = null } = {}) {
   const config = getConfigWithSecret();
   if (!config.enabled) {
     throw new WhatsappServiceError('WhatsApp API desativado.', 'WHATSAPP_DISABLED', 403);
   }
+
   const client = resolveClient(clientId);
-  assertClientCanReceive(client);
+  validateClientRules(client);
+
   const targetPhone = normalizeOutgoingPhone(phone || client?.phone || client?.telefone || '');
   if (!targetPhone) {
     throw new WhatsappServiceError('Telefone invalido ou ausente.', 'WHATSAPP_INVALID_PHONE', 400);
   }
+
   const body = String(message || '').trim();
   if (!body) {
     throw new WhatsappServiceError('Mensagem vazia.', 'WHATSAPP_EMPTY_MESSAGE', 400);
   }
-  const sentToday = countWhatsappMessagesSentToday({ phone: targetPhone, provider: config.provider });
-  const dailyLimit = Number(config.daily_limit_per_number || 30);
-  if (sentToday >= dailyLimit) {
+
+  try {
+    assertRateRules(config, targetPhone);
+  } catch (error) {
     createWhatsappSendJobRecord({
       client_id: client?.id ?? clientId ?? null,
       phone: targetPhone,
       template_id: templateId,
       message_body: body,
       status: 'blocked_by_rule',
-      error_message: 'Limite diario por numero atingido.',
+      error_message: error instanceof Error ? error.message : 'Bloqueado por regra.',
       created_by: userId,
     });
-    throw new WhatsappServiceError('Limite diario por numero atingido.', 'WHATSAPP_DAILY_LIMIT_REACHED', 429);
+    logSendAttempt({ client, phone: targetPhone, status: 'blocked_by_rule', code: error?.code || 'RULE_BLOCKED', message: error instanceof Error ? error.message : '' });
+    throw error;
   }
 
   try {
@@ -277,16 +348,21 @@ export async function sendWhatsappMessage({ clientId, phone, message, templateId
       sent_by: userId,
       sent_at: nowIso(),
     });
+
     if (client?.id) {
+      updateClientWhatsappState(client.id, {
+        whatsapp_last_contact_at: nowIso(),
+        whatsapp_status: 'sent',
+      });
       addInteraction(client.id, {
         userId,
         type: 'whatsapp_api_enviado',
         note: `Mensagem enviada via WhatsApp API para ${targetPhone}.`,
       });
     }
+    logSendAttempt({ client, phone: targetPhone, status: 'sent' });
     return { message: messageRecord, provider_result: result };
   } catch (error) {
-    const code = error instanceof WhatsappProviderError ? error.code : 'WHATSAPP_SEND_ERROR';
     const messageRecord = createWhatsappMessageRecord({
       client_id: client?.id ?? clientId ?? null,
       phone: targetPhone,
@@ -299,7 +375,18 @@ export async function sendWhatsappMessage({ clientId, phone, message, templateId
       sent_by: userId,
       sent_at: nowIso(),
     });
-    const serviceError = new WhatsappServiceError(error instanceof Error ? error.message : 'Falha ao enviar mensagem.', code, 502);
+    logSendAttempt({
+      client,
+      phone: targetPhone,
+      status: 'failed',
+      code: error?.code || 'WHATSAPP_SEND_ERROR',
+      message: error instanceof Error ? error.message : '',
+    });
+    const serviceError = new WhatsappServiceError(
+      error instanceof Error ? error.message : 'Falha ao enviar mensagem.',
+      error?.code || (error instanceof WhatsappProviderError ? error.code : 'WHATSAPP_SEND_ERROR'),
+      502
+    );
     serviceError.messageRecord = messageRecord;
     throw serviceError;
   }
@@ -333,6 +420,13 @@ export function saveWhatsappTemplate(input = {}) {
   return saveWhatsappTemplateRecord(input);
 }
 
+export function updateWhatsappTemplate(id, input = {}) {
+  return saveWhatsappTemplate({
+    ...input,
+    id: Number(id),
+  });
+}
+
 export function queueWhatsappSend(input = {}, userId = null) {
   return createWhatsappSendJobRecord({
     client_id: input.client_id ?? null,
@@ -345,7 +439,59 @@ export function queueWhatsappSend(input = {}, userId = null) {
   });
 }
 
-export function receiveWhatsappWebhook(payload = {}) {
+async function handleInboundIntent({ client, inboundText, phone, userId = null }) {
+  if (!client?.id) return null;
+  const intent = detectInboundIntent(inboundText);
+  if (intent === 'none') return { intent: 'none' };
+
+  if (intent === 'interest') {
+    updateClientWhatsappState(client.id, {
+      whatsapp_last_response_at: nowIso(),
+      whatsapp_status: 'interessado',
+      status_atendimento: 'em_atendimento',
+    });
+    addInteraction(client.id, {
+      userId,
+      type: 'whatsapp_interessado',
+      note: 'Cliente demonstrou interesse por WhatsApp. Humano deve assumir o atendimento.',
+    });
+
+    const template = listWhatsappTemplates({ active: true }).find((row) => String(row.category || '').toLowerCase() === 'resposta_interesse');
+    if (template) {
+      await sendWhatsappTemplate({ clientId: client.id, phone, templateId: template.id, variables: { nome: client.name }, userId });
+    }
+    return { intent: 'interest' };
+  }
+
+  if (intent === 'opt_out') {
+    const template = listWhatsappTemplates({ active: true }).find((row) => String(row.category || '').toLowerCase() === 'opt_out');
+    if (template) {
+      try {
+        await sendWhatsappTemplate({ clientId: client.id, phone, templateId: template.id, variables: { nome: client.name }, userId });
+      } catch {
+        // optional response, do not block opt-out update
+      }
+    }
+    updateClientWhatsappState(client.id, {
+      whatsapp_last_response_at: nowIso(),
+      whatsapp_status: 'opt_out',
+      whatsapp_opt_out: 1,
+      whatsapp_blocked: 1,
+      whatsapp_allowed: 0,
+      status_atendimento: 'sem_interesse',
+    });
+    addInteraction(client.id, {
+      userId,
+      type: 'whatsapp_opt_out',
+      note: 'Cliente pediu para nao receber mais contato por WhatsApp.',
+    });
+    return { intent: 'opt_out' };
+  }
+
+  return { intent: 'none' };
+}
+
+export async function receiveWhatsappWebhook(payload = {}) {
   const config = getConfigWithSecret();
   const provider = getProvider(config);
   const parsed = provider.receiveWebhook(payload);
@@ -354,27 +500,41 @@ export function receiveWhatsappWebhook(payload = {}) {
     if (event.type === 'message') {
       const phone = normalizeOutgoingPhone(event.phone || '');
       const client = findClientByPhone(phone);
-      saved.push(
-        createWhatsappMessageRecord({
-          client_id: client?.id ?? null,
-          phone,
-          direction: event.direction || 'inbound',
-          provider: config.provider || 'unofficial',
-          message_body: event.body || '',
-          status: event.status || 'received',
-          provider_message_id: event.providerMessageId || '',
-          received_at: nowIso(),
-        })
-      );
+      const row = createWhatsappMessageRecord({
+        client_id: client?.id ?? null,
+        phone,
+        direction: event.direction || 'inbound',
+        provider: config.provider || 'unofficial',
+        message_body: event.body || '',
+        status: event.status || 'received',
+        provider_message_id: event.providerMessageId || '',
+        received_at: nowIso(),
+      });
+      saved.push(row);
+      writeWhatsappLog('info', 'webhook_message', {
+        client_id: client?.id ?? null,
+        phone,
+        status: row.status,
+      });
       if (client?.id) {
+        updateClientWhatsappState(client.id, {
+          whatsapp_last_response_at: nowIso(),
+          whatsapp_status: 'received',
+        });
         addInteraction(client.id, {
           userId: null,
           type: 'whatsapp_api_recebido',
           note: 'Mensagem recebida via WhatsApp API.',
         });
+        await handleInboundIntent({
+          client,
+          inboundText: event.body || '',
+          phone,
+          userId: null,
+        });
       }
     } else if (event.type === 'status' && event.providerMessageId) {
-      const current = getWhatsappMessages({ search: event.providerMessageId, limit: 1 })[0];
+      const current = listWhatsappMessages({ search: event.providerMessageId, limit: 1 })[0];
       if (current) {
         saved.push(
           updateWhatsappMessageRecord(current.id, {
@@ -404,7 +564,7 @@ export function canSendWhatsappToClient(clientId) {
     return { allowed: false, reason: 'Cliente nao encontrado.' };
   }
   try {
-    assertClientCanReceive(client);
+    validateClientRules(client);
     const phone = normalizeOutgoingPhone(client.phone || '');
     if (!phone) return { allowed: false, reason: 'Cliente sem telefone valido.' };
     return { allowed: true, phone };

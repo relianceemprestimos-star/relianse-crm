@@ -1,4 +1,4 @@
-import fs from 'node:fs';
+﻿import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -53,7 +53,7 @@ const SAMPLE_BASE = {
   estado: 'SP',
   cidade: '',
   arquivo_original: 'clientes_exemplo.csv',
-  observacao: 'Base de demonstração criada automaticamente.',
+  observacao: 'Base de demonstraÃ§Ã£o criada automaticamente.',
 };
 
 const SAMPLE_CLIENTS = [
@@ -320,8 +320,8 @@ function baseTypeLabel(type) {
     'Governo Estadual': 'Governo Estadual',
     Prefeitura: 'Prefeitura',
     SPPREV: 'SPPREV',
-    'Polícia Militar': 'Polícia Militar',
-    Câmara: 'Câmara',
+    'Policia Militar': 'Policia Militar',
+    Camara: 'Camara',
     Autarquia: 'Autarquia',
     Outro: 'Outro',
   };
@@ -347,7 +347,7 @@ function suggestedBaseNameFromFilename(filename) {
     .replace(/\babril\b/gi, 'Abril')
     .replace(/\bjaneiro\b/gi, 'Janeiro')
     .replace(/\bfevereiro\b/gi, 'Fevereiro')
-    .replace(/\bmarco\b/gi, 'Março')
+    .replace(/\bmarco\b/gi, 'MarÃ§o')
     .replace(/\babril\b/gi, 'Abril')
     .replace(/\bmaio\b/gi, 'Maio')
     .replace(/\bjunho\b/gi, 'Junho')
@@ -508,17 +508,17 @@ function clientDto(database, row, margins = [], interactions = [], returns = [],
     margins: [
       {
         product_type: 'consignacao',
-        product_label: 'Consignação',
+        product_label: 'ConsignaÃ§Ã£o',
         ...marginMap.consignacao,
       },
       {
         product_type: 'credito',
-        product_label: 'Crédito',
+        product_label: 'CrÃ©dito',
         ...marginMap.credito,
       },
       {
         product_type: 'cartao',
-        product_label: 'Cartão',
+        product_label: 'CartÃ£o',
         ...marginMap.cartao,
       },
       {
@@ -1278,6 +1278,12 @@ function initSchema(database) {
     'queue_position INTEGER NOT NULL DEFAULT 0',
     'created_at TEXT NOT NULL',
     'updated_at TEXT NOT NULL',
+    'whatsapp_allowed INTEGER NOT NULL DEFAULT 1',
+    'whatsapp_opt_out INTEGER NOT NULL DEFAULT 0',
+    'whatsapp_blocked INTEGER NOT NULL DEFAULT 0',
+    'whatsapp_last_contact_at TEXT',
+    'whatsapp_last_response_at TEXT',
+    'whatsapp_status TEXT NOT NULL DEFAULT \'ready\'',
   ]);
 
   ensureColumns(database, 'campaigns', [
@@ -1444,6 +1450,12 @@ function initSchema(database) {
   ensureColumns(database, 'clients', [
     'nova_vida_last_lookup_at TEXT',
     'nova_vida_lookup_status TEXT NOT NULL DEFAULT \'never_searched\'',
+    'whatsapp_allowed INTEGER NOT NULL DEFAULT 1',
+    'whatsapp_opt_out INTEGER NOT NULL DEFAULT 0',
+    'whatsapp_blocked INTEGER NOT NULL DEFAULT 0',
+    'whatsapp_last_contact_at TEXT',
+    'whatsapp_last_response_at TEXT',
+    'whatsapp_status TEXT NOT NULL DEFAULT \'ready\'',
   ]);
 
   ensureColumns(database, 'ribeirao_margin_queries', [
@@ -1629,7 +1641,7 @@ function getCampaignByName(database, name) {
 function createCampaignRecord(database, campaignInput = {}, createdBy = null) {
   const now = nowIso();
   const name = normalizeBaseText(campaignInput.name || campaignInput.nome || DEFAULT_CAMPAIGN_NAME) || DEFAULT_CAMPAIGN_NAME;
-  const convenio = normalizeBaseText(campaignInput.convenio || campaignInput.orgao || 'Não definido');
+  const convenio = normalizeBaseText(campaignInput.convenio || campaignInput.orgao || 'NÃ£o definido');
   const description = normalizeBaseText(campaignInput.description || campaignInput.descricao || '');
   const productFocus = normalizeCampaignProductFocus(campaignInput.product_focus || campaignInput.productFocus || 'outros');
   const status = normalizeCampaignStatus(campaignInput.status || 'active');
@@ -1715,7 +1727,7 @@ function ensureDefaultCampaign(database) {
       database,
       {
         name: DEFAULT_CAMPAIGN_NAME,
-        convenio: 'Não definido',
+        convenio: 'NÃ£o definido',
         description: 'Campanha criada automaticamente para dados legados.',
         product_focus: 'outros',
         status: 'active',
@@ -1752,7 +1764,7 @@ function resolveCampaignIdForInput(database, campaignInput = {}) {
       database,
       {
         name: campaignName,
-        convenio: campaignInput.convenio || campaignInput.orgao || campaignInput.convenio_orgao || 'Não definido',
+        convenio: campaignInput.convenio || campaignInput.orgao || campaignInput.convenio_orgao || 'NÃ£o definido',
         description: campaignInput.description || campaignInput.descricao || '',
         product_focus: campaignInput.product_focus || campaignInput.productFocus || 'outros',
         status: campaignInput.status || 'active',
@@ -2266,19 +2278,35 @@ function seedDefaults(database) {
     }
   }
 
-  const templateCount = Number((queryOne(database, 'SELECT COUNT(*) AS count FROM whatsapp_templates') || { count: 0 }).count || 0);
-  if (templateCount === 0) {
-    const now = nowIso();
-    const insertTemplate = database.prepare(
-      'INSERT INTO whatsapp_templates (name, category, body, variables, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    );
+  const now = nowIso();
+  const insertTemplate = database.prepare(
+    'INSERT INTO whatsapp_templates (name, category, body, variables, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  );
+  const requiredTemplates = [
     [
-      ['Primeira abordagem', 'abordagem', 'Olá, {nome}. Tudo bem? Aqui é da Reliance. Identificamos uma oportunidade no seu consignado. Posso te passar uma simulação sem compromisso?', '["nome"]'],
-      ['Retorno agendado', 'retorno', 'Olá, {nome}. Passando no horário combinado para retomar sua simulação de consignado.', '["nome"]'],
-      ['Humano assumir', 'humano_assumir', 'Vou direcionar seu atendimento para uma pessoa da equipe agora.', '[]'],
-    ].forEach(([name, category, body, variables]) => {
+      'Primeiro contato consignado',
+      'abordagem',
+      'Oie, {{nome}}, tudo bem?\nE a Aline, correspondente bancaria.\n\nEstou entrando em contato porque apareceu uma possibilidade de consulta/simulacao de credito consignado para o seu perfil.\n\nPosso te enviar uma simulacao sem compromisso?',
+      '["nome"]',
+    ],
+    [
+      'Cliente interessado',
+      'resposta_interesse',
+      'Perfeito, {{nome}}. Vou verificar as melhores condicoes disponiveis hoje e ja te envio uma simulacao sem compromisso.',
+      '["nome"]',
+    ],
+    [
+      'Sem interesse',
+      'opt_out',
+      'Tudo bem, {{nome}}. Obrigada pelo retorno. Vou deixar registrado aqui para nao te incomodar novamente.',
+      '["nome"]',
+    ],
+  ];
+  for (const [name, category, body, variables] of requiredTemplates) {
+    const existing = queryOne(database, 'SELECT id FROM whatsapp_templates WHERE LOWER(name) = LOWER(?) LIMIT 1', [name]);
+    if (!existing) {
       insertTemplate.run(name, category, body, variables, 1, now, now);
-    });
+    }
   }
 
   const clientCount = Number((queryOne(database, 'SELECT COUNT(*) AS count FROM clients') || { count: 0 }).count || 0);
@@ -2643,7 +2671,7 @@ function extractConsultaFields(row, headers) {
       'Mensagem da consulta',
       'Mensagem Consulta',
       'Observacao',
-      'Observação',
+      'ObservaÃ§Ã£o',
       'Retorno',
       'Erro',
     ]) || '';
@@ -4019,7 +4047,7 @@ export function enqueuePhoneLookupForMarginClients(params = {}) {
   const filters = [
     'LENGTH(c.cpf) = 11',
     'COALESCE(c.best_net_margin, c.current_margin, 0) > 0',
-    "LOWER(COALESCE(c.status_atendimento, c.status, '')) NOT IN ('sem_interesse', 'bloqueado', 'nao_abordar', 'não_abordar', 'nao abordar', 'não abordar', 'finalizado_sem_interesse')",
+    "LOWER(COALESCE(c.status_atendimento, c.status, '')) NOT IN ('sem_interesse', 'bloqueado', 'nao_abordar', 'nÃ£o_abordar', 'nao abordar', 'nÃ£o abordar', 'finalizado_sem_interesse')",
   ];
 
   if (!force) {
@@ -4520,6 +4548,49 @@ export function createWhatsappSendJobRecord(input = {}) {
   return queryOne(database, 'SELECT * FROM whatsapp_send_jobs ORDER BY id DESC LIMIT 1');
 }
 
+export function listWhatsappSendJobs(params = {}) {
+  const database = getDb();
+  const filters = [];
+  const values = [];
+  if (params.status) {
+    filters.push('status = ?');
+    values.push(String(params.status));
+  }
+  if (params.client_id) {
+    filters.push('client_id = ?');
+    values.push(Number(params.client_id));
+  }
+  const limit = Math.min(Math.max(Number(params.limit || 100), 1), 500);
+  return queryAll(
+    database,
+    `
+      SELECT *
+      FROM whatsapp_send_jobs
+      ${filters.length ? `WHERE ${filters.join(' AND ')}` : ''}
+      ORDER BY datetime(COALESCE(scheduled_at, created_at)) ASC, id ASC
+      LIMIT ${limit}
+    `,
+    values
+  );
+}
+
+export function updateWhatsappSendJobRecord(id, patch = {}) {
+  const database = getDb();
+  const current = queryOne(database, 'SELECT * FROM whatsapp_send_jobs WHERE id = ?', [Number(id)]);
+  if (!current) return null;
+  const next = {
+    status: patch.status ?? current.status,
+    scheduled_at: patch.scheduled_at ?? current.scheduled_at ?? null,
+    sent_at: patch.sent_at ?? current.sent_at ?? null,
+    error_message: patch.error_message ?? current.error_message ?? '',
+  };
+  database
+    .prepare('UPDATE whatsapp_send_jobs SET status = ?, scheduled_at = ?, sent_at = ?, error_message = ? WHERE id = ?')
+    .run(next.status, next.scheduled_at, next.sent_at, next.error_message, Number(id));
+  persistDb();
+  return queryOne(database, 'SELECT * FROM whatsapp_send_jobs WHERE id = ?', [Number(id)]);
+}
+
 export function countWhatsappMessagesSentToday({ phone, provider }) {
   const database = getDb();
   const day = nowIso().slice(0, 10);
@@ -4537,6 +4608,23 @@ export function countWhatsappMessagesSentToday({ phone, provider }) {
     [phone || '', provider || 'unofficial', day]
   );
   return Number(row?.total || 0);
+}
+
+export function getLastWhatsappOutboundByPhone(phone) {
+  const database = getDb();
+  return queryOne(
+    database,
+    `
+      SELECT *
+      FROM whatsapp_messages
+      WHERE phone = ?
+        AND direction = 'outbound'
+        AND status IN ('sent', 'delivered', 'read')
+      ORDER BY datetime(COALESCE(sent_at, created_at)) DESC, id DESC
+      LIMIT 1
+    `,
+    [phone || '']
+  );
 }
 
 export function findClientByPhone(phone) {
@@ -4560,6 +4648,53 @@ export function findClientByPhone(phone) {
     [normalized, digits, normalized, digits, normalized, digits]
   );
   return row ? clientDto(database, row, getClientMargins(database, row.id), [], [], []) : null;
+}
+
+export function updateClientWhatsappState(clientId, patch = {}) {
+  const database = getDb();
+  const current = queryOne(database, 'SELECT * FROM clients WHERE id = ?', [Number(clientId)]);
+  if (!current) return null;
+  const updates = [];
+  const values = [];
+  if (patch.whatsapp_allowed !== undefined) {
+    updates.push('whatsapp_allowed = ?');
+    values.push(patch.whatsapp_allowed ? 1 : 0);
+  }
+  if (patch.whatsapp_opt_out !== undefined) {
+    updates.push('whatsapp_opt_out = ?');
+    values.push(patch.whatsapp_opt_out ? 1 : 0);
+  }
+  if (patch.whatsapp_blocked !== undefined) {
+    updates.push('whatsapp_blocked = ?');
+    values.push(patch.whatsapp_blocked ? 1 : 0);
+  }
+  if (patch.whatsapp_last_contact_at !== undefined) {
+    updates.push('whatsapp_last_contact_at = ?');
+    values.push(patch.whatsapp_last_contact_at || null);
+  }
+  if (patch.whatsapp_last_response_at !== undefined) {
+    updates.push('whatsapp_last_response_at = ?');
+    values.push(patch.whatsapp_last_response_at || null);
+  }
+  if (patch.whatsapp_status !== undefined) {
+    updates.push('whatsapp_status = ?');
+    values.push(String(patch.whatsapp_status || 'ready'));
+  }
+  if (patch.status_atendimento !== undefined) {
+    updates.push('status_atendimento = ?');
+    values.push(String(patch.status_atendimento || current.status_atendimento || 'novo_na_fila'));
+    updates.push('status = ?');
+    values.push(String(patch.status_atendimento || current.status || 'novo_na_fila'));
+  }
+  if (!updates.length) {
+    return getClientById(Number(clientId));
+  }
+  updates.push('updated_at = ?');
+  values.push(nowIso());
+  values.push(Number(clientId));
+  database.prepare(`UPDATE clients SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+  persistDb();
+  return getClientById(Number(clientId));
 }
 
 export function getDashboardData(params = {}) {
@@ -5855,3 +5990,4 @@ export function archiveBase(id, archived = true) {
   persistDb();
   return queryOne(database, 'SELECT * FROM bases WHERE id = ?', [id]);
 }
+

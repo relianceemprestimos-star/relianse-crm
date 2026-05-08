@@ -104,6 +104,7 @@ import {
   connectWhatsapp,
   getWhatsappConfig,
   getWhatsappMessages,
+  getWhatsappQrCode,
   getWhatsappStatus,
   getWhatsappTemplates,
   reconnectWhatsapp,
@@ -113,6 +114,7 @@ import {
   sendWhatsappMessage,
   sendWhatsappTemplate,
   testWhatsapp,
+  updateWhatsappTemplate,
   verifyMetaWebhook,
   WhatsappServiceError,
 } from './services/whatsapp/whatsapp_service.js';
@@ -420,8 +422,24 @@ app.post('/api/whatsapp/reconnect', roleMiddleware(['gerencial']), async (_req, 
   }
 });
 
-app.post('/api/whatsapp/test', roleMiddleware(['gerencial']), async (_req, res) => {
+app.get('/api/whatsapp/qrcode', roleMiddleware(['gerencial']), async (_req, res) => {
   try {
+    return res.json(await getWhatsappQrCode());
+  } catch (error) {
+    return handleWhatsappError(res, error);
+  }
+});
+
+app.post('/api/whatsapp/test', roleMiddleware(['gerencial']), async (req, res) => {
+  try {
+    if (String(req.body?.phone || '').trim() && String(req.body?.message || '').trim()) {
+      const testResult = await sendWhatsappMessage({
+        phone: req.body.phone,
+        message: req.body.message,
+        userId: getAuthenticatedUserId(req),
+      });
+      return res.json({ test_send: true, ...testResult });
+    }
     return res.json(await testWhatsapp());
   } catch (error) {
     return handleWhatsappError(res, error);
@@ -469,6 +487,14 @@ app.get('/api/whatsapp/templates', (req, res) => {
 app.post('/api/whatsapp/templates', roleMiddleware(['gerencial']), (req, res) => {
   try {
     return res.json({ template: saveWhatsappTemplate(req.body || {}) });
+  } catch (error) {
+    return handleWhatsappError(res, error);
+  }
+});
+
+app.put('/api/whatsapp/templates/:id', roleMiddleware(['gerencial']), (req, res) => {
+  try {
+    return res.json({ template: updateWhatsappTemplate(Number(req.params.id), req.body || {}) });
   } catch (error) {
     return handleWhatsappError(res, error);
   }

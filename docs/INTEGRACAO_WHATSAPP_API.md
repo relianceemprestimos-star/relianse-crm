@@ -20,9 +20,11 @@ WHATSAPP_API_TOKEN=
 WHATSAPP_TOKEN_ENCRYPTION_KEY=
 WHATSAPP_DEFAULT_COUNTRY_CODE=55
 WHATSAPP_DEFAULT_NUMBER=
-WHATSAPP_SEND_DELAY_SECONDS=5
+WHATSAPP_INSTANCE_ID=
+WHATSAPP_SEND_DELAY_SECONDS=120
 WHATSAPP_DAILY_LIMIT_PER_NUMBER=30
 WHATSAPP_ENABLED=true
+WHATSAPP_MANUAL_ONLY=true
 
 META_WHATSAPP_ACCESS_TOKEN=
 META_WHATSAPP_PHONE_NUMBER_ID=
@@ -58,12 +60,14 @@ GET  /api/whatsapp/config
 POST /api/whatsapp/config
 POST /api/whatsapp/connect
 POST /api/whatsapp/reconnect
+GET  /api/whatsapp/qrcode
 POST /api/whatsapp/test
 POST /api/whatsapp/send
 POST /api/whatsapp/send-template
 GET  /api/whatsapp/messages
 GET  /api/whatsapp/templates
 POST /api/whatsapp/templates
+PUT  /api/whatsapp/templates/:id
 GET  /api/whatsapp/webhook
 POST /api/whatsapp/webhook
 ```
@@ -114,6 +118,7 @@ O backend bloqueia envio quando:
 - cliente está marcado como `nao_abordar` / `não abordar`;
 - telefone está vazio ou inválido;
 - limite diário por número foi atingido.
+- ainda não passou o intervalo mínimo entre mensagens (`WHATSAPP_SEND_DELAY_SECONDS`).
 
 Toda tentativa bem-sucedida ou com falha gera registro em `whatsapp_messages`.
 
@@ -137,6 +142,19 @@ https://SEU_DOMINIO/api/whatsapp/webhook
 ```
 
 O webhook tenta associar mensagens recebidas ao cliente pelo telefone.
+
+Regras de intenção no webhook:
+
+- Interesse (`pode mandar`, `sim`, `quero`, `manda`, `pode`):
+  - marca cliente com status de interesse no WhatsApp;
+  - registra interação para humano assumir;
+  - responde com template `Cliente interessado` (quando ativo).
+
+- Recusa / opt-out (`não tenho interesse`, `não quero`, `parar`, `remover`, `bloquear`, `não me chama`):
+  - marca `whatsapp_opt_out=1`;
+  - bloqueia novos envios (`whatsapp_allowed=0`, `whatsapp_blocked=1`);
+  - marca atendimento como `sem_interesse`;
+  - responde com template `Sem interesse` quando possível.
 
 ## Limitações atuais
 

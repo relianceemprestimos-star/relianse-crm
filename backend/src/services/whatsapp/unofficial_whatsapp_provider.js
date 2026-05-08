@@ -97,6 +97,22 @@ export class UnofficialWhatsappProvider extends WhatsappProviderBase {
     };
   }
 
+  async getQrcode() {
+    if (!this.configured) {
+      throw new WhatsappProviderError('API URL nao configurada.', 'WHATSAPP_NOT_CONFIGURED');
+    }
+    const data = await requestJson(joinUrl(this.config.api_url, 'qrcode'), {
+      method: 'GET',
+      token: this.config.token,
+    });
+    return {
+      connected: Boolean(data.connected ?? false),
+      status: data.status || (data.qrcode || data.qr ? 'waiting_scan' : 'unknown'),
+      qrcode: data.qrcode || data.qr || data.qrCode || '',
+      raw: data,
+    };
+  }
+
   async sendMessage(phone, message) {
     if (!this.configured) {
       throw new WhatsappProviderError('API URL nao configurada.', 'WHATSAPP_NOT_CONFIGURED');

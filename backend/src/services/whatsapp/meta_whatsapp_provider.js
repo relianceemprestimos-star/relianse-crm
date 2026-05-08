@@ -61,6 +61,10 @@ export class MetaWhatsappProvider extends WhatsappProviderBase {
     return this.getStatus();
   }
 
+  async getQrcode() {
+    return { connected: true, status: 'not_required', qrcode: '' };
+  }
+
   async sendMessage(phone, message) {
     if (!this.configured) {
       throw new WhatsappProviderError('Credenciais da Meta nao configuradas.', 'META_WHATSAPP_NOT_CONFIGURED');

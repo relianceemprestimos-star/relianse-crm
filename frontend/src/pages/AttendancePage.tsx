@@ -19,7 +19,7 @@ import toast from 'react-hot-toast';
 import { api } from '../lib/api';
 import { formatCpfDisplay, formatPhoneDisplay, openWhatsAppConversation } from '../lib/whatsapp';
 import { formatCurrencyDisplay, marginState, productLabel } from '../lib/margins';
-import type { Client, Settings } from '../types';
+import type { Client, Settings, WhatsappTemplate } from '../types';
 import { useAuth } from '../components/AuthProvider';
 import { Badge, Button, Card, Input, Modal, SectionHeader, Textarea } from '../components/ui';
 
@@ -60,6 +60,8 @@ export default function AttendancePage() {
   const [queuePosition, setQueuePosition] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
   const [whatsappApiMessage, setWhatsappApiMessage] = useState('');
   const [whatsappApiSending, setWhatsappApiSending] = useState(false);
+  const [whatsappTemplates, setWhatsappTemplates] = useState<WhatsappTemplate[]>([]);
+  const [selectedWhatsappTemplateId, setSelectedWhatsappTemplateId] = useState('');
 
   const baseScope = useMemo(
     () => ({
@@ -73,9 +75,14 @@ export default function AttendancePage() {
     let active = true;
     async function loadSettings() {
       try {
-        const [settingsResponse, dashboardResponse] = await Promise.all([api.getSettings(), api.getDashboard(baseScope)]);
+        const [settingsResponse, dashboardResponse, whatsappTemplatesResponse] = await Promise.all([
+          api.getSettings(),
+          api.getDashboard(baseScope),
+          api.getWhatsappTemplates({ active: 1 }),
+        ]);
         if (!active) return;
         setSettings(settingsResponse.settings);
+        setWhatsappTemplates(whatsappTemplatesResponse.rows || []);
         setQueuePosition({
           current: dashboardResponse.nextClient?.queue_position ?? 0,
           total: dashboardResponse.nextClient?.queue_total ?? dashboardResponse.stats.queue_clients ?? 0,
@@ -550,6 +557,29 @@ export default function AttendancePage() {
                   <Badge tone="info">Controle operacional</Badge>
                 </div>
                 <div className="mt-3 space-y-3">
+                  <select
+                    className="w-full rounded-2xl border border-border bg-bg/80 px-4 py-3 text-sm text-slate-100 outline-none transition focus:border-accent/60 focus:ring-2 focus:ring-accent/10"
+                    value={selectedWhatsappTemplateId}
+                    onChange={(event) => {
+                      const nextId = event.target.value;
+                      setSelectedWhatsappTemplateId(nextId);
+                      const selected = whatsappTemplates.find((template) => String(template.id) === nextId);
+                      if (selected) {
+                        setWhatsappApiMessage(
+                          String(selected.body || '')
+                            .replace(/\{\{nome\}\}/g, client.name || '')
+                            .replace(/\{nome\}/g, client.name || '')
+                        );
+                      }
+                    }}
+                  >
+                    <option value="">Mensagem manual</option>
+                    {whatsappTemplates.map((template) => (
+                      <option key={template.id} value={template.id}>
+                        {template.name}
+                      </option>
+                    ))}
+                  </select>
                   <Textarea
                     rows={4}
                     value={whatsappApiMessage}

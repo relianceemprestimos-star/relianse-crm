@@ -50,12 +50,13 @@ export default function WhatsAppApiPage() {
   const [config, setConfig] = useState<Partial<WhatsappConfig> & { token?: string }>({
     provider: 'unofficial',
     enabled: true,
-    send_delay_seconds: 5,
+    send_delay_seconds: 120,
     daily_limit_per_number: 30,
     default_country_code: '55',
   });
   const [messages, setMessages] = useState<WhatsappMessage[]>([]);
   const [templates, setTemplates] = useState<WhatsappTemplate[]>([]);
+  const [templateForm, setTemplateForm] = useState({ id: '', name: '', category: 'abordagem', body: '' });
   const [sendForm, setSendForm] = useState({ client_id: '', phone: '', template_id: '', message: '' });
 
   const selectedTemplate = useMemo(
@@ -79,7 +80,7 @@ export default function WhatsAppApiPage() {
         default_number: statusResponse.config?.default_number || '',
         instance_id: statusResponse.config?.instance_id || '',
         enabled: statusResponse.config?.enabled !== false,
-        send_delay_seconds: statusResponse.config?.send_delay_seconds || 5,
+        send_delay_seconds: statusResponse.config?.send_delay_seconds || 120,
         daily_limit_per_number: statusResponse.config?.daily_limit_per_number || 30,
         status: statusResponse.config?.status,
         has_token: statusResponse.config?.has_token,
@@ -131,6 +132,18 @@ export default function WhatsAppApiPage() {
     }
   }
 
+  async function refreshQrcode() {
+    setBusy('qrcode');
+    try {
+      const response = await api.getWhatsappQrcode();
+      setStatus((current) => ({ ...(current || {}), qrcode: response.qrcode, status: response.status || current?.status }));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Falha ao carregar QR Code.');
+    } finally {
+      setBusy('');
+    }
+  }
+
   async function sendManualMessage() {
     setBusy('send');
     try {
@@ -150,6 +163,51 @@ export default function WhatsAppApiPage() {
         setMessages(response.rows || []);
       }
       toast.error(error instanceof Error ? error.message : 'Falha ao enviar mensagem.');
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function testSend() {
+    if (!config.default_number) {
+      toast.error('Configure um numero padrao para teste.');
+      return;
+    }
+    setBusy('test-send');
+    try {
+      await api.testWhatsapp();
+      await api.sendWhatsapp({
+        phone: config.default_number,
+        message: 'Teste de conectividade WhatsApp API - Reliance CRM',
+      });
+      toast.success('Teste de envio executado.');
+      const response = await api.getWhatsappMessages({ limit: 80 });
+      setMessages(response.rows || []);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Falha no teste de envio.');
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function saveTemplateFromForm() {
+    if (!templateForm.name.trim() || !templateForm.body.trim()) {
+      toast.error('Preencha nome e corpo do template.');
+      return;
+    }
+    setBusy('template');
+    try {
+      if (templateForm.id) {
+        await api.updateWhatsappTemplate(Number(templateForm.id), templateForm);
+      } else {
+        await api.saveWhatsappTemplate(templateForm);
+      }
+      const response = await api.getWhatsappTemplates({});
+      setTemplates(response.rows || []);
+      setTemplateForm({ id: '', name: '', category: 'abordagem', body: '' });
+      toast.success('Template salvo.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Falha ao salvar template.');
     } finally {
       setBusy('');
     }
@@ -238,16 +296,22 @@ export default function WhatsAppApiPage() {
             <Button onClick={() => runAction('save')} disabled={busy === 'save'}>
               <Save size={16} /> Salvar configuração
             </Button>
-            <Button variant="secondary" onClick={() => runAction('test')} disabled={Boolean(busy)}>
-              <CheckCircle2 size={16} /> Testar conexão
-            </Button>
+                <Button variant="secondary" onClick={() => runAction('test')} disabled={Boolean(busy)}>
+                  <CheckCircle2 size={16} /> Testar conexão
+                </Button>
             <Button variant="secondary" onClick={() => runAction('connect')} disabled={Boolean(busy)}>
               <PlugZap size={16} /> Conectar
             </Button>
-            <Button variant="secondary" onClick={() => runAction('reconnect')} disabled={Boolean(busy)}>
-              <RefreshCcw size={16} /> Reconectar
-            </Button>
-          </div>
+                <Button variant="secondary" onClick={() => runAction('reconnect')} disabled={Boolean(busy)}>
+                  <RefreshCcw size={16} /> Reconectar
+                </Button>
+                <Button variant="secondary" onClick={refreshQrcode} disabled={Boolean(busy)}>
+                  <QrCode size={16} /> Atualizar QR Code
+                </Button>
+                <Button variant="secondary" onClick={testSend} disabled={Boolean(busy)}>
+                  <Send size={16} /> Testar envio
+                </Button>
+              </div>
         </Card>
 
         <div className="space-y-5">
@@ -261,11 +325,12 @@ export default function WhatsAppApiPage() {
                 <p className="text-sm text-slate-400">Último teste: {dateTime(config.last_test_at)}</p>
               </div>
             </div>
-            <div className="mt-5 rounded-2xl border border-border bg-bg/70 p-4">
-              <p className="text-sm text-slate-400">Estado atual</p>
-              <p className="mt-1 text-xl font-bold text-white">{statusLabels[currentStatus] || currentStatus}</p>
-              {status?.message || config.last_error ? <p className="mt-2 text-sm text-amber-200">{status?.message || config.last_error}</p> : null}
-            </div>
+              <div className="mt-5 rounded-2xl border border-border bg-bg/70 p-4">
+                <p className="text-sm text-slate-400">Estado atual</p>
+                <p className="mt-1 text-xl font-bold text-white">{statusLabels[currentStatus] || currentStatus}</p>
+                <p className="mt-2 text-xs text-slate-500">Ultima conexao: {dateTime(config.connected_at)}</p>
+                {status?.message || config.last_error ? <p className="mt-2 text-sm text-amber-200">{status?.message || config.last_error}</p> : null}
+              </div>
           </Card>
 
           <Card className="p-6">
@@ -320,6 +385,50 @@ export default function WhatsAppApiPage() {
             <Button onClick={sendManualMessage} disabled={busy === 'send' || !sendForm.message.trim() || (!sendForm.phone.trim() && !sendForm.client_id.trim())}>
               <Send size={16} /> Enviar mensagem
             </Button>
+          </div>
+        </div>
+      </Card>
+
+      <Card className="p-6">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-bold text-white">Templates</h3>
+            <p className="text-sm text-slate-400">Crie e edite templates para envio manual e respostas de webhook.</p>
+          </div>
+        </div>
+        <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
+          <div className="space-y-3">
+            {templates.map((template) => (
+              <button
+                key={template.id}
+                type="button"
+                onClick={() => setTemplateForm({ id: String(template.id), name: template.name, category: template.category, body: template.body })}
+                className="w-full rounded-2xl border border-border bg-bg/60 p-3 text-left text-sm text-slate-200 hover:border-accent/40"
+              >
+                <p className="font-semibold text-white">{template.name}</p>
+                <p className="mt-1 text-xs text-slate-500">{template.category}</p>
+              </button>
+            ))}
+          </div>
+          <div className="space-y-3">
+            <Input placeholder="Nome do template" value={templateForm.name} onChange={(event) => setTemplateForm({ ...templateForm, name: event.target.value })} />
+            <Select value={templateForm.category} onChange={(event) => setTemplateForm({ ...templateForm, category: event.target.value })}>
+              <option value="abordagem">abordagem</option>
+              <option value="resposta_interesse">resposta_interesse</option>
+              <option value="retorno">retorno</option>
+              <option value="opt_out">opt_out</option>
+              <option value="agendamento">agendamento</option>
+              <option value="humano_assumir">humano_assumir</option>
+            </Select>
+            <Textarea rows={5} placeholder="Use {{nome}} para personalizar." value={templateForm.body} onChange={(event) => setTemplateForm({ ...templateForm, body: event.target.value })} />
+            <div className="flex gap-2">
+              <Button onClick={saveTemplateFromForm} disabled={busy === 'template'}>
+                <Save size={16} /> {templateForm.id ? 'Atualizar template' : 'Criar template'}
+              </Button>
+              <Button variant="secondary" onClick={() => setTemplateForm({ id: '', name: '', category: 'abordagem', body: '' })}>
+                Limpar
+              </Button>
+            </div>
           </div>
         </div>
       </Card>

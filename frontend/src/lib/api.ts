@@ -592,6 +592,7 @@ export const api = {
     }),
   connectWhatsapp: () => request<{ config: WhatsappConfig; connected?: boolean; status?: string; qrcode?: string }>('/api/whatsapp/connect', { method: 'POST', body: JSON.stringify({}) }),
   reconnectWhatsapp: () => request<{ config: WhatsappConfig; connected?: boolean; status?: string; qrcode?: string }>('/api/whatsapp/reconnect', { method: 'POST', body: JSON.stringify({}) }),
+  getWhatsappQrcode: () => request<{ qrcode: string; status?: string }>('/api/whatsapp/qrcode'),
   testWhatsapp: () => request<{ config: WhatsappConfig; connected?: boolean; status?: string; message?: string }>('/api/whatsapp/test', { method: 'POST', body: JSON.stringify({}) }),
   sendWhatsapp: (payload: { client_id?: number | string | null; phone?: string; message: string; template_id?: number | string | null }) =>
     request<{ message: WhatsappMessage; provider_result?: unknown }>('/api/whatsapp/send', {
@@ -610,6 +611,11 @@ export const api = {
   saveWhatsappTemplate: (payload: Partial<WhatsappTemplate>) =>
     request<{ template: WhatsappTemplate }>('/api/whatsapp/templates', {
       method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updateWhatsappTemplate: (id: number | string, payload: Partial<WhatsappTemplate>) =>
+    request<{ template: WhatsappTemplate }>(`/api/whatsapp/templates/${id}`, {
+      method: 'PUT',
       body: JSON.stringify(payload),
     }),
 };

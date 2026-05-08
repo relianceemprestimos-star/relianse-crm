@@ -140,6 +140,12 @@ export interface Client {
   nova_vida_last_lookup_at_formatted?: string;
   nova_vida_lookup_status?: string;
   phone_lookup_job?: PhoneLookupJob | null;
+  whatsapp_allowed?: boolean | number;
+  whatsapp_opt_out?: boolean | number;
+  whatsapp_blocked?: boolean | number;
+  whatsapp_last_contact_at?: string | null;
+  whatsapp_last_response_at?: string | null;
+  whatsapp_status?: string;
 }
 
 export interface ClientAddress {

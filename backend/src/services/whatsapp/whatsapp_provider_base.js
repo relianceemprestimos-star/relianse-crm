@@ -46,6 +46,10 @@ export class WhatsappProviderBase {
     throw new WhatsappProviderError('Provider nao implementou reconnect.', 'PROVIDER_METHOD_NOT_IMPLEMENTED');
   }
 
+  getQrcode() {
+    throw new WhatsappProviderError('Provider nao implementou getQrcode.', 'PROVIDER_METHOD_NOT_IMPLEMENTED');
+  }
+
   sendMessage() {
     throw new WhatsappProviderError('Provider nao implementou sendMessage.', 'PROVIDER_METHOD_NOT_IMPLEMENTED');
   }
