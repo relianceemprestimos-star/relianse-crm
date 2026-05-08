@@ -35,6 +35,7 @@ export default function App() {
           <Route path="/atendimento" element={<AttendancePage />} />
           <Route path="/whatsapp" element={<WhatsAppPage />} />
           <Route path="/whatsapp-api" element={<WhatsAppApiPage />} />
+          <Route path="/whatsapp-fluxos" element={<WhatsAppApiPage />} />
           <Route path="/upload" element={<UploadPage />} />
           <Route path="/bases" element={<BasesPage />} />
           <Route path="/relatorios" element={<ReportsPage />} />

@@ -256,6 +256,68 @@ export interface WhatsappMessage {
   created_at?: string;
 }
 
+export interface WhatsappFlowStep {
+  id?: number;
+  flow_id?: number;
+  step_order: number;
+  trigger_keywords: string[];
+  response_message: string;
+  action_type: string;
+  client_status_to_apply?: string;
+  should_assign_human?: boolean;
+  should_stop_flow?: boolean;
+}
+
+export interface WhatsappFlow {
+  id: number;
+  name: string;
+  description?: string;
+  initial_template_id?: number | null;
+  initial_template_name?: string;
+  initial_message?: string;
+  fallback_message?: string;
+  fallback_human_after?: number;
+  active: boolean;
+  created_at?: string;
+  updated_at?: string;
+  steps?: WhatsappFlowStep[];
+}
+
+export interface WhatsappFlowExecution {
+  id: number;
+  flow_id: number;
+  flow_name?: string;
+  client_id: number;
+  client_name?: string;
+  client_cpf?: string;
+  phone: string;
+  current_step_id?: number | null;
+  status: string;
+  unmatched_count?: number;
+  started_at?: string;
+  finished_at?: string | null;
+  last_message_at?: string | null;
+  created_by?: number | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface WhatsappFlowLog {
+  id: number;
+  flow_execution_id: number;
+  flow_id?: number;
+  flow_name?: string;
+  client_id: number;
+  client_name?: string;
+  client_cpf?: string;
+  phone: string;
+  inbound_message?: string;
+  matched_trigger?: string;
+  outbound_message?: string;
+  action_taken?: string;
+  created_at?: string;
+}
+
 export interface PhoneLookupJob {
   id: number;
   client_id: number;

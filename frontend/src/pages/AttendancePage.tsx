@@ -19,7 +19,7 @@ import toast from 'react-hot-toast';
 import { api } from '../lib/api';
 import { formatCpfDisplay, formatPhoneDisplay, openWhatsAppConversation } from '../lib/whatsapp';
 import { formatCurrencyDisplay, marginState, productLabel } from '../lib/margins';
-import type { Client, Settings, WhatsappTemplate } from '../types';
+import type { Client, Settings, WhatsappFlow, WhatsappFlowExecution, WhatsappFlowLog, WhatsappTemplate } from '../types';
 import { useAuth } from '../components/AuthProvider';
 import { Badge, Button, Card, Input, Modal, SectionHeader, Textarea } from '../components/ui';
 
@@ -62,6 +62,11 @@ export default function AttendancePage() {
   const [whatsappApiSending, setWhatsappApiSending] = useState(false);
   const [whatsappTemplates, setWhatsappTemplates] = useState<WhatsappTemplate[]>([]);
   const [selectedWhatsappTemplateId, setSelectedWhatsappTemplateId] = useState('');
+  const [whatsappFlows, setWhatsappFlows] = useState<WhatsappFlow[]>([]);
+  const [activeFlowExecution, setActiveFlowExecution] = useState<WhatsappFlowExecution | null>(null);
+  const [flowLogs, setFlowLogs] = useState<WhatsappFlowLog[]>([]);
+  const [selectedFlowId, setSelectedFlowId] = useState('');
+  const [flowActionLoading, setFlowActionLoading] = useState(false);
 
   const baseScope = useMemo(
     () => ({
@@ -75,14 +80,20 @@ export default function AttendancePage() {
     let active = true;
     async function loadSettings() {
       try {
-        const [settingsResponse, dashboardResponse, whatsappTemplatesResponse] = await Promise.all([
+        const [settingsResponse, dashboardResponse, whatsappTemplatesResponse, whatsappFlowsResponse] = await Promise.all([
           api.getSettings(),
           api.getDashboard(baseScope),
           api.getWhatsappTemplates({ active: 1 }),
+          api.getWhatsappFlows({ active: 1, with_steps: false }),
         ]);
         if (!active) return;
         setSettings(settingsResponse.settings);
         setWhatsappTemplates(whatsappTemplatesResponse.rows || []);
+        const activeFlows = whatsappFlowsResponse.rows || [];
+        setWhatsappFlows(activeFlows);
+        if (activeFlows.length) {
+          setSelectedFlowId(String(activeFlows[0].id));
+        }
         setQueuePosition({
           current: dashboardResponse.nextClient?.queue_position ?? 0,
           total: dashboardResponse.nextClient?.queue_total ?? dashboardResponse.stats.queue_clients ?? 0,
@@ -130,6 +141,7 @@ export default function AttendancePage() {
             setClient(started.client);
             setTimeline((started.interactions || []).map((item: TimelineItem) => item));
           }
+          await refreshClient(details.client.id);
         } else {
           const nextResponse = await api.getNextClient(baseScope);
           if (!nextResponse.next) {
@@ -154,6 +166,7 @@ export default function AttendancePage() {
             current: nextResponse.next.queue_position,
             total: nextResponse.next.queue_total,
           });
+          await refreshClient(started.client.id);
         }
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Falha ao carregar o atendimento.');
@@ -182,6 +195,12 @@ export default function AttendancePage() {
     const details = await api.getClient(clientId);
     setClient(details.client);
     setTimeline((details.interactions || []).map((item: TimelineItem) => item));
+    const [executionResponse, logsResponse] = await Promise.all([
+      api.getWhatsappFlowExecutions({ client_id: clientId, limit: 1 }),
+      api.getWhatsappFlowLogs({ client_id: clientId, limit: 10 }),
+    ]);
+    setActiveFlowExecution((executionResponse.rows || [])[0] || null);
+    setFlowLogs(logsResponse.rows || []);
   }
 
   async function openClientWhatsApp() {
@@ -224,6 +243,41 @@ export default function AttendancePage() {
       toast.error(error instanceof Error ? error.message : 'Falha ao enviar pela WhatsApp API.');
     } finally {
       setWhatsappApiSending(false);
+    }
+  }
+
+  async function startClientWhatsappFlow() {
+    if (!client || !selectedFlowId) {
+      toast.error('Selecione um fluxo para iniciar.');
+      return;
+    }
+    try {
+      setFlowActionLoading(true);
+      await api.startWhatsappFlow({
+        flow_id: Number(selectedFlowId),
+        client_id: client.id,
+        phone: client.phone || undefined,
+      });
+      toast.success('Fluxo WhatsApp iniciado.');
+      await refreshClient(client.id);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Falha ao iniciar fluxo.');
+    } finally {
+      setFlowActionLoading(false);
+    }
+  }
+
+  async function stopClientWhatsappFlow() {
+    if (!client || !activeFlowExecution?.id) return;
+    try {
+      setFlowActionLoading(true);
+      await api.stopWhatsappFlow({ execution_id: activeFlowExecution.id, reason: 'stopped' });
+      toast.success('Fluxo WhatsApp interrompido.');
+      await refreshClient(client.id);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Falha ao interromper fluxo.');
+    } finally {
+      setFlowActionLoading(false);
     }
   }
 
@@ -598,6 +652,44 @@ export default function AttendancePage() {
                   <p className="text-xs text-slate-500">
                     O backend bloqueia envio para cliente sem interesse, bloqueado, marcado como não abordar ou sem telefone válido.
                   </p>
+                </div>
+              </div>
+
+              <div className="mt-4 rounded-2xl border border-border bg-bg/60 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Fluxo WhatsApp</p>
+                    <p className="mt-1 text-sm text-slate-300">Fluxo automatico controlado com gatilhos e transicao para humano.</p>
+                  </div>
+                  <Badge tone={activeFlowExecution ? 'info' : 'neutral'}>
+                    {activeFlowExecution ? `Ativo: ${activeFlowExecution.status}` : 'Sem fluxo ativo'}
+                  </Badge>
+                </div>
+                <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto_auto]">
+                  <select
+                    className="w-full rounded-2xl border border-border bg-bg/80 px-4 py-3 text-sm text-slate-100 outline-none transition focus:border-accent/60 focus:ring-2 focus:ring-accent/10"
+                    value={selectedFlowId}
+                    onChange={(event) => setSelectedFlowId(event.target.value)}
+                  >
+                    <option value="">Selecione o fluxo</option>
+                    {whatsappFlows.map((flow) => (
+                      <option key={flow.id} value={flow.id}>
+                        {flow.name}
+                      </option>
+                    ))}
+                  </select>
+                  <Button onClick={() => void startClientWhatsappFlow()} disabled={flowActionLoading || !selectedFlowId || Boolean(activeFlowExecution)}>
+                    <Send size={16} />
+                    Iniciar fluxo
+                  </Button>
+                  <Button variant="secondary" onClick={() => void stopClientWhatsappFlow()} disabled={flowActionLoading || !activeFlowExecution}>
+                    <TimerReset size={16} />
+                    Parar fluxo
+                  </Button>
+                </div>
+                <div className="mt-3 rounded-2xl border border-border bg-bg/70 p-3 text-xs text-slate-400">
+                  <p>Ultima resposta recebida: {flowLogs[0]?.inbound_message || '-'}</p>
+                  <p className="mt-1">Ultima acao aplicada: {flowLogs[0]?.action_taken || '-'}</p>
                 </div>
               </div>
 

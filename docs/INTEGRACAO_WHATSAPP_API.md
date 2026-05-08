@@ -1,17 +1,15 @@
-# Integração WhatsApp API
+# Integracao WhatsApp API
 
 ## Objetivo
 
-O Reliance CRM possui uma camada interna para conectar provedores de WhatsApp sem expor token no frontend e sem acoplar a interface a uma API específica.
+O Reliance CRM possui uma camada interna para conectar provedores de WhatsApp sem expor token no frontend e sem acoplamento a um fornecedor unico.
 
-O frontend sempre chama o backend em `/api/whatsapp/*`. O backend decide qual provider usar:
+O frontend sempre chama `/api/whatsapp/*`. O backend decide qual provider usar:
 
-- `unofficial`: API não oficial baseada em WhatsApp Web/QR Code.
+- `unofficial`: API nao oficial baseada em WhatsApp Web/QR Code.
 - `meta`: Meta WhatsApp Business Platform.
 
-## Variáveis de ambiente
-
-Configure no `.env`:
+## Variaveis de ambiente
 
 ```env
 WHATSAPP_PROVIDER=unofficial
@@ -32,25 +30,10 @@ META_WHATSAPP_WABA_ID=
 META_WHATSAPP_VERIFY_TOKEN=
 ```
 
-Tokens também podem ser cadastrados pela aba **WhatsApp API**. Depois de salvos, o frontend recebe apenas `has_token=true`.
+## Rotas de interface
 
-## Tela WhatsApp API
-
-Rota:
-
-```text
-/whatsapp-api
-```
-
-A tela permite:
-
-- configurar provedor;
-- salvar API URL/token;
-- conectar/reconectar;
-- testar conexão;
-- visualizar QR Code quando o provedor retornar;
-- enviar mensagem manual;
-- consultar histórico de mensagens e falhas.
+- `WhatsApp API`: `/whatsapp-api`
+- `Fluxos de WhatsApp`: `/whatsapp-fluxos`
 
 ## Endpoints
 
@@ -68,13 +51,56 @@ GET  /api/whatsapp/messages
 GET  /api/whatsapp/templates
 POST /api/whatsapp/templates
 PUT  /api/whatsapp/templates/:id
+GET  /api/whatsapp/flows
+POST /api/whatsapp/flows
+PUT  /api/whatsapp/flows/:id
+POST /api/whatsapp/flows/start
+POST /api/whatsapp/flows/stop
+GET  /api/whatsapp/flows/executions
+GET  /api/whatsapp/flows/logs
 GET  /api/whatsapp/webhook
 POST /api/whatsapp/webhook
 ```
 
-## Provider não oficial
+## Regras de envio e bloqueio
 
-O provider genérico espera estes endpoints no fornecedor configurado:
+O backend bloqueia envio quando:
+
+- cliente esta sem interesse, bloqueado ou nao abordar;
+- cliente sem telefone valido;
+- cliente com opt-out;
+- limite diario por numero excedido;
+- intervalo minimo entre mensagens ainda nao cumprido.
+
+Se bloqueado, o CRM registra tentativa com status `blocked_by_rule`.
+
+## Fluxos WhatsApp
+
+A implementacao de fluxo inclui:
+
+- criacao/edicao de fluxo com gatilhos;
+- resposta automatica por palavra-chave;
+- fallback para resposta nao entendida;
+- escalonamento para humano;
+- atualizacao de status do cliente;
+- logs completos de execucao.
+
+Guia detalhado: `docs/FLUXOS_WHATSAPP.md`.
+
+## Tabelas
+
+- `whatsapp_configs`
+- `whatsapp_templates`
+- `whatsapp_messages`
+- `whatsapp_send_jobs`
+- `whatsapp_flows`
+- `whatsapp_flow_steps`
+- `whatsapp_flow_executions`
+- `whatsapp_flow_logs`
+
+## Provider nao oficial
+
+O provider generico tenta os endpoints abaixo (quando existentes):
 
 ```text
 GET  {WHATSAPP_API_URL}/status
@@ -84,7 +110,7 @@ POST {WHATSAPP_API_URL}/send-message
 POST {WHATSAPP_API_URL}/send-media
 ```
 
-Payload de envio padrão:
+Payload de envio padrao:
 
 ```json
 {
@@ -97,67 +123,21 @@ Payload de envio padrão:
 }
 ```
 
-Se o fornecedor usar outro formato, ajuste apenas `backend/src/services/whatsapp/unofficial_whatsapp_provider.js`.
+Se o fornecedor usar outro formato, ajuste somente:
 
-## Provider Meta
-
-O provider Meta está preparado para envio de texto via Graph API usando:
-
-- `META_WHATSAPP_ACCESS_TOKEN`
-- `META_WHATSAPP_PHONE_NUMBER_ID`
-- `META_WHATSAPP_VERIFY_TOKEN`
-
-Templates oficiais da Meta podem ser adicionados depois no provider `meta_whatsapp_provider.js`.
-
-## Regras de segurança e bloqueio
-
-O backend bloqueia envio quando:
-
-- cliente está com status `sem_interesse`;
-- cliente está `bloqueado`;
-- cliente está marcado como `nao_abordar` / `não abordar`;
-- telefone está vazio ou inválido;
-- limite diário por número foi atingido.
-- ainda não passou o intervalo mínimo entre mensagens (`WHATSAPP_SEND_DELAY_SECONDS`).
-
-Toda tentativa bem-sucedida ou com falha gera registro em `whatsapp_messages`.
-
-## Tabelas
-
-- `whatsapp_configs`
-- `whatsapp_templates`
-- `whatsapp_messages`
-- `whatsapp_send_jobs`
-
-## Tela do cliente
-
-Na tela de atendimento do cliente há uma seção **WhatsApp API** para envio manual. O envio registra uma interação no histórico do cliente.
+- `backend/src/services/whatsapp/unofficial_whatsapp_provider.js`
 
 ## Webhook
 
-Configure o fornecedor para enviar eventos para:
+Destino:
 
 ```text
 https://SEU_DOMINIO/api/whatsapp/webhook
 ```
 
-O webhook tenta associar mensagens recebidas ao cliente pelo telefone.
+O webhook:
 
-Regras de intenção no webhook:
-
-- Interesse (`pode mandar`, `sim`, `quero`, `manda`, `pode`):
-  - marca cliente com status de interesse no WhatsApp;
-  - registra interação para humano assumir;
-  - responde com template `Cliente interessado` (quando ativo).
-
-- Recusa / opt-out (`não tenho interesse`, `não quero`, `parar`, `remover`, `bloquear`, `não me chama`):
-  - marca `whatsapp_opt_out=1`;
-  - bloqueia novos envios (`whatsapp_allowed=0`, `whatsapp_blocked=1`);
-  - marca atendimento como `sem_interesse`;
-  - responde com template `Sem interesse` quando possível.
-
-## Limitações atuais
-
-- A fila `whatsapp_send_jobs` está modelada e pronta, mas o envio em lote agressivo não foi implementado por regra de segurança.
-- A API não oficial é genérica. Cada fornecedor pode exigir ajuste fino no payload.
-- A integração Meta inicial cobre status e envio de texto. Templates oficiais podem ser adicionados conforme o provedor for configurado.
+1. salva inbound/outbound status;
+2. tenta associar cliente por telefone;
+3. aplica fluxo ativo quando existir;
+4. aplica fallback de intencao (interesse/opt-out) quando nao existir fluxo.

@@ -104,15 +104,21 @@ import {
   connectWhatsapp,
   getWhatsappConfig,
   getWhatsappMessages,
+  getWhatsappFlowExecutions,
+  getWhatsappFlowLogs,
+  getWhatsappFlows,
   getWhatsappQrCode,
   getWhatsappStatus,
   getWhatsappTemplates,
   reconnectWhatsapp,
   receiveWhatsappWebhook,
+  saveWhatsappFlow,
   saveWhatsappConfig,
   saveWhatsappTemplate,
   sendWhatsappMessage,
   sendWhatsappTemplate,
+  startWhatsappFlow,
+  stopWhatsappFlow,
   testWhatsapp,
   updateWhatsappTemplate,
   verifyMetaWebhook,
@@ -251,9 +257,9 @@ app.get('/api/whatsapp/webhook', (req, res) => {
   return res.status(403).json({ message: 'Webhook nao verificado.' });
 });
 
-app.post('/api/whatsapp/webhook', (req, res) => {
+app.post('/api/whatsapp/webhook', async (req, res) => {
   try {
-    const result = receiveWhatsappWebhook(req.body || {});
+    const result = await receiveWhatsappWebhook(req.body || {});
     return res.json({ ok: true, ...result });
   } catch (error) {
     return res.status(500).json({
@@ -495,6 +501,74 @@ app.post('/api/whatsapp/templates', roleMiddleware(['gerencial']), (req, res) =>
 app.put('/api/whatsapp/templates/:id', roleMiddleware(['gerencial']), (req, res) => {
   try {
     return res.json({ template: updateWhatsappTemplate(Number(req.params.id), req.body || {}) });
+  } catch (error) {
+    return handleWhatsappError(res, error);
+  }
+});
+
+app.get('/api/whatsapp/flows', (req, res) => {
+  try {
+    return res.json({ rows: getWhatsappFlows(req.query || {}) });
+  } catch (error) {
+    return handleWhatsappError(res, error);
+  }
+});
+
+app.post('/api/whatsapp/flows', roleMiddleware(['gerencial']), (req, res) => {
+  try {
+    return res.json({ flow: saveWhatsappFlow(req.body || {}) });
+  } catch (error) {
+    return handleWhatsappError(res, error);
+  }
+});
+
+app.put('/api/whatsapp/flows/:id', roleMiddleware(['gerencial']), (req, res) => {
+  try {
+    return res.json({ flow: saveWhatsappFlow({ ...(req.body || {}), id: Number(req.params.id) }) });
+  } catch (error) {
+    return handleWhatsappError(res, error);
+  }
+});
+
+app.post('/api/whatsapp/flows/start', async (req, res) => {
+  try {
+    const result = await startWhatsappFlow({
+      flowId: req.body?.flow_id ?? req.body?.flowId,
+      clientId: req.body?.client_id ?? req.body?.clientId,
+      phone: req.body?.phone || '',
+      userId: getAuthenticatedUserId(req),
+    });
+    return res.json(result);
+  } catch (error) {
+    return handleWhatsappError(res, error);
+  }
+});
+
+app.post('/api/whatsapp/flows/stop', (req, res) => {
+  try {
+    const execution = stopWhatsappFlow({
+      executionId: req.body?.execution_id ?? req.body?.executionId ?? null,
+      clientId: req.body?.client_id ?? req.body?.clientId ?? null,
+      reason: req.body?.reason || 'stopped',
+      userId: getAuthenticatedUserId(req),
+    });
+    return res.json({ execution });
+  } catch (error) {
+    return handleWhatsappError(res, error);
+  }
+});
+
+app.get('/api/whatsapp/flows/executions', (req, res) => {
+  try {
+    return res.json({ rows: getWhatsappFlowExecutions(req.query || {}) });
+  } catch (error) {
+    return handleWhatsappError(res, error);
+  }
+});
+
+app.get('/api/whatsapp/flows/logs', (req, res) => {
+  try {
+    return res.json({ rows: getWhatsappFlowLogs(req.query || {}) });
   } catch (error) {
     return handleWhatsappError(res, error);
   }

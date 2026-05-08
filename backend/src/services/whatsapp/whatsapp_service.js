@@ -4,17 +4,26 @@ import {
   addInteraction,
   countWhatsappMessagesSentToday,
   createWhatsappMessageRecord,
+  createWhatsappFlowExecutionRecord,
+  createWhatsappFlowLogRecord,
   createWhatsappSendJobRecord,
   findClientByPhone,
+  getActiveWhatsappFlowExecutionForClient,
   getClientById,
   getLastWhatsappOutboundByPhone,
   getWhatsappConfigRecord,
+  getWhatsappFlowById,
   getWhatsappTemplateById,
+  listWhatsappFlowExecutions,
+  listWhatsappFlowLogs,
+  listWhatsappFlows,
   listWhatsappMessages,
   listWhatsappTemplates,
+  saveWhatsappFlowRecord,
   saveWhatsappConfigRecord,
   saveWhatsappTemplateRecord,
   updateClientWhatsappState,
+  updateWhatsappFlowExecutionRecord,
   updateWhatsappMessageRecord,
 } from '../../db.js';
 import { cleanDigits, normalizePhoneToBrazilInternational } from '../../utils.js';
@@ -434,6 +443,207 @@ export function updateWhatsappTemplate(id, input = {}) {
   });
 }
 
+function normalizeInboundText(text) {
+  return String(text || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function renderFlowMessage(message, client = null) {
+  let text = String(message || '');
+  const replacements = {
+    nome: client?.name || '',
+    cpf: client?.cpf || '',
+    margem: client?.best_net_margin_formatted || client?.current_margin_formatted || '',
+    valor_liberado: client?.best_net_margin_formatted || '',
+    convenio: client?.base_convenio || client?.campaign_name || '',
+    vendedor: client?.assigned_to_name || '',
+  };
+  for (const [key, value] of Object.entries(replacements)) {
+    const safeValue = String(value ?? '');
+    text = text.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), safeValue);
+    text = text.replace(new RegExp(`\\{${key}\\}`, 'g'), safeValue);
+  }
+  return text;
+}
+
+function mapExecutionStatus(status) {
+  const normalized = String(status || '').toLowerCase();
+  const allowed = new Set(['active', 'waiting_response', 'completed', 'stopped', 'assigned_to_human', 'opt_out', 'failed']);
+  return allowed.has(normalized) ? normalized : 'active';
+}
+
+function mapClientStatus(rawStatus) {
+  const text = String(rawStatus || '').toLowerCase();
+  if (!text) return null;
+  if (['interessado', 'em_atendimento', 'atendimento_humano', 'humano'].includes(text)) return 'em_atendimento';
+  if (['sem_interesse', 'nao_abordar', 'bloqueado'].includes(text)) return 'sem_interesse';
+  if (['aguardando_retorno', 'retorno'].includes(text)) return 'aguardando_retorno';
+  if (['finalizado'].includes(text)) return 'finalizado';
+  return text;
+}
+
+function detectFlowStep(flow, inboundText) {
+  const normalizedInbound = normalizeInboundText(inboundText);
+  const steps = Array.isArray(flow?.steps) ? flow.steps : [];
+  for (const step of steps) {
+    const keywords = Array.isArray(step.trigger_keywords) ? step.trigger_keywords : [];
+    const match = keywords
+      .map((item) => normalizeInboundText(item))
+      .find((keyword) => keyword && normalizedInbound.includes(keyword));
+    if (match) {
+      return { step, matchedTrigger: match };
+    }
+  }
+  return null;
+}
+
+function canStartFlowForClient(client) {
+  try {
+    validateClientRules(client);
+  } catch (error) {
+    return { allowed: false, reason: error instanceof Error ? error.message : 'Cliente bloqueado por regra.' };
+  }
+  const normalizedPhone = normalizeOutgoingPhone(client?.phone || '');
+  if (!normalizedPhone) {
+    return { allowed: false, reason: 'Cliente sem telefone valido.' };
+  }
+  return { allowed: true, phone: normalizedPhone };
+}
+
+export function getWhatsappFlows(params = {}) {
+  return listWhatsappFlows(params);
+}
+
+export function saveWhatsappFlow(input = {}) {
+  const flowPayload = {
+    ...input,
+    active: input.active !== false,
+  };
+  return saveWhatsappFlowRecord(flowPayload);
+}
+
+export function getWhatsappFlowExecutions(params = {}) {
+  return listWhatsappFlowExecutions(params);
+}
+
+export function getWhatsappFlowLogs(params = {}) {
+  return listWhatsappFlowLogs(params);
+}
+
+export function getActiveWhatsappFlowForClient(clientId) {
+  if (!clientId) return null;
+  return getActiveWhatsappFlowExecutionForClient(Number(clientId));
+}
+
+export async function startWhatsappFlow({ flowId, clientId, phone = '', userId = null } = {}) {
+  const flow = getWhatsappFlowById(Number(flowId));
+  if (!flow || flow.active === false) {
+    throw new WhatsappServiceError('Fluxo WhatsApp nao encontrado ou inativo.', 'WHATSAPP_FLOW_NOT_FOUND', 404);
+  }
+  const client = resolveClient(clientId);
+  if (!client?.id) {
+    throw new WhatsappServiceError('Cliente nao encontrado para iniciar fluxo.', 'WHATSAPP_FLOW_CLIENT_NOT_FOUND', 404);
+  }
+
+  const allowed = canStartFlowForClient(client);
+  if (!allowed.allowed) {
+    throw new WhatsappServiceError(allowed.reason || 'Cliente bloqueado para fluxo.', 'WHATSAPP_FLOW_BLOCKED_BY_RULE', 403);
+  }
+
+  const activeExecution = getActiveWhatsappFlowExecutionForClient(client.id);
+  if (activeExecution) {
+    throw new WhatsappServiceError('Cliente ja possui fluxo ativo.', 'WHATSAPP_FLOW_ALREADY_ACTIVE', 409);
+  }
+
+  const initialTemplate = flow.initial_template_id ? getWhatsappTemplateById(flow.initial_template_id) : null;
+  const initialMessage = renderFlowMessage(
+    flow.initial_message || initialTemplate?.body || '',
+    client
+  ).trim();
+  if (!initialMessage) {
+    throw new WhatsappServiceError('Fluxo sem mensagem inicial configurada.', 'WHATSAPP_FLOW_INITIAL_MESSAGE_REQUIRED', 400);
+  }
+
+  await sendWhatsappMessage({
+    clientId: client.id,
+    phone: phone || allowed.phone,
+    message: initialMessage,
+    templateId: initialTemplate?.id || null,
+    userId,
+  });
+
+  const execution = createWhatsappFlowExecutionRecord({
+    flow_id: flow.id,
+    client_id: client.id,
+    phone: phone || allowed.phone,
+    status: 'waiting_response',
+    started_at: nowIso(),
+    last_message_at: nowIso(),
+    created_by: userId,
+  });
+
+  createWhatsappFlowLogRecord({
+    flow_execution_id: execution.id,
+    client_id: client.id,
+    phone: phone || allowed.phone,
+    inbound_message: '',
+    matched_trigger: '',
+    outbound_message: initialMessage,
+    action_taken: 'start_flow',
+  });
+
+  updateClientWhatsappState(client.id, {
+    whatsapp_status: 'flow_active',
+    whatsapp_last_contact_at: nowIso(),
+  });
+  addInteraction(client.id, {
+    userId,
+    type: 'whatsapp_fluxo_iniciado',
+    note: `Fluxo WhatsApp "${flow.name}" iniciado para o cliente.`,
+  });
+
+  return {
+    flow,
+    execution,
+    initial_message: initialMessage,
+  };
+}
+
+export function stopWhatsappFlow({ clientId, executionId = null, reason = 'stopped', userId = null } = {}) {
+  let execution = null;
+  if (executionId) {
+    execution = listWhatsappFlowExecutions({ limit: 1 }).find((row) => Number(row.id) === Number(executionId)) || null;
+  }
+  if (!execution && clientId) {
+    execution = getActiveWhatsappFlowExecutionForClient(Number(clientId));
+  }
+  if (!execution) {
+    throw new WhatsappServiceError('Fluxo ativo nao encontrado para encerrar.', 'WHATSAPP_FLOW_EXECUTION_NOT_FOUND', 404);
+  }
+  const status = reason === 'assigned_to_human' ? 'assigned_to_human' : reason === 'opt_out' ? 'opt_out' : 'stopped';
+  const updated = updateWhatsappFlowExecutionRecord(execution.id, {
+    status,
+    finished_at: nowIso(),
+    last_message_at: nowIso(),
+  });
+  if (execution.client_id) {
+    updateClientWhatsappState(execution.client_id, {
+      whatsapp_status: status === 'assigned_to_human' ? 'human_assigned' : status,
+    });
+    addInteraction(execution.client_id, {
+      userId,
+      type: 'whatsapp_fluxo_encerrado',
+      note: `Fluxo WhatsApp encerrado (${status}).`,
+    });
+  }
+  return updated;
+}
+
 export function queueWhatsappSend(input = {}, userId = null) {
   return createWhatsappSendJobRecord({
     client_id: input.client_id ?? null,
@@ -448,6 +658,127 @@ export function queueWhatsappSend(input = {}, userId = null) {
 
 async function handleInboundIntent({ client, inboundText, phone, userId = null }) {
   if (!client?.id) return null;
+
+  const activeFlowExecution = getActiveWhatsappFlowExecutionForClient(client.id);
+  if (activeFlowExecution) {
+    const flow = getWhatsappFlowById(activeFlowExecution.flow_id);
+    const matched = detectFlowStep(flow, inboundText);
+    if (matched?.step) {
+      const responseMessage = renderFlowMessage(matched.step.response_message || '', client).trim();
+      let outboundSendError = '';
+      if (responseMessage) {
+        try {
+          await sendWhatsappMessage({
+            clientId: client.id,
+            phone,
+            message: responseMessage,
+            userId,
+          });
+        } catch (error) {
+          outboundSendError = error instanceof Error ? error.message : 'Falha ao enviar resposta automatica.';
+        }
+      }
+
+      const actionType = String(matched.step.action_type || 'none').toLowerCase();
+      const nextClientStatus = mapClientStatus(matched.step.client_status_to_apply);
+      const shouldAssignHuman = Boolean(matched.step.should_assign_human);
+      const shouldStopFlow = Boolean(matched.step.should_stop_flow);
+
+      const statePatch = {
+        whatsapp_last_response_at: nowIso(),
+        whatsapp_status: shouldAssignHuman ? 'human_assigned' : actionType === 'opt_out' ? 'opt_out' : 'flow_active',
+      };
+      if (nextClientStatus) {
+        statePatch.status_atendimento = nextClientStatus;
+      }
+      if (actionType === 'opt_out') {
+        statePatch.whatsapp_opt_out = 1;
+        statePatch.whatsapp_blocked = 1;
+        statePatch.whatsapp_allowed = 0;
+      }
+      updateClientWhatsappState(client.id, statePatch);
+      addInteraction(client.id, {
+        userId,
+        type: shouldAssignHuman ? 'whatsapp_humano_assumir' : actionType === 'opt_out' ? 'whatsapp_opt_out' : 'whatsapp_fluxo_acao',
+        note: `Fluxo WhatsApp executou acao: ${actionType}.`,
+      });
+
+      const executionStatus = actionType === 'opt_out' ? 'opt_out' : shouldAssignHuman ? 'assigned_to_human' : shouldStopFlow ? 'completed' : 'waiting_response';
+      updateWhatsappFlowExecutionRecord(activeFlowExecution.id, {
+        status: executionStatus,
+        current_step_id: matched.step.id,
+        unmatched_count: 0,
+        finished_at: ['completed', 'assigned_to_human', 'opt_out'].includes(executionStatus) ? nowIso() : null,
+        last_message_at: nowIso(),
+      });
+      createWhatsappFlowLogRecord({
+        flow_execution_id: activeFlowExecution.id,
+        client_id: client.id,
+        phone,
+        inbound_message: inboundText,
+        matched_trigger: matched.matchedTrigger || '',
+        outbound_message: responseMessage || outboundSendError,
+        action_taken: outboundSendError ? `${actionType || 'none'}_send_error` : actionType || 'none',
+      });
+      return { intent: actionType || 'flow_matched', flow: true };
+    }
+
+    const currentUnmatchedCount = Number(activeFlowExecution.unmatched_count || 0) + 1;
+    const fallbackMessage = renderFlowMessage(
+      flow?.fallback_message || 'Desculpa, {{nome}}, nao consegui entender. Responda: 1 - Pode mandar, 2 - Nao tenho interesse, 3 - Falar com atendente.',
+      client
+    );
+    let fallbackSendError = '';
+    if (fallbackMessage) {
+      try {
+        await sendWhatsappMessage({
+          clientId: client.id,
+          phone,
+          message: fallbackMessage,
+          userId,
+        });
+      } catch (error) {
+        fallbackSendError = error instanceof Error ? error.message : 'Falha ao enviar fallback.';
+      }
+    }
+    const maxFallback = Math.max(1, Number(flow?.fallback_human_after || 2));
+    const mustAssignHuman = currentUnmatchedCount >= maxFallback;
+    updateWhatsappFlowExecutionRecord(activeFlowExecution.id, {
+      unmatched_count: currentUnmatchedCount,
+      status: mustAssignHuman ? 'assigned_to_human' : 'waiting_response',
+      finished_at: mustAssignHuman ? nowIso() : null,
+      last_message_at: nowIso(),
+    });
+    if (mustAssignHuman) {
+      updateClientWhatsappState(client.id, {
+        whatsapp_status: 'human_assigned',
+        whatsapp_last_response_at: nowIso(),
+        status_atendimento: 'em_atendimento',
+      });
+      addInteraction(client.id, {
+        userId,
+        type: 'whatsapp_humano_assumir',
+        note: 'Fluxo WhatsApp encaminhou para humano apos respostas nao entendidas.',
+      });
+    }
+    createWhatsappFlowLogRecord({
+      flow_execution_id: activeFlowExecution.id,
+      client_id: client.id,
+      phone,
+      inbound_message: inboundText,
+      matched_trigger: '',
+      outbound_message: fallbackMessage || fallbackSendError,
+      action_taken: fallbackSendError
+        ? mustAssignHuman
+          ? 'fallback_assign_human_send_error'
+          : 'fallback_prompt_send_error'
+        : mustAssignHuman
+        ? 'fallback_assign_human'
+        : 'fallback_prompt',
+    });
+    return { intent: mustAssignHuman ? 'assigned_to_human' : 'fallback', flow: true };
+  }
+
   const intent = detectInboundIntent(inboundText);
   if (intent === 'none') return { intent: 'none' };
 

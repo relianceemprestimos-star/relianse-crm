@@ -30,6 +30,9 @@ import type {
   CredentialPortalConfig,
   WhatsappConfig,
   WhatsappMessage,
+  WhatsappFlow,
+  WhatsappFlowExecution,
+  WhatsappFlowLog,
   WhatsappTemplate,
 } from '../types';
 import { clearAuthSession, getAccessSession, getAuthToken } from './session';
@@ -618,6 +621,32 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(payload),
     }),
+  getWhatsappFlows: (filters: Record<string, string | number | undefined | null> = {}) =>
+    request<{ rows: WhatsappFlow[] }>(`/api/whatsapp/flows${buildQuery(filters)}`),
+  saveWhatsappFlow: (payload: Partial<WhatsappFlow>) =>
+    request<{ flow: WhatsappFlow }>('/api/whatsapp/flows', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updateWhatsappFlow: (id: number | string, payload: Partial<WhatsappFlow>) =>
+    request<{ flow: WhatsappFlow }>(`/api/whatsapp/flows/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  startWhatsappFlow: (payload: { flow_id: number | string; client_id: number | string; phone?: string }) =>
+    request<{ flow: WhatsappFlow; execution: WhatsappFlowExecution; initial_message: string }>('/api/whatsapp/flows/start', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  stopWhatsappFlow: (payload: { execution_id?: number | string; client_id?: number | string; reason?: string }) =>
+    request<{ execution: WhatsappFlowExecution }>('/api/whatsapp/flows/stop', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  getWhatsappFlowExecutions: (filters: Record<string, string | number | undefined | null> = {}) =>
+    request<{ rows: WhatsappFlowExecution[] }>(`/api/whatsapp/flows/executions${buildQuery(filters)}`),
+  getWhatsappFlowLogs: (filters: Record<string, string | number | undefined | null> = {}) =>
+    request<{ rows: WhatsappFlowLog[] }>(`/api/whatsapp/flows/logs${buildQuery(filters)}`),
 };
 
 export { API_URL };

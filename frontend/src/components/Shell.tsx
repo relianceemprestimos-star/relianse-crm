@@ -18,6 +18,7 @@ import {
   PhoneCall,
   Settings,
   Users,
+  Workflow,
   Zap,
 } from 'lucide-react';
 
@@ -41,6 +42,7 @@ const navItems: NavItem[] = [
   { to: '/atendimento', label: 'Atendimentos', icon: ClipboardList, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/relatorios', label: 'Relatorios', icon: Zap, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/whatsapp-api', label: 'WhatsApp API', icon: MessagesSquare, allowedRoles: ['gerencial', 'vendedor'] },
+  { to: '/whatsapp-fluxos', label: 'Fluxos de WhatsApp', icon: Workflow, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/whatsapp', label: 'WhatsApp Web', icon: MessagesSquare, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/consulta-margem', label: 'Consulta de Margem', icon: Landmark, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/consulta-telefones', label: 'Consulta de Telefones', icon: PhoneCall, allowedRoles: ['gerencial', 'vendedor'] },
@@ -60,6 +62,7 @@ const pageTitles: Record<string, string> = {
   '/relatorios': 'Relatorios e acompanhamento',
   '/whatsapp': 'WhatsApp Web',
   '/whatsapp-api': 'WhatsApp API',
+  '/whatsapp-fluxos': 'Fluxos de WhatsApp',
   '/consulta-margem': 'Consulta de Margem',
   '/consulta-ribeirao': 'Consulta de Margem',
   '/consulta-telefones': 'Consulta de Telefones',
