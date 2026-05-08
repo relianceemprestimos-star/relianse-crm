@@ -288,15 +288,22 @@ export const testWhatsapp = () => runConnectionAction('getStatus');
 
 export async function getWhatsappQrCode() {
   const config = getConfigWithSecret();
-  const result = await getProvider(config).getQrcode();
-  saveWhatsappConfigRecord({
-    ...config,
-    qrcode: result.qrcode || '',
-    status: result.status || config.status || 'unknown',
-    last_test_at: nowIso(),
-    connected_at: result.connected ? nowIso() : config.connected_at,
-  });
-  return { qrcode: result.qrcode || '', status: result.status || 'unknown', connected: Boolean(result.connected) };
+  try {
+    const result = await getProvider(config).getQrcode();
+    saveWhatsappConfigRecord({
+      ...config,
+      qrcode: result.qrcode || '',
+      status: result.status || config.status || 'unknown',
+      last_test_at: nowIso(),
+      connected_at: result.connected ? nowIso() : config.connected_at,
+    });
+    return { qrcode: result.qrcode || '', status: result.status || 'unknown', connected: Boolean(result.connected) };
+  } catch (error) {
+    if (error?.code === 'WHATSAPP_NOT_CONFIGURED') {
+      return { qrcode: '', status: 'not_configured', connected: false };
+    }
+    throw error;
+  }
 }
 
 export async function sendWhatsappMessage({ clientId, phone, message, templateId = null, userId = null } = {}) {
