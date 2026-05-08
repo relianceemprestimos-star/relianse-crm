@@ -198,6 +198,58 @@ export interface ClientPhone {
   searched_at_formatted?: string;
 }
 
+export interface WhatsappConfig {
+  id?: number;
+  provider: 'unofficial' | 'meta' | string;
+  api_url?: string;
+  has_token?: boolean;
+  default_country_code?: string;
+  default_number?: string;
+  instance_id?: string;
+  enabled?: boolean;
+  send_delay_seconds?: number;
+  daily_limit_per_number?: number;
+  status?: string;
+  qrcode?: string;
+  last_error?: string;
+  last_test_at?: string | null;
+  connected_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface WhatsappTemplate {
+  id: number;
+  name: string;
+  category: string;
+  body: string;
+  variables?: string[];
+  active: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface WhatsappMessage {
+  id: number;
+  client_id?: number | null;
+  client_name?: string;
+  client_cpf?: string;
+  phone: string;
+  direction: 'inbound' | 'outbound' | string;
+  provider: string;
+  template_id?: number | null;
+  message_body: string;
+  status: 'pending' | 'sent' | 'delivered' | 'read' | 'failed' | 'received' | string;
+  provider_message_id?: string;
+  error_message?: string;
+  sent_by?: number | null;
+  sent_at?: string | null;
+  delivered_at?: string | null;
+  read_at?: string | null;
+  received_at?: string | null;
+  created_at?: string;
+}
+
 export interface PhoneLookupJob {
   id: number;
   client_id: number;

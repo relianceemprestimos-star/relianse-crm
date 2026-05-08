@@ -58,6 +58,8 @@ export default function AttendancePage() {
   });
   const [settings, setSettings] = useState<Settings | null>(null);
   const [queuePosition, setQueuePosition] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
+  const [whatsappApiMessage, setWhatsappApiMessage] = useState('');
+  const [whatsappApiSending, setWhatsappApiSending] = useState(false);
 
   const baseScope = useMemo(
     () => ({
@@ -88,6 +90,16 @@ export default function AttendancePage() {
       active = false;
     };
   }, [baseScope]);
+
+  useEffect(() => {
+    if (client && settings?.whatsapp_message && !whatsappApiMessage) {
+      setWhatsappApiMessage(
+        settings.whatsapp_message
+          .replace(/\{nome\}/g, client.name || '')
+          .replace(/\{cpf\}/g, client.cpf || '')
+      );
+    }
+  }, [client?.id, settings?.whatsapp_message]);
 
   useEffect(() => {
     let active = true;
@@ -182,6 +194,30 @@ export default function AttendancePage() {
 
     toast.success('WhatsApp aberto em nova aba.');
     await refreshClient();
+  }
+
+  async function sendClientWhatsappApi() {
+    if (!client) return;
+    const message = whatsappApiMessage.trim();
+    if (!message) {
+      toast.error('Digite a mensagem antes de enviar.');
+      return;
+    }
+    try {
+      setWhatsappApiSending(true);
+      await api.sendWhatsapp({
+        client_id: client.id,
+        phone: client.phone,
+        message,
+      });
+      toast.success('Mensagem enviada pela WhatsApp API.');
+      setWhatsappApiMessage('');
+      await refreshClient();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Falha ao enviar pela WhatsApp API.');
+    } finally {
+      setWhatsappApiSending(false);
+    }
   }
 
   async function handleLookupPhone(force = false) {
@@ -502,6 +538,36 @@ export default function AttendancePage() {
                       Nenhum telefone encontrado ainda. Use a busca Nova Vida somente para clientes com oportunidade real.
                     </div>
                   )}
+                </div>
+              </div>
+
+              <div className="mt-4 rounded-2xl border border-accent/20 bg-accent/5 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.2em] text-accent">WhatsApp API</p>
+                    <p className="mt-1 text-sm text-slate-300">Envio manual registrado no histórico do cliente.</p>
+                  </div>
+                  <Badge tone="info">Controle operacional</Badge>
+                </div>
+                <div className="mt-3 space-y-3">
+                  <Textarea
+                    rows={4}
+                    value={whatsappApiMessage}
+                    onChange={(event) => setWhatsappApiMessage(event.target.value)}
+                    placeholder="Digite a mensagem para enviar pela API configurada"
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <Button onClick={() => void sendClientWhatsappApi()} disabled={whatsappApiSending || !whatsappApiMessage.trim()}>
+                      <Send size={16} />
+                      {whatsappApiSending ? 'Enviando...' : 'Enviar mensagem'}
+                    </Button>
+                    <Button variant="secondary" onClick={() => setWhatsappApiMessage('')}>
+                      Limpar mensagem
+                    </Button>
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    O backend bloqueia envio para cliente sem interesse, bloqueado, marcado como não abordar ou sem telefone válido.
+                  </p>
                 </div>
               </div>
 

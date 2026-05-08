@@ -28,6 +28,9 @@ import type {
   AverbadorCredential,
   CredentialConnectionLog,
   CredentialPortalConfig,
+  WhatsappConfig,
+  WhatsappMessage,
+  WhatsappTemplate,
 } from '../types';
 import { clearAuthSession, getAccessSession, getAuthToken } from './session';
 
@@ -577,6 +580,38 @@ export const api = {
     const blob = await requestBlob(`/api/ribeirao/batch/${id}/export`);
     return blob;
   },
+  getWhatsappStatus: () =>
+    request<{ config: WhatsappConfig | null; connected?: boolean; status?: string; message?: string; qrcode?: string; code?: string }>(
+      '/api/whatsapp/status'
+    ),
+  getWhatsappConfig: () => request<{ config: WhatsappConfig | null }>('/api/whatsapp/config'),
+  saveWhatsappConfig: (payload: Partial<WhatsappConfig> & { token?: string }) =>
+    request<{ config: WhatsappConfig }>('/api/whatsapp/config', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  connectWhatsapp: () => request<{ config: WhatsappConfig; connected?: boolean; status?: string; qrcode?: string }>('/api/whatsapp/connect', { method: 'POST', body: JSON.stringify({}) }),
+  reconnectWhatsapp: () => request<{ config: WhatsappConfig; connected?: boolean; status?: string; qrcode?: string }>('/api/whatsapp/reconnect', { method: 'POST', body: JSON.stringify({}) }),
+  testWhatsapp: () => request<{ config: WhatsappConfig; connected?: boolean; status?: string; message?: string }>('/api/whatsapp/test', { method: 'POST', body: JSON.stringify({}) }),
+  sendWhatsapp: (payload: { client_id?: number | string | null; phone?: string; message: string; template_id?: number | string | null }) =>
+    request<{ message: WhatsappMessage; provider_result?: unknown }>('/api/whatsapp/send', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  sendWhatsappTemplate: (payload: { client_id?: number | string | null; phone?: string; template_id: number | string; variables?: Record<string, string> }) =>
+    request<{ message: WhatsappMessage; provider_result?: unknown }>('/api/whatsapp/send-template', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  getWhatsappMessages: (filters: Record<string, string | number | undefined | null> = {}) =>
+    request<{ rows: WhatsappMessage[] }>(`/api/whatsapp/messages${buildQuery(filters)}`),
+  getWhatsappTemplates: (filters: Record<string, string | number | undefined | null> = {}) =>
+    request<{ rows: WhatsappTemplate[] }>(`/api/whatsapp/templates${buildQuery(filters)}`),
+  saveWhatsappTemplate: (payload: Partial<WhatsappTemplate>) =>
+    request<{ template: WhatsappTemplate }>('/api/whatsapp/templates', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
 };
 
 export { API_URL };

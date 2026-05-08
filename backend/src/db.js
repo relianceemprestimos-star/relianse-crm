@@ -1188,6 +1188,78 @@ function initSchema(database) {
       FOREIGN KEY (credential_id) REFERENCES averbador_credentials(id) ON DELETE SET NULL,
       FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
     );
+
+    CREATE TABLE IF NOT EXISTS whatsapp_configs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider TEXT NOT NULL DEFAULT 'unofficial',
+      api_url TEXT NOT NULL DEFAULT '',
+      encrypted_token TEXT NOT NULL DEFAULT '',
+      default_country_code TEXT NOT NULL DEFAULT '55',
+      default_number TEXT NOT NULL DEFAULT '',
+      instance_id TEXT NOT NULL DEFAULT '',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      send_delay_seconds INTEGER NOT NULL DEFAULT 5,
+      daily_limit_per_number INTEGER NOT NULL DEFAULT 30,
+      status TEXT NOT NULL DEFAULT 'not_configured',
+      qrcode TEXT NOT NULL DEFAULT '',
+      last_error TEXT NOT NULL DEFAULT '',
+      last_test_at TEXT,
+      connected_at TEXT,
+      updated_by INTEGER,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS whatsapp_templates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL DEFAULT '',
+      category TEXT NOT NULL DEFAULT 'abordagem',
+      body TEXT NOT NULL DEFAULT '',
+      variables TEXT NOT NULL DEFAULT '[]',
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS whatsapp_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_id INTEGER,
+      phone TEXT NOT NULL DEFAULT '',
+      direction TEXT NOT NULL DEFAULT 'outbound',
+      provider TEXT NOT NULL DEFAULT '',
+      template_id INTEGER,
+      message_body TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending',
+      provider_message_id TEXT NOT NULL DEFAULT '',
+      error_message TEXT NOT NULL DEFAULT '',
+      sent_by INTEGER,
+      sent_at TEXT,
+      delivered_at TEXT,
+      read_at TEXT,
+      received_at TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL,
+      FOREIGN KEY (template_id) REFERENCES whatsapp_templates(id) ON DELETE SET NULL,
+      FOREIGN KEY (sent_by) REFERENCES users(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS whatsapp_send_jobs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_id INTEGER,
+      phone TEXT NOT NULL DEFAULT '',
+      template_id INTEGER,
+      message_body TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending',
+      scheduled_at TEXT,
+      sent_at TEXT,
+      error_message TEXT NOT NULL DEFAULT '',
+      created_by INTEGER,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL,
+      FOREIGN KEY (template_id) REFERENCES whatsapp_templates(id) ON DELETE SET NULL,
+      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+    );
   `);
 
   ensureColumns(database, 'clients', [
@@ -1432,6 +1504,67 @@ function initSchema(database) {
     'created_by INTEGER',
   ]);
 
+  ensureColumns(database, 'whatsapp_configs', [
+    'provider TEXT NOT NULL DEFAULT \'unofficial\'',
+    'api_url TEXT NOT NULL DEFAULT \'\'',
+    'encrypted_token TEXT NOT NULL DEFAULT \'\'',
+    'default_country_code TEXT NOT NULL DEFAULT \'55\'',
+    'default_number TEXT NOT NULL DEFAULT \'\'',
+    'instance_id TEXT NOT NULL DEFAULT \'\'',
+    'enabled INTEGER NOT NULL DEFAULT 1',
+    'send_delay_seconds INTEGER NOT NULL DEFAULT 5',
+    'daily_limit_per_number INTEGER NOT NULL DEFAULT 30',
+    'status TEXT NOT NULL DEFAULT \'not_configured\'',
+    'qrcode TEXT NOT NULL DEFAULT \'\'',
+    'last_error TEXT NOT NULL DEFAULT \'\'',
+    'last_test_at TEXT',
+    'connected_at TEXT',
+    'updated_by INTEGER',
+    'created_at TEXT NOT NULL DEFAULT \'\'',
+    'updated_at TEXT NOT NULL DEFAULT \'\'',
+  ]);
+
+  ensureColumns(database, 'whatsapp_templates', [
+    'name TEXT NOT NULL DEFAULT \'\'',
+    'category TEXT NOT NULL DEFAULT \'abordagem\'',
+    'body TEXT NOT NULL DEFAULT \'\'',
+    'variables TEXT NOT NULL DEFAULT \'[]\'',
+    'active INTEGER NOT NULL DEFAULT 1',
+    'created_at TEXT NOT NULL DEFAULT \'\'',
+    'updated_at TEXT NOT NULL DEFAULT \'\'',
+  ]);
+
+  ensureColumns(database, 'whatsapp_messages', [
+    'client_id INTEGER',
+    'phone TEXT NOT NULL DEFAULT \'\'',
+    'direction TEXT NOT NULL DEFAULT \'outbound\'',
+    'provider TEXT NOT NULL DEFAULT \'\'',
+    'template_id INTEGER',
+    'message_body TEXT NOT NULL DEFAULT \'\'',
+    'status TEXT NOT NULL DEFAULT \'pending\'',
+    'provider_message_id TEXT NOT NULL DEFAULT \'\'',
+    'error_message TEXT NOT NULL DEFAULT \'\'',
+    'sent_by INTEGER',
+    'sent_at TEXT',
+    'delivered_at TEXT',
+    'read_at TEXT',
+    'received_at TEXT',
+    'created_at TEXT NOT NULL DEFAULT \'\'',
+  ]);
+
+  ensureColumns(database, 'whatsapp_send_jobs', [
+    'client_id INTEGER',
+    'phone TEXT NOT NULL DEFAULT \'\'',
+    'template_id INTEGER',
+    'message_body TEXT NOT NULL DEFAULT \'\'',
+    'status TEXT NOT NULL DEFAULT \'pending\'',
+    'scheduled_at TEXT',
+    'sent_at TEXT',
+    'error_message TEXT NOT NULL DEFAULT \'\'',
+    'created_by INTEGER',
+    'created_at TEXT NOT NULL DEFAULT \'\'',
+  ]);
+
   database.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_base_cpf ON clients(base_id, cpf)');
   database.exec('CREATE INDEX IF NOT EXISTS idx_client_phones_client ON client_phones(client_id)');
   database.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_client_phones_unique ON client_phones(client_id, normalized_phone, source)');
@@ -1446,6 +1579,9 @@ function initSchema(database) {
   database.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_averbador_credentials_portal_id ON averbador_credentials(portal_id)');
   database.exec('CREATE INDEX IF NOT EXISTS idx_averbador_sessions_credential ON averbador_sessions(credential_id, updated_at)');
   database.exec('CREATE INDEX IF NOT EXISTS idx_credential_connection_logs_created ON credential_connection_logs(created_at)');
+  database.exec('CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_client ON whatsapp_messages(client_id, created_at)');
+  database.exec('CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_phone ON whatsapp_messages(phone, created_at)');
+  database.exec('CREATE INDEX IF NOT EXISTS idx_whatsapp_send_jobs_status ON whatsapp_send_jobs(status, scheduled_at)');
 }
 
 function ensureColumns(database, table, columns) {
@@ -2128,6 +2264,21 @@ function seedDefaults(database) {
     for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
       insertSetting.run(key, String(value));
     }
+  }
+
+  const templateCount = Number((queryOne(database, 'SELECT COUNT(*) AS count FROM whatsapp_templates') || { count: 0 }).count || 0);
+  if (templateCount === 0) {
+    const now = nowIso();
+    const insertTemplate = database.prepare(
+      'INSERT INTO whatsapp_templates (name, category, body, variables, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    );
+    [
+      ['Primeira abordagem', 'abordagem', 'Olá, {nome}. Tudo bem? Aqui é da Reliance. Identificamos uma oportunidade no seu consignado. Posso te passar uma simulação sem compromisso?', '["nome"]'],
+      ['Retorno agendado', 'retorno', 'Olá, {nome}. Passando no horário combinado para retomar sua simulação de consignado.', '["nome"]'],
+      ['Humano assumir', 'humano_assumir', 'Vou direcionar seu atendimento para uma pessoa da equipe agora.', '[]'],
+    ].forEach(([name, category, body, variables]) => {
+      insertTemplate.run(name, category, body, variables, 1, now, now);
+    });
   }
 
   const clientCount = Number((queryOne(database, 'SELECT COUNT(*) AS count FROM clients') || { count: 0 }).count || 0);
@@ -4065,6 +4216,350 @@ export function logWhatsappOpen(id, { userId, note = 'WhatsApp Web aberto para o
   insertInteraction(database, { clientId: id, userId, type: 'whatsapp_aberto', note });
   persistDb();
   return getClientById(id);
+}
+
+function parseWhatsappJson(value, fallback = null) {
+  if (value === null || value === undefined || value === '') {
+    return fallback;
+  }
+  try {
+    return JSON.parse(String(value));
+  } catch {
+    return fallback;
+  }
+}
+
+function mapWhatsappConfig(row, { includeSecret = false } = {}) {
+  if (!row) {
+    return null;
+  }
+  const config = {
+    id: Number(row.id),
+    provider: row.provider || 'unofficial',
+    api_url: row.api_url || '',
+    has_token: Boolean(row.encrypted_token),
+    default_country_code: row.default_country_code || '55',
+    default_number: row.default_number || '',
+    instance_id: row.instance_id || '',
+    enabled: Number(row.enabled ?? 1) === 1,
+    send_delay_seconds: Number(row.send_delay_seconds || 5),
+    daily_limit_per_number: Number(row.daily_limit_per_number || 30),
+    status: row.status || 'not_configured',
+    qrcode: row.qrcode || '',
+    last_error: row.last_error || '',
+    last_test_at: row.last_test_at || null,
+    connected_at: row.connected_at || null,
+    updated_by: row.updated_by ?? null,
+    created_at: row.created_at || null,
+    updated_at: row.updated_at || null,
+  };
+  if (includeSecret) {
+    config.encrypted_token = row.encrypted_token || '';
+  }
+  return config;
+}
+
+export function getWhatsappConfigRecord({ includeSecret = false } = {}) {
+  const database = getDb();
+  const row = queryOne(database, 'SELECT * FROM whatsapp_configs ORDER BY id ASC LIMIT 1');
+  return mapWhatsappConfig(row, { includeSecret });
+}
+
+export function saveWhatsappConfigRecord(input = {}) {
+  const database = getDb();
+  const now = nowIso();
+  const current = queryOne(database, 'SELECT * FROM whatsapp_configs ORDER BY id ASC LIMIT 1');
+  const next = {
+    provider: input.provider ?? current?.provider ?? 'unofficial',
+    api_url: input.api_url ?? current?.api_url ?? '',
+    encrypted_token: input.encrypted_token ?? current?.encrypted_token ?? '',
+    default_country_code: input.default_country_code ?? current?.default_country_code ?? '55',
+    default_number: input.default_number ?? current?.default_number ?? '',
+    instance_id: input.instance_id ?? current?.instance_id ?? '',
+    enabled: input.enabled === undefined ? Number(current?.enabled ?? 1) : input.enabled ? 1 : 0,
+    send_delay_seconds: Number(input.send_delay_seconds ?? current?.send_delay_seconds ?? 5),
+    daily_limit_per_number: Number(input.daily_limit_per_number ?? current?.daily_limit_per_number ?? 30),
+    status: input.status ?? current?.status ?? 'not_configured',
+    qrcode: input.qrcode ?? current?.qrcode ?? '',
+    last_error: input.last_error ?? current?.last_error ?? '',
+    last_test_at: input.last_test_at ?? current?.last_test_at ?? null,
+    connected_at: input.connected_at ?? current?.connected_at ?? null,
+    updated_by: input.updated_by ?? current?.updated_by ?? null,
+  };
+
+  if (current) {
+    database
+      .prepare(
+        `
+          UPDATE whatsapp_configs
+          SET provider = ?, api_url = ?, encrypted_token = ?, default_country_code = ?, default_number = ?,
+              instance_id = ?, enabled = ?, send_delay_seconds = ?, daily_limit_per_number = ?, status = ?,
+              qrcode = ?, last_error = ?, last_test_at = ?, connected_at = ?, updated_by = ?, updated_at = ?
+          WHERE id = ?
+        `
+      )
+      .run(
+        next.provider,
+        next.api_url,
+        next.encrypted_token,
+        next.default_country_code,
+        next.default_number,
+        next.instance_id,
+        next.enabled,
+        next.send_delay_seconds,
+        next.daily_limit_per_number,
+        next.status,
+        next.qrcode,
+        next.last_error,
+        next.last_test_at,
+        next.connected_at,
+        next.updated_by,
+        now,
+        current.id
+      );
+  } else {
+    database
+      .prepare(
+        `
+          INSERT INTO whatsapp_configs (
+            provider, api_url, encrypted_token, default_country_code, default_number, instance_id,
+            enabled, send_delay_seconds, daily_limit_per_number, status, qrcode, last_error,
+            last_test_at, connected_at, updated_by, created_at, updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `
+      )
+      .run(
+        next.provider,
+        next.api_url,
+        next.encrypted_token,
+        next.default_country_code,
+        next.default_number,
+        next.instance_id,
+        next.enabled,
+        next.send_delay_seconds,
+        next.daily_limit_per_number,
+        next.status,
+        next.qrcode,
+        next.last_error,
+        next.last_test_at,
+        next.connected_at,
+        next.updated_by,
+        now,
+        now
+      );
+  }
+  persistDb();
+  return getWhatsappConfigRecord();
+}
+
+function mapWhatsappTemplate(row) {
+  if (!row) return null;
+  return {
+    ...row,
+    id: Number(row.id),
+    active: Number(row.active ?? 1) === 1,
+    variables: parseWhatsappJson(row.variables, []),
+  };
+}
+
+export function listWhatsappTemplates(params = {}) {
+  const database = getDb();
+  const filters = [];
+  const values = [];
+  if (params.active !== undefined) {
+    filters.push('active = ?');
+    values.push(params.active ? 1 : 0);
+  }
+  const rows = queryAll(
+    database,
+    `
+      SELECT *
+      FROM whatsapp_templates
+      ${filters.length ? `WHERE ${filters.join(' AND ')}` : ''}
+      ORDER BY active DESC, name ASC
+    `,
+    values
+  );
+  return rows.map(mapWhatsappTemplate);
+}
+
+export function getWhatsappTemplateById(id) {
+  const row = queryOne(getDb(), 'SELECT * FROM whatsapp_templates WHERE id = ?', [Number(id)]);
+  return mapWhatsappTemplate(row);
+}
+
+export function saveWhatsappTemplateRecord(input = {}) {
+  const database = getDb();
+  const now = nowIso();
+  const variables = JSON.stringify(Array.isArray(input.variables) ? input.variables : []);
+  if (input.id) {
+    database
+      .prepare('UPDATE whatsapp_templates SET name = ?, category = ?, body = ?, variables = ?, active = ?, updated_at = ? WHERE id = ?')
+      .run(input.name, input.category || 'abordagem', input.body || '', variables, input.active === false ? 0 : 1, now, Number(input.id));
+  } else {
+    database
+      .prepare('INSERT INTO whatsapp_templates (name, category, body, variables, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(input.name, input.category || 'abordagem', input.body || '', variables, input.active === false ? 0 : 1, now, now);
+  }
+  persistDb();
+  return input.id ? getWhatsappTemplateById(input.id) : mapWhatsappTemplate(queryOne(database, 'SELECT * FROM whatsapp_templates ORDER BY id DESC LIMIT 1'));
+}
+
+export function createWhatsappMessageRecord(input = {}) {
+  const database = getDb();
+  const now = nowIso();
+  database
+    .prepare(
+      `
+        INSERT INTO whatsapp_messages (
+          client_id, phone, direction, provider, template_id, message_body, status, provider_message_id,
+          error_message, sent_by, sent_at, delivered_at, read_at, received_at, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `
+    )
+    .run(
+      input.client_id ?? null,
+      input.phone || '',
+      input.direction || 'outbound',
+      input.provider || 'unofficial',
+      input.template_id ?? null,
+      input.message_body || '',
+      input.status || 'pending',
+      input.provider_message_id || '',
+      input.error_message || '',
+      input.sent_by ?? null,
+      input.sent_at ?? null,
+      input.delivered_at ?? null,
+      input.read_at ?? null,
+      input.received_at ?? null,
+      now
+    );
+  persistDb();
+  return queryOne(database, 'SELECT * FROM whatsapp_messages ORDER BY id DESC LIMIT 1');
+}
+
+export function updateWhatsappMessageRecord(id, patch = {}) {
+  const database = getDb();
+  const current = queryOne(database, 'SELECT * FROM whatsapp_messages WHERE id = ?', [Number(id)]);
+  if (!current) return null;
+  const next = {
+    status: patch.status ?? current.status,
+    provider_message_id: patch.provider_message_id ?? current.provider_message_id ?? '',
+    error_message: patch.error_message ?? current.error_message ?? '',
+    delivered_at: patch.delivered_at ?? current.delivered_at ?? null,
+    read_at: patch.read_at ?? current.read_at ?? null,
+    received_at: patch.received_at ?? current.received_at ?? null,
+  };
+  database
+    .prepare(
+      'UPDATE whatsapp_messages SET status = ?, provider_message_id = ?, error_message = ?, delivered_at = ?, read_at = ?, received_at = ? WHERE id = ?'
+    )
+    .run(next.status, next.provider_message_id, next.error_message, next.delivered_at, next.read_at, next.received_at, Number(id));
+  persistDb();
+  return queryOne(database, 'SELECT * FROM whatsapp_messages WHERE id = ?', [Number(id)]);
+}
+
+export function listWhatsappMessages(params = {}) {
+  const database = getDb();
+  const filters = [];
+  const values = [];
+  if (params.client_id) {
+    filters.push('m.client_id = ?');
+    values.push(Number(params.client_id));
+  }
+  if (params.status) {
+    filters.push('m.status = ?');
+    values.push(String(params.status));
+  }
+  if (params.direction) {
+    filters.push('m.direction = ?');
+    values.push(String(params.direction));
+  }
+  if (params.search) {
+    const term = `%${String(params.search).trim()}%`;
+    filters.push('(m.phone LIKE ? OR m.message_body LIKE ? OR m.provider_message_id LIKE ? OR c.name LIKE ?)');
+    values.push(term, term, term, term);
+  }
+  const limit = Math.min(Math.max(Number(params.limit || 100), 1), 500);
+  return queryAll(
+    database,
+    `
+      SELECT m.*, c.name AS client_name, c.cpf AS client_cpf
+      FROM whatsapp_messages m
+      LEFT JOIN clients c ON c.id = m.client_id
+      ${filters.length ? `WHERE ${filters.join(' AND ')}` : ''}
+      ORDER BY datetime(COALESCE(m.sent_at, m.received_at, m.created_at)) DESC, m.id DESC
+      LIMIT ${limit}
+    `,
+    values
+  );
+}
+
+export function createWhatsappSendJobRecord(input = {}) {
+  const database = getDb();
+  const now = nowIso();
+  database
+    .prepare(
+      'INSERT INTO whatsapp_send_jobs (client_id, phone, template_id, message_body, status, scheduled_at, sent_at, error_message, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    )
+    .run(
+      input.client_id ?? null,
+      input.phone || '',
+      input.template_id ?? null,
+      input.message_body || '',
+      input.status || 'pending',
+      input.scheduled_at ?? null,
+      input.sent_at ?? null,
+      input.error_message || '',
+      input.created_by ?? null,
+      now
+    );
+  persistDb();
+  return queryOne(database, 'SELECT * FROM whatsapp_send_jobs ORDER BY id DESC LIMIT 1');
+}
+
+export function countWhatsappMessagesSentToday({ phone, provider }) {
+  const database = getDb();
+  const day = nowIso().slice(0, 10);
+  const row = queryOne(
+    database,
+    `
+      SELECT COUNT(*) AS total
+      FROM whatsapp_messages
+      WHERE phone = ?
+        AND provider = ?
+        AND direction = 'outbound'
+        AND status IN ('sent', 'delivered', 'read')
+        AND substr(COALESCE(sent_at, created_at), 1, 10) = ?
+    `,
+    [phone || '', provider || 'unofficial', day]
+  );
+  return Number(row?.total || 0);
+}
+
+export function findClientByPhone(phone) {
+  const database = getDb();
+  const normalized = normalizePhoneToBrazilInternational(phone);
+  const digits = cleanDigits(phone);
+  if (!normalized && !digits) {
+    return null;
+  }
+  const row = queryOne(
+    database,
+    `
+      ${getClientBaseQuery()}
+      LEFT JOIN client_phones cp ON cp.client_id = c.id
+      WHERE REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(c.phone, ''), '+', ''), ' ', ''), '-', ''), '(', ''), ')', '') IN (?, ?)
+         OR REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(cp.phone_number, ''), '+', ''), ' ', ''), '-', ''), '(', ''), ')', '') IN (?, ?)
+         OR REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(cp.normalized_phone, ''), '+', ''), ' ', ''), '-', ''), '(', ''), ')', '') IN (?, ?)
+      ORDER BY c.id DESC
+      LIMIT 1
+    `,
+    [normalized, digits, normalized, digits, normalized, digits]
+  );
+  return row ? clientDto(database, row, getClientMargins(database, row.id), [], [], []) : null;
 }
 
 export function getDashboardData(params = {}) {

@@ -100,6 +100,22 @@ import {
   updateCredential,
 } from './services/credentials/credentialService.js';
 import { normalizePortalId } from './services/credentials/portalConfigs.js';
+import {
+  connectWhatsapp,
+  getWhatsappConfig,
+  getWhatsappMessages,
+  getWhatsappStatus,
+  getWhatsappTemplates,
+  reconnectWhatsapp,
+  receiveWhatsappWebhook,
+  saveWhatsappConfig,
+  saveWhatsappTemplate,
+  sendWhatsappMessage,
+  sendWhatsappTemplate,
+  testWhatsapp,
+  verifyMetaWebhook,
+  WhatsappServiceError,
+} from './services/whatsapp/whatsapp_service.js';
 
 dotenv.config();
 await initDb();
@@ -225,6 +241,27 @@ app.post('/api/auth/logout', (_req, res) => {
   return res.json({ message: 'Logout realizado com sucesso.' });
 });
 
+app.get('/api/whatsapp/webhook', (req, res) => {
+  const challenge = verifyMetaWebhook(req.query || {});
+  if (challenge !== null) {
+    return res.status(200).send(challenge);
+  }
+  return res.status(403).json({ message: 'Webhook nao verificado.' });
+});
+
+app.post('/api/whatsapp/webhook', (req, res) => {
+  try {
+    const result = receiveWhatsappWebhook(req.body || {});
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      message: error instanceof Error ? error.message : 'Erro ao processar webhook.',
+      code: error?.code || 'WHATSAPP_WEBHOOK_ERROR',
+    });
+  }
+});
+
 app.use('/api', authMiddleware);
 app.post('/api/auth/change-password', (req, res) => {
   try {
@@ -265,6 +302,16 @@ app.use('/api/settings', roleMiddleware(operationalRoles));
 app.use('/api/reports', roleMiddleware(operationalRoles));
 app.use('/api/ribeirao', roleMiddleware(operationalRoles));
 app.use('/api/phone-lookup', roleMiddleware(operationalRoles));
+app.use('/api/whatsapp', roleMiddleware(operationalRoles));
+
+function handleWhatsappError(res, error) {
+  const status = error instanceof WhatsappServiceError ? error.status : 500;
+  return res.status(status || 500).json({
+    message: error instanceof Error ? error.message : 'Erro no modulo WhatsApp.',
+    code: error?.code || 'WHATSAPP_ERROR',
+    message_record: error?.messageRecord || undefined,
+  });
+}
 
 app.get('/api/credentials/portals', (_req, res) => {
   return res.json({ portals: getCredentialPortals() });
@@ -334,6 +381,96 @@ app.post('/api/credentials/:id/assisted-login/confirm', roleMiddleware(['gerenci
     return res.json({ credential });
   } catch (error) {
     return res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao confirmar sessão assistida.' });
+  }
+});
+
+app.get('/api/whatsapp/status', async (_req, res) => {
+  try {
+    return res.json(await getWhatsappStatus());
+  } catch (error) {
+    return handleWhatsappError(res, error);
+  }
+});
+
+app.get('/api/whatsapp/config', (_req, res) => {
+  return res.json({ config: getWhatsappConfig() });
+});
+
+app.post('/api/whatsapp/config', roleMiddleware(['gerencial']), (req, res) => {
+  try {
+    return res.json({ config: saveWhatsappConfig(req.body || {}, getAuthenticatedUserId(req)) });
+  } catch (error) {
+    return handleWhatsappError(res, error);
+  }
+});
+
+app.post('/api/whatsapp/connect', roleMiddleware(['gerencial']), async (_req, res) => {
+  try {
+    return res.json(await connectWhatsapp());
+  } catch (error) {
+    return handleWhatsappError(res, error);
+  }
+});
+
+app.post('/api/whatsapp/reconnect', roleMiddleware(['gerencial']), async (_req, res) => {
+  try {
+    return res.json(await reconnectWhatsapp());
+  } catch (error) {
+    return handleWhatsappError(res, error);
+  }
+});
+
+app.post('/api/whatsapp/test', roleMiddleware(['gerencial']), async (_req, res) => {
+  try {
+    return res.json(await testWhatsapp());
+  } catch (error) {
+    return handleWhatsappError(res, error);
+  }
+});
+
+app.post('/api/whatsapp/send', async (req, res) => {
+  try {
+    const result = await sendWhatsappMessage({
+      clientId: req.body?.client_id || req.body?.clientId,
+      phone: req.body?.phone,
+      message: req.body?.message || req.body?.message_body,
+      templateId: req.body?.template_id || req.body?.templateId || null,
+      userId: getAuthenticatedUserId(req),
+    });
+    return res.json(result);
+  } catch (error) {
+    return handleWhatsappError(res, error);
+  }
+});
+
+app.post('/api/whatsapp/send-template', async (req, res) => {
+  try {
+    const result = await sendWhatsappTemplate({
+      clientId: req.body?.client_id || req.body?.clientId,
+      phone: req.body?.phone,
+      templateId: req.body?.template_id || req.body?.templateId,
+      variables: req.body?.variables || {},
+      userId: getAuthenticatedUserId(req),
+    });
+    return res.json(result);
+  } catch (error) {
+    return handleWhatsappError(res, error);
+  }
+});
+
+app.get('/api/whatsapp/messages', (req, res) => {
+  return res.json({ rows: getWhatsappMessages(req.query || {}) });
+});
+
+app.get('/api/whatsapp/templates', (req, res) => {
+  return res.json({ rows: getWhatsappTemplates(req.query || {}) });
+});
+
+app.post('/api/whatsapp/templates', roleMiddleware(['gerencial']), (req, res) => {
+  try {
+    return res.json({ template: saveWhatsappTemplate(req.body || {}) });
+  } catch (error) {
+    return handleWhatsappError(res, error);
   }
 });
 

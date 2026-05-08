@@ -12,6 +12,7 @@ import QueuePage from './pages/QueuePage';
 import AttendancePage from './pages/AttendancePage';
 import ReportsPage from './pages/ReportsPage';
 import WhatsAppPage from './pages/WhatsAppPage';
+import WhatsAppApiPage from './pages/WhatsAppApiPage';
 import SettingsPage from './pages/SettingsPage';
 import RibeiraoPage from './pages/RibeiraoPage';
 import PhoneLookupPage from './pages/PhoneLookupPage';
@@ -33,6 +34,7 @@ export default function App() {
           <Route path="/fila" element={<QueuePage />} />
           <Route path="/atendimento" element={<AttendancePage />} />
           <Route path="/whatsapp" element={<WhatsAppPage />} />
+          <Route path="/whatsapp-api" element={<WhatsAppApiPage />} />
           <Route path="/upload" element={<UploadPage />} />
           <Route path="/bases" element={<BasesPage />} />
           <Route path="/relatorios" element={<ReportsPage />} />
