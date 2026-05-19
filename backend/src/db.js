@@ -175,6 +175,11 @@ function execute(database, sql, params = []) {
   }
 }
 
+function lastInsertId(database) {
+  const row = queryOne(database, 'SELECT last_insert_rowid() AS id');
+  return Number(row?.id || row?.lastInsertRowid || row?.lastInsertRowID || row?.lastInsertId || 0);
+}
+
 function createAdapter(database) {
   return {
     __isAdapter: true,
@@ -5627,7 +5632,7 @@ export function getUserByLogin(login) {
 export function createUserRecord({ name, login, passwordHash, role, isActive = true }) {
   const database = getDb();
   const now = nowIso();
-  database
+  const result = database
     .prepare(
       `
         INSERT INTO users (name, login, email, password_hash, role, is_active, last_login_at, created_at, updated_at)
@@ -5635,7 +5640,8 @@ export function createUserRecord({ name, login, passwordHash, role, isActive = t
       `
     )
     .run(name, login, login, passwordHash, normalizeUserRole(role), isActive ? 1 : 0, null, now, now);
-  return getUserById(lastInsertId(database));
+  const insertedId = Number(result?.lastInsertRowid || result?.lastInsertRowID || result?.lastInsertId || 0);
+  return getUserById(insertedId) || getUserByLogin(login);
 }
 
 export function updateUserRecord(id, { name, login, role, isActive }) {
