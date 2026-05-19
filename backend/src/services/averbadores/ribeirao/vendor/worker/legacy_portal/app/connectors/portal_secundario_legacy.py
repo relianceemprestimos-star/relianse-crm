@@ -146,9 +146,24 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
                     const metadata = {};
                     let tableFound = false;
 
+                    const isBadMetaValue = (key, value) => {
+                      const text = clean(value);
+                      if (!text) return true;
+                      const normalized = normalize(text);
+                      if (normalized.includes("DETALHES DA MARGEM") || normalized.includes("MARGEM TOTAL")) return true;
+                      if (normalized.includes("USUARIO:") || normalized.includes("CONSIGNATARIA:")) return true;
+                      if (normalized.includes("TIPO ACESSO:") || normalized.includes("CORRESPONDENTE:")) return true;
+                      if (normalized.includes("SERVIDOR: MATRICULA:") || normalized.includes("CPF: TIPO DO SERVIDOR")) return true;
+                      if (normalized === "DATA INCLUSAO" || normalized.startsWith("DATA INCLUSAO")) return true;
+                      if (key !== "orgao" && text.length > 120) return true;
+                      if (key === "nome_portal" && /^(SERVIDOR|NOME|DATA INCLUSAO)$/i.test(text)) return true;
+                      if (key === "matricula" && !/\\d/.test(text)) return true;
+                      return false;
+                    };
                     const setMeta = (key, value) => {
                       const text = clean(value);
-                      if (text && !metadata[key]) metadata[key] = text;
+                      if (!text || isBadMetaValue(key, text)) return;
+                      if (!metadata[key] || isBadMetaValue(key, metadata[key])) metadata[key] = text;
                     };
                     const normalizeKey = (value) => normalize(value).replace(/[^A-Z0-9]/g, "");
                     const metaKeyFromLabel = (label) => {
@@ -173,6 +188,60 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
                           setMeta(key, value);
                         }
                       }
+                    };
+                    const captureMetadataFromVisibleInputs = () => {
+                      const isVisible = (el) => {
+                        if (!el) return false;
+                        const style = window.getComputedStyle(el);
+                        const rect = el.getBoundingClientRect();
+                        return style && style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+                      };
+                      const values = Array.from(document.querySelectorAll("input,textarea,select"))
+                        .filter((el) => {
+                          const type = String(el.getAttribute("type") || "").toLowerCase();
+                          return isVisible(el) && !["hidden", "password", "submit", "button", "checkbox", "radio", "image"].includes(type);
+                        })
+                        .map((el) => {
+                          if (el.tagName === "SELECT") {
+                            const option = el.options?.[el.selectedIndex];
+                            return clean(option?.textContent || el.value || "");
+                          }
+                          return clean(el.value || el.getAttribute("value") || "");
+                        })
+                        .filter(Boolean);
+
+                      const normalizeValue = (value) => normalize(value);
+                      const nameCandidate = values.find((value) => {
+                        const normalized = normalizeValue(value);
+                        if (!/[A-Z]/.test(normalized)) return false;
+                        if (value.replace(/\\D/g, "").length >= 8) return false;
+                        if (/^(ATIVO|INATIVO|EFETIVO|TEMPORARIO|TEMPORARIO|CLT|ESTATUTARIO)/.test(normalized)) return false;
+                        if (normalized.includes("SECRETARIA") || normalized.includes("PREFEITURA") || normalized.includes("MUNICIPAL")) return false;
+                        if (normalized.includes("BANCO") || normalized.includes("DAYCOVAL") || normalized.includes("CORRESPONDENTE")) return false;
+                        return value.length >= 6 && value.length <= 100;
+                      });
+                      const matriculaCandidate = values.find((value) => {
+                        const digits = value.replace(/\\D/g, "");
+                        return /^0{2,}\\d{3,}$/.test(digits) && !normalizeValue(value).includes("R$");
+                      }) || values.find((value) => {
+                        const digits = value.replace(/\\D/g, "");
+                        return digits.length >= 4 && digits.length < 11 && !normalizeValue(value).includes("R$");
+                      });
+                      const vinculoCandidate = values.find((value) =>
+                        /(EFETIVO|TEMPOR[ÁA]RIO|COMISSIONADO|ESTATUT[ÁA]RIO|CLT)/i.test(value)
+                      );
+                      const orgaoCandidate = values.find((value) =>
+                        /(SECRETARIA|PREFEITURA|MUNICIPAL|C[ÂA]MARA|SA[ÚU]DE|EDUCA[ÇC][ÃA]O|ADMINISTRA[ÇC][ÃA]O)/i.test(value)
+                      );
+                      const cargoCandidate = values.find((value) =>
+                        /(PROFESSOR|AGENTE|AUXILIAR|TECNICO|T[ÉE]CNICO|MOTORISTA|ENFERMEIRO|MEDICO|M[ÉE]DICO|GUARDA|DIRETOR|COORDENADOR)/i.test(value)
+                      );
+
+                      setMeta("nome_portal", nameCandidate || "");
+                      setMeta("matricula", matriculaCandidate || "");
+                      setMeta("orgao", orgaoCandidate || "");
+                      setMeta("cargo", cargoCandidate || "");
+                      setMeta("vinculo", vinculoCandidate || "");
                     };
                     const captureMetadataFromText = () => {
                       const fields = [
@@ -309,6 +378,7 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
                       }
                     }
 
+                    captureMetadataFromVisibleInputs();
                     captureMetadataFromText();
 
                     return { notFound, tableFound, rows, metadata, bodyText, tableCount: tables.length };
