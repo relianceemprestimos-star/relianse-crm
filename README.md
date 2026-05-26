@@ -1,6 +1,12 @@
-﻿# Reliance CRM
+# Reliance CRM
 
 CRM operacional para a Reliance, empresa de credito consignado para servidores publicos, prefeituras, governos e convenios. O sistema centraliza bases de clientes, campanhas, fila de atendimento, historico comercial, relatorios, Consulta Ribeirao e consulta cadastral/telefones via Nova Vida.
+
+## Classificacao e plano LGPD
+
+Classificacao atual: **USO_PROPRIO / USO INTERNO CONTROLADO**. O CRM Reliance nao esta aprovado para SaaS e nao deve ser tratado como multi-tenant sem nova investigacao, ADR especifico e plano de isolamento de dados.
+
+As correcoes criticas de LGPD e seguranca estao sendo aplicadas em PRs menores para reduzir risco operacional. Este ciclo documenta o plano e prepara as proximas etapas de opt-in, rate limit, protecao de dados, auditoria e testes.
 
 ## Objetivo do projeto
 
@@ -303,4 +309,3 @@ STATUS_DO_PROJETO.md
 ```
 
 Depois clone o repositorio, crie `.env` a partir de `.env.example`, instale dependencias e rode os comandos de validacao.
-
