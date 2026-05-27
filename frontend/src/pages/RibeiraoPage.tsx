@@ -17,6 +17,7 @@ import toast from 'react-hot-toast';
 
 import { ApiError, api } from '../lib/api';
 import { formatCurrencyDisplay } from '../lib/margins';
+import { maskCpfForList } from '../lib/privacy';
 import { getAccessSession } from '../lib/session';
 import type {
   AverbadorCredential,
@@ -749,6 +750,11 @@ export default function RibeiraoPage() {
 
             {currentResult ? (
               <div className="mt-5 space-y-5">
+                <div className="rounded-2xl border border-amber-300/25 bg-amber-300/10 p-4 text-sm text-amber-50">
+                  <p className="font-semibold text-white">Dados sensíveis — uso interno autorizado.</p>
+                  <p className="mt-1 text-amber-50/80">CPF completo aparece apenas neste resultado individual para conferência operacional.</p>
+                </div>
+
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                   <InfoLine label="CPF" value={currentResult.cpf || '-'} />
                   <InfoLine label="Nome" value={currentResult.nome || '-'} />
@@ -1239,7 +1245,7 @@ export default function RibeiraoPage() {
                           {batchPreview.preview_rows.slice(0, 8).map((row) => (
                             <tr key={row.rowNumber} className="border-t border-border/80">
                               <td className="px-4 py-3 text-slate-300">{row.rowNumber}</td>
-                              <td className="px-4 py-3 text-slate-300">{row.cpf_display}</td>
+                              <td className="px-4 py-3 text-slate-300">{maskCpfForList(row.cpf_display)}</td>
                               <td className="px-4 py-3">
                                 <Badge tone={row.isValid ? 'success' : 'danger'}>{row.isValid ? 'Válido' : 'Inválido'}</Badge>
                               </td>
@@ -1443,7 +1449,7 @@ export default function RibeiraoPage() {
                     <tbody>
                       {batchResults.map((item) => (
                         <tr key={item.id} className="border-t border-border/80">
-                          <td className="px-5 py-4 text-slate-300">{item.cpf || '-'}</td>
+                          <td className="px-5 py-4 text-slate-300">{maskCpfForList(item.cpf)}</td>
                           <td className="px-5 py-4">
                             <p className="font-semibold text-white">{item.nome || '-'}</p>
                             <p className="mt-1 text-xs text-slate-500">{item.orgao || item.matricula || '-'}</p>
@@ -1618,7 +1624,7 @@ export default function RibeiraoPage() {
                     {history.map((item) => (
                       <tr key={item.id} className="border-t border-border/80">
                         <td className="px-5 py-4 text-slate-300">{item.created_at_formatted || item.created_at || '-'}</td>
-                        <td className="px-5 py-4 text-slate-300">{item.cpf || '-'}</td>
+                        <td className="px-5 py-4 text-slate-300">{maskCpfForList(item.cpf)}</td>
                         <td className="px-5 py-4">
                           <p className="font-semibold text-white">{item.nome || '-'}</p>
                           <p className="mt-1 text-xs text-slate-500">{item.orgao || item.matricula || '-'}</p>

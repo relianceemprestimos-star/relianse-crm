@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 
 import { api } from '../lib/api';
 import { formatCurrencyDisplay, getMarginSummary } from '../lib/margins';
+import { maskCpfForList, maskPhoneForList } from '../lib/privacy';
 import { openWhatsAppConversation } from '../lib/whatsapp';
 import type { Base, Campaign, Client, ClientsResponse, Settings } from '../types';
 import { Badge, Button, Card, Input, Select, SectionHeader, StatCard } from '../components/ui';
@@ -391,9 +392,9 @@ export default function QueuePage() {
                         <div className="font-semibold text-white">{client.name}</div>
                         <div className="mt-1 text-xs text-slate-500">Posição #{client.queue_position}</div>
                       </td>
-                      <td className="px-5 py-4 text-slate-300">{client.cpf}</td>
+                      <td className="px-5 py-4 text-slate-300">{maskCpfForList(client.cpf)}</td>
                       <td className="px-5 py-4 text-slate-300">
-                        <div>{client.phone || '-'}</div>
+                        <div>{maskPhoneForList(client.phone)}</div>
                         <div className="mt-2">
                           {client.phones?.length ? (
                             <Badge tone="success">Telefone encontrado</Badge>

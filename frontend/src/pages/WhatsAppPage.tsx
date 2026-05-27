@@ -4,8 +4,9 @@ import { ArrowRight, MessageCircleMore, Smartphone, UserCheck } from 'lucide-rea
 import toast from 'react-hot-toast';
 
 import { api } from '../lib/api';
-import { formatCpfDisplay, formatPhoneDisplay, openWhatsAppWeb, openWhatsAppConversation } from '../lib/whatsapp';
 import { formatCurrencyDisplay, getMarginSummary } from '../lib/margins';
+import { maskCpfForList, maskPhoneForList } from '../lib/privacy';
+import { openWhatsAppWeb, openWhatsAppConversation } from '../lib/whatsapp';
 import type { DashboardData, Settings } from '../types';
 import { Badge, Button, Card, SectionHeader } from '../components/ui';
 
@@ -70,6 +71,11 @@ export default function WhatsAppPage() {
         description="Acesse rapidamente suas conversas com clientes sem embutir o mensageiro dentro do sistema."
       />
 
+      <Card className="border-accent/20 bg-accent/5 p-4">
+        <p className="text-sm font-semibold text-white">Envios exigem opt-in ativo do cliente.</p>
+        <p className="mt-1 text-sm text-slate-400">Use esta tela apenas para contato operacional autorizado e registrado no CRM.</p>
+      </Card>
+
       <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
         <Card className="p-6">
           <div className="flex items-start justify-between gap-4">
@@ -102,8 +108,8 @@ export default function WhatsAppPage() {
               <div className="mt-4 space-y-3">
                 <p className="text-2xl font-bold text-white">{lastEvent.client_name || 'Cliente'}</p>
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <Line label="CPF" value={formatCpfDisplay(lastEvent.cpf)} />
-                  <Line label="Telefone" value={formatPhoneDisplay(lastEvent.phone)} />
+                  <Line label="CPF" value={maskCpfForList(lastEvent.cpf)} />
+                  <Line label="Telefone" value={maskPhoneForList(lastEvent.phone)} />
                   <Line label="Margem" value={formatCurrencyDisplay(lastEvent.best_net_margin)} />
                   <Line label="Status" value={lastEvent.status || '-'} />
                 </div>
@@ -119,8 +125,8 @@ export default function WhatsAppPage() {
               <div className="mt-4 space-y-3">
                 <p className="text-2xl font-bold text-white">{nextClient.name}</p>
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <Line label="CPF" value={formatCpfDisplay(nextClient.cpf)} />
-                  <Line label="Telefone" value={formatPhoneDisplay(nextClient.phone)} />
+                  <Line label="CPF" value={maskCpfForList(nextClient.cpf)} />
+                  <Line label="Telefone" value={maskPhoneForList(nextClient.phone)} />
                   <Line label="E-mail" value={nextClient.email || '-'} />
                   <Line label="Melhor margem" value={getMarginSummary(nextClient).bestNetMarginFormatted} />
                 </div>

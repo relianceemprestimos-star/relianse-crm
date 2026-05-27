@@ -10,6 +10,7 @@ import {
   MoveRight,
   PhoneCall,
   Send,
+  ShieldAlert,
   ThumbsDown,
   ThumbsUp,
   TimerReset,
@@ -534,7 +535,17 @@ export default function AttendancePage() {
                 </div>
               </div>
 
-                            <div className="mt-6 grid gap-3 md:grid-cols-2">
+              <div className="mt-5 rounded-2xl border border-amber-300/25 bg-amber-300/10 p-4 text-sm text-amber-50">
+                <div className="flex items-start gap-3">
+                  <ShieldAlert size={18} className="mt-0.5 shrink-0" />
+                  <div>
+                    <p className="font-semibold text-white">Dados sensíveis — uso interno autorizado.</p>
+                    <p className="mt-1 text-amber-50/80">CPF e telefone completos ficam visíveis aqui porque esta é a tela de atendimento individual.</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 grid gap-3 md:grid-cols-2">
                 <InfoLine label="CPF" value={formatCpfDisplay(client.cpf)} />
                 <InfoLine label="Telefone" value={formatPhoneDisplay(client.phone)} />
                 <InfoLine label="E-mail" value={client.email || '-'} />
@@ -611,6 +622,9 @@ export default function AttendancePage() {
                   <Badge tone="info">Controle operacional</Badge>
                 </div>
                 <div className="mt-3 space-y-3">
+                  <p className="rounded-2xl border border-border bg-bg/60 p-3 text-xs text-slate-400">
+                    Envios exigem opt-in ativo do cliente e devem permanecer restritos ao atendimento interno.
+                  </p>
                   <select
                     className="w-full rounded-2xl border border-border bg-bg/80 px-4 py-3 text-sm text-slate-100 outline-none transition focus:border-accent/60 focus:ring-2 focus:ring-accent/10"
                     value={selectedWhatsappTemplateId}
