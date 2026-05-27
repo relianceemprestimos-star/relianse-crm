@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 
 import { api } from '../lib/api';
 import { formatCurrencyDisplay, getMarginSummary } from '../lib/margins';
+import { maskCpfForList, maskPhoneForList } from '../lib/privacy';
 import { openWhatsAppConversation, openWhatsAppWeb } from '../lib/whatsapp';
 import type { Base, DashboardData, Settings } from '../types';
 import { Badge, Button, Card, SectionHeader, Select, StatCard } from '../components/ui';
@@ -150,8 +151,8 @@ export default function DashboardPage() {
                     </div>
 
                     <div className="grid gap-3 sm:grid-cols-2">
-                      <InfoLine label="CPF" value={nextClient.cpf} />
-                      <InfoLine label="Telefone" value={nextClient.phone || '-'} />
+                      <InfoLine label="CPF" value={maskCpfForList(nextClient.cpf)} />
+                      <InfoLine label="Telefone" value={maskPhoneForList(nextClient.phone)} />
                       <InfoLine label="E-mail" value={nextClient.email || '-'} />
                       <InfoLine label="Status consulta" value={nextClient.consulta_status_label || nextClient.consulta_status || '-'} />
                     </div>
