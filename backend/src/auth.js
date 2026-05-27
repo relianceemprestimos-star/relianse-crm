@@ -1,4 +1,5 @@
 import { getUserById, getUserByLogin, recordUserLogin } from './db.js';
+import { assertLoginRateLimit } from './rateLimits.js';
 import { signAuthToken, verifyAuthToken, verifyPassword } from './security.js';
 
 function normalizeRole(role) {
@@ -27,6 +28,7 @@ function publicUser(user) {
 }
 
 export function loginWithCredentials({ login, password }) {
+  assertLoginRateLimit(login);
   const user = getUserByLogin(login);
   if (!user) {
     throw new Error('Login ou senha inválidos.');
