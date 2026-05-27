@@ -1,6 +1,12 @@
-﻿# Reliance CRM
+# Reliance CRM
 
 CRM operacional para a Reliance, empresa de credito consignado para servidores publicos, prefeituras, governos e convenios. O sistema centraliza bases de clientes, campanhas, fila de atendimento, historico comercial, relatorios, Consulta Ribeirao e consulta cadastral/telefones via Nova Vida.
+
+## Classificacao e plano LGPD
+
+Classificacao atual: **USO_PROPRIO / USO INTERNO CONTROLADO**. O CRM Reliance nao esta aprovado para SaaS e nao deve ser tratado como multi-tenant sem nova investigacao, ADR especifico e plano de isolamento de dados.
+
+As correcoes criticas de LGPD e seguranca estao sendo aplicadas em PRs menores para reduzir risco operacional. Este ciclo documenta o plano e prepara as proximas etapas de opt-in, rate limit, protecao de dados, auditoria e testes.
 
 ## Objetivo do projeto
 
@@ -71,9 +77,14 @@ RIBEIRAO_AVERBADOR_LOGIN
 RIBEIRAO_AVERBADOR_PASSWORD
 RIBEIRAO_AVERBADOR_ORGAO
 RIBEIRAO_HEADLESS
+CAPSOLVER_ENABLED
+CAPSOLVER_API_KEY
+CAPSOLVER_TIMEOUT_SECONDS
+RIBEIRAO_DISABLE_CAPSOLVER_WRAPPER
 PHONE_LOOKUP_ENABLED
 PHONE_LOOKUP_MAX_PER_RUN
 PHONE_LOOKUP_DELAY_SECONDS
+PHONE_LOOKUP_SOURCE
 NOVA_VIDA_URL
 NOVA_VIDA_USERNAME
 NOVA_VIDA_USER
@@ -81,6 +92,7 @@ NOVA_VIDA_CLIENT
 NOVA_VIDA_PASSWORD
 NOVA_VIDA_HEADLESS
 NOVA_VIDA_STORAGE_STATE
+NOVA_VIDA_FIXTURE_PATH
 ```
 
 Nunca commite `.env`, bancos SQLite, logs, sessoes de navegador, planilhas reais ou arquivos de clientes.
@@ -225,12 +237,19 @@ RIBEIRAO_AVERBADOR_LOGIN=
 RIBEIRAO_AVERBADOR_PASSWORD=
 RIBEIRAO_AVERBADOR_ORGAO=
 RIBEIRAO_HEADLESS=true
+CAPSOLVER_ENABLED=false
+CAPSOLVER_API_KEY=
+CAPSOLVER_TIMEOUT_SECONDS=120
+RIBEIRAO_DISABLE_CAPSOLVER_WRAPPER=false
 ```
 
 Observacoes:
 
 - Em Docker/VPS, `RIBEIRAO_HEADLESS=true`.
-- O sistema nao burla CAPTCHA, certificado digital ou bloqueio manual.
+- Para portais com reCAPTCHA operacional, como Santana de Parnaiba, o wrapper CapSolver fica habilitado por padrao quando `RIBEIRAO_DISABLE_CAPSOLVER_WRAPPER` nao esta como `true`.
+- As variaveis CapSolver devem ser preservadas nos exemplos, sempre sem chave real.
+- Sem `CAPSOLVER_API_KEY`, o fluxo volta para validacao manual quando o portal exigir CAPTCHA.
+- O sistema nao deve contornar certificado digital ou bloqueio manual nao autorizado.
 - Logs tecnicos ficam no backend; a UI deve mostrar mensagens classificadas.
 
 ## Consulta Nova Vida
@@ -260,6 +279,10 @@ A aba **Consulta de Telefones** tambem exibe dados cadastrais enriquecidos, quan
 - enderecos;
 - telefones;
 - dados brutos em `raw_data` para auditoria tecnica.
+
+A consulta Nova Vida e uma busca interna autorizada para operacao do CRM. Regras de opt-in nao devem bloquear essa busca interna; opt-in se aplica ao envio ativo de WhatsApp, email ou SMS.
+
+Em telas de atendimento individual, CPF completo pode ser exibido quando necessario para conferencia operacional. Em listas, filas, dashboards, cards e resumos, CPF e telefone devem ser mascarados sempre que possivel.
 
 Documentacao detalhada:
 
@@ -303,4 +326,3 @@ STATUS_DO_PROJETO.md
 ```
 
 Depois clone o repositorio, crie `.env` a partir de `.env.example`, instale dependencias e rode os comandos de validacao.
-

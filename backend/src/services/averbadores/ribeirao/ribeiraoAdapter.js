@@ -41,6 +41,12 @@ export function resolveRibeiraoProjectRoot() {
 }
 
 export function getRibeiraoCliPath() {
+  if (process.env.RIBEIRAO_DISABLE_CAPSOLVER_WRAPPER !== 'true') {
+    const capsolverWrapper = path.join(__dirname, 'ribeirao_cli_capsolver.py');
+    if (pathExists(capsolverWrapper)) {
+      return capsolverWrapper;
+    }
+  }
   return path.join(__dirname, 'ribeirao_cli.py');
 }
 
