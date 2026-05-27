@@ -225,12 +225,19 @@ RIBEIRAO_AVERBADOR_LOGIN=
 RIBEIRAO_AVERBADOR_PASSWORD=
 RIBEIRAO_AVERBADOR_ORGAO=
 RIBEIRAO_HEADLESS=true
+CAPSOLVER_ENABLED=false
+CAPSOLVER_API_KEY=
+CAPSOLVER_TIMEOUT_SECONDS=120
+RIBEIRAO_DISABLE_CAPSOLVER_WRAPPER=false
 ```
 
 Observacoes:
 
 - Em Docker/VPS, `RIBEIRAO_HEADLESS=true`.
-- O sistema nao burla CAPTCHA, certificado digital ou bloqueio manual.
+- Para portais com reCAPTCHA operacional, como Santana de Parnaiba, o wrapper CapSolver fica habilitado por padrao quando `RIBEIRAO_DISABLE_CAPSOLVER_WRAPPER` nao esta como `true`.
+- As variaveis CapSolver devem ser preservadas nos exemplos, sempre sem chave real.
+- Sem `CAPSOLVER_API_KEY`, o fluxo volta para validacao manual quando o portal exigir CAPTCHA.
+- O sistema nao deve contornar certificado digital ou bloqueio manual nao autorizado.
 - Logs tecnicos ficam no backend; a UI deve mostrar mensagens classificadas.
 
 ## Consulta Nova Vida
@@ -303,4 +310,3 @@ STATUS_DO_PROJETO.md
 ```
 
 Depois clone o repositorio, crie `.env` a partir de `.env.example`, instale dependencias e rode os comandos de validacao.
-
