@@ -29,6 +29,12 @@ Criar trilha de auditoria para login, envio autorizado, envio bloqueado, opt-out
 
 Definir utilitario central para hash de identificadores sensiveis, criptografia em repouso quando aplicavel e mascaramento para logs/telas. CPF e telefone completos nao devem aparecer em logs tecnicos.
 
+CPF completo pode continuar disponivel no registro operacional e na tela de atendimento individual quando necessario para conferencia. Visualizacoes com multiplos clientes, filas, dashboards e relatorios de resumo devem priorizar dados mascarados.
+
+### Nova Vida
+
+Dados retornados pelo Nova Vida sao tratados como dados pessoais sensiveis para fins operacionais. A busca interna autorizada nao depende de opt-in de comunicacao; consentimento deve ser exigido para envio ativo posterior por WhatsApp, email ou SMS.
+
 ## Fora do escopo deste PR
 
 - Criacao de migrations.

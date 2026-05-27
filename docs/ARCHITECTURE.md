@@ -12,9 +12,17 @@ O projeto permanece classificado como **USO_PROPRIO / USO INTERNO CONTROLADO**. 
 
 Fluxos de WhatsApp, email ou SMS devem validar opt-in ativo antes de qualquer envio para cliente especifico. Tentativas sem consentimento devem ser bloqueadas e registradas sem dados pessoais completos.
 
+Opt-in nao deve bloquear busca interna autorizada do Nova Vida, consulta operacional de margem ou conferencias internas do CRM. A regra de consentimento vale para comunicacao ativa enviada ao cliente, nao para pesquisa interna feita por operador autorizado.
+
 ## Dados sensiveis
 
 CPF, telefone, conta, agencia, endereco, beneficio, matricula e dados de credito devem ser tratados como sensiveis. Logs, telas administrativas e relatorios operacionais devem mascarar ou reduzir exposicao sempre que o dado completo nao for estritamente necessario.
+
+CPF completo pode aparecer em tela de atendimento individual quando necessario para conferencia operacional. Em listas, filas, dashboards, cards e resumos, CPF e telefone devem ser mascarados para reduzir exposicao em massa.
+
+## Integracoes operacionais preservadas
+
+Nova Vida permanece como integracao de busca interna de clientes/telefones. Santana de Parnaiba usa o fluxo de averbador Ribeirao com wrapper CapSolver quando configurado. Variaveis de ambiente dessas integracoes devem ser preservadas em exemplos e deploys, sempre sem valores reais versionados.
 
 ## Rotas sensiveis
 

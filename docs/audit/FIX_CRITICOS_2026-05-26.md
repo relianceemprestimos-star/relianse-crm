@@ -17,6 +17,13 @@ O PR grande falhou por limite operacional de publicacao do commit completo no Gi
 
 Este PR registra somente documentacao Yntelli e nao altera backend, frontend, `package.json` ou `package-lock.json`.
 
+Tambem registra decisoes operacionais preservadas:
+
+- Nova Vida permanece como busca interna autorizada e nao deve ser bloqueado por regra generica de opt-in.
+- Opt-in e opt-out valem para comunicacao ativa por WhatsApp, email ou SMS.
+- CPF completo pode ficar disponivel em atendimento individual; listas, filas e dashboards devem usar mascara.
+- Variaveis Santana/CapSolver e Nova Vida devem permanecer documentadas sem valores reais.
+
 ## Plano em PRs menores
 
 1. Documentacao LGPD e uso interno.

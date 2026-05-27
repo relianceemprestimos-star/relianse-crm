@@ -77,9 +77,14 @@ RIBEIRAO_AVERBADOR_LOGIN
 RIBEIRAO_AVERBADOR_PASSWORD
 RIBEIRAO_AVERBADOR_ORGAO
 RIBEIRAO_HEADLESS
+CAPSOLVER_ENABLED
+CAPSOLVER_API_KEY
+CAPSOLVER_TIMEOUT_SECONDS
+RIBEIRAO_DISABLE_CAPSOLVER_WRAPPER
 PHONE_LOOKUP_ENABLED
 PHONE_LOOKUP_MAX_PER_RUN
 PHONE_LOOKUP_DELAY_SECONDS
+PHONE_LOOKUP_SOURCE
 NOVA_VIDA_URL
 NOVA_VIDA_USERNAME
 NOVA_VIDA_USER
@@ -87,6 +92,7 @@ NOVA_VIDA_CLIENT
 NOVA_VIDA_PASSWORD
 NOVA_VIDA_HEADLESS
 NOVA_VIDA_STORAGE_STATE
+NOVA_VIDA_FIXTURE_PATH
 ```
 
 Nunca commite `.env`, bancos SQLite, logs, sessoes de navegador, planilhas reais ou arquivos de clientes.
@@ -273,6 +279,10 @@ A aba **Consulta de Telefones** tambem exibe dados cadastrais enriquecidos, quan
 - enderecos;
 - telefones;
 - dados brutos em `raw_data` para auditoria tecnica.
+
+A consulta Nova Vida e uma busca interna autorizada para operacao do CRM. Regras de opt-in nao devem bloquear essa busca interna; opt-in se aplica ao envio ativo de WhatsApp, email ou SMS.
+
+Em telas de atendimento individual, CPF completo pode ser exibido quando necessario para conferencia operacional. Em listas, filas, dashboards, cards e resumos, CPF e telefone devem ser mascarados sempre que possivel.
 
 Documentacao detalhada:
 
