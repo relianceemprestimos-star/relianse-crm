@@ -3,6 +3,7 @@ import { Bookmark, Calendar, ChevronRight, Copy, Home, Info, Mail, MapPin, Phone
 import toast from 'react-hot-toast';
 
 import { api } from '../lib/api';
+import { maskCpfForList, maskPhoneForList } from '../lib/privacy';
 import type { Client, ClientAddress, PhoneLookupHistoryItem } from '../types';
 import { Badge, Button, Card, Input } from '../components/ui';
 
@@ -337,7 +338,7 @@ export default function PhoneLookupPage() {
                       onClick={() => chooseClient(client)}
                     >
                       <span className="font-semibold text-white">{client.name}</span>
-                      <span className="text-xs text-slate-500">{client.cpf || client.phone || '-'}</span>
+                      <span className="text-xs text-slate-500">{client.cpf ? maskCpfForList(client.cpf) : maskPhoneForList(client.phone)}</span>
                     </button>
                   ))}
                 </div>
@@ -407,6 +408,9 @@ export default function PhoneLookupPage() {
                       <span>Cliente desde <strong className="text-slate-200">{selectedClient.created_at_formatted || formatDate(selectedClient.created_at)}</strong></span>
                     ) : null}
                   </div>
+                  <p className="mt-2 rounded-2xl border border-amber-300/25 bg-amber-300/10 px-3 py-2 text-xs text-amber-50">
+                    Dados sensíveis — CPF completo aparece apenas neste resultado individual para conferência operacional.
+                  </p>
                 </div>
               </div>
 
@@ -609,7 +613,7 @@ export default function PhoneLookupPage() {
                 <tr key={item.id} className="border-t border-border/80">
                   <td className="px-5 py-4 text-slate-300">{item.consulted_at_formatted || item.created_at_formatted || item.consulted_at || item.created_at}</td>
                   <td className="px-5 py-4 font-semibold text-white">{item.client_name || item.full_name || item.name || item.nome || '-'}</td>
-                  <td className="px-5 py-4 text-slate-300">{item.cpf || '-'}</td>
+                  <td className="px-5 py-4 text-slate-300">{maskCpfForList(item.cpf)}</td>
                   <td className="px-5 py-4 text-slate-300">{item.phones_count ?? item.phones_found_count ?? 0}</td>
                   <td className="px-5 py-4">
                     <Badge tone={statusTone(item.status)}>{statusLabel(item.status)}</Badge>
