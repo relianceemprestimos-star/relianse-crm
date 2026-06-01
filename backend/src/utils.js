@@ -16,6 +16,11 @@ export const PRODUCT_DEFINITIONS = {
     label: 'Cartão',
     aliases: ['cartao', 'carto', 'cartao consignado', 'cartao de credito', 'card'],
   },
+  cartao_beneficio: {
+    key: 'cartao_beneficio',
+    label: 'Cartão benefício',
+    aliases: ['cartao beneficio', 'cartao benefcio', 'cartao de beneficio', 'beneficio', 'benefcio'],
+  },
   outros: {
     key: 'outros',
     label: 'Outros',
@@ -160,6 +165,24 @@ export function readSpreadsheetRows(buffer, filename) {
   }
 
   const worksheet = workbook.Sheets[sheetName];
+  const table = xlsx.utils.sheet_to_json(worksheet, { header: 1, defval: '', raw: true, blankrows: false });
+  const firstRow = table[0] || [];
+  const headerText = firstRow.map((cell) => normalizeHeaderKey(cell)).join('|');
+  const hasKnownHeader = /(cpf|documento|nome|cliente|telefone|celular|whatsapp|email|margem|status|retorno|mensagem)/.test(headerText);
+
+  if (table.length && !hasKnownHeader) {
+    const width = Math.max(...table.map((row) => row.length), 0);
+    const headers = Array.from({ length: width }, (_, index) => `Coluna ${index + 1}`);
+    return table
+      .filter((row) => row.some((cell) => String(cell ?? '').trim()))
+      .map((row) =>
+        headers.reduce((acc, header, index) => {
+          acc[header] = row[index] ?? '';
+          return acc;
+        }, {})
+      );
+  }
+
   return xlsx.utils.sheet_to_json(worksheet, { defval: '', raw: true, blankrows: false });
 }
 
@@ -228,7 +251,7 @@ export function normalizeCpfValue(value) {
   }
 
   const alerts = [];
-  if (digits.length < 11 && (scientific || typeof value === 'number')) {
+  if (digits.length > 0 && digits.length < 11) {
     digits = digits.padStart(11, '0');
     alerts.push('CPF completado com zeros a esquerda');
   }
