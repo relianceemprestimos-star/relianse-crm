@@ -21,6 +21,7 @@ import { maskCpfForList } from '../lib/privacy';
 import { getAccessSession } from '../lib/session';
 import type {
   AverbadorCredential,
+  AutomationRegistrySummary,
   Base,
   RibeiraoBatchPreview,
   RibeiraoBatchRecord,
@@ -63,6 +64,11 @@ const HISTORY_FILTER_DEFAULTS = {
 
 const ROLE_SESSION_KEY = 'relianse.ribeirao.sessionId';
 const BATCH_SESSION_KEY = 'relianse.ribeirao.batchId';
+const CONNECTION_REGISTRY_IDS: Record<string, string> = {
+  'prefeitura-ribeirao-preto': 'prefeitura_ribeirao_preto',
+  'governo-amapa': 'governo_amapa',
+  'governo-sp-tjsp': 'governo_sp',
+};
 
 function hasBatchCpfLimit(connection: string) {
   return normalizeMarginConnectionValue(connection) === 'governo_sp_tjsp';
@@ -77,6 +83,8 @@ export default function RibeiraoPage() {
   const [password, setPassword] = useState('');
   const [session, setSession] = useState<RibeiraoSession | null>(null);
   const [ribeiraoDiagnostics, setRibeiraoDiagnostics] = useState<RibeiraoDiagnostics | null>(null);
+  const [automationRegistry, setAutomationRegistry] = useState<AutomationRegistrySummary | null>(null);
+  const [registryLoading, setRegistryLoading] = useState(false);
   const [sessionLoading, setSessionLoading] = useState(false);
   const [sessionRefreshing, setSessionRefreshing] = useState(false);
   const [cpf, setCpf] = useState('');
@@ -110,6 +118,7 @@ export default function RibeiraoPage() {
       void refreshBatchStatus(savedBatch);
     }
     void loadRibeiraoDiagnostics();
+    void loadAutomationRegistry();
     void loadHistory(historyFilters);
     void loadBatchHistory();
     void loadBases();
@@ -168,6 +177,11 @@ export default function RibeiraoPage() {
 
   const visibleHistory = useMemo(() => history, [history]);
   const ribeiraoUrlReady = Boolean(ribeiraoDiagnostics?.ribeiraoConfigured);
+  const selectedRegistryId = CONNECTION_REGISTRY_IDS[selectedConnection] || normalizeMarginConnectionValue(selectedConnection || 'prefeitura-ribeirao-preto');
+  const selectedRegistryFlow = useMemo(
+    () => (automationRegistry?.flows || []).find((flow) => flow.convenio_id === selectedRegistryId) || null,
+    [automationRegistry?.flows, selectedRegistryId]
+  );
   const stats = useMemo(() => {
     const total = history.length;
     const withMargin = history.filter((item) => item.consulta_status === 'com_marg').length;
@@ -217,6 +231,32 @@ export default function RibeiraoPage() {
         return;
       }
       toast.error(error instanceof Error ? error.message : 'Falha ao verificar credencial do portal.');
+    }
+  }
+
+  async function loadAutomationRegistry() {
+    try {
+      setRegistryLoading(true);
+      const response = await api.getAutomationRegistry();
+      setAutomationRegistry(response);
+    } catch (error) {
+      setAutomationRegistry(null);
+      toast.error(error instanceof Error ? error.message : 'Falha ao carregar registry de automações.');
+    } finally {
+      setRegistryLoading(false);
+    }
+  }
+
+  async function handleRevalidateRegistryFlow() {
+    if (!selectedRegistryId) {
+      return;
+    }
+    try {
+      const response = await api.revalidateAutomationFlow(selectedRegistryId, 'Revalidacao solicitada no painel tecnico da Consulta de Margem.');
+      toast.success(response.message || 'Revalidacao registrada.');
+      await loadAutomationRegistry();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Falha ao registrar revalidacao.');
     }
   }
 
@@ -619,6 +659,42 @@ export default function RibeiraoPage() {
         action={<Badge tone="accent">Perfil: {sessionSession.role}</Badge>}
       />
 
+      <Card className="p-5">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+          <div>
+            <p className="text-sm text-slate-400">Painel técnico</p>
+            <h3 className="mt-1 text-xl font-bold text-white">Automation Registry</h3>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Badge tone={flowTone(selectedRegistryFlow?.status)}>{selectedRegistryFlow?.status || (registryLoading ? 'Carregando' : 'Nao encontrado')}</Badge>
+            <Badge tone="neutral">{automationRegistry?.validated || 0} validados</Badge>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          <InfoLine label="Convênio" value={selectedRegistryFlow?.convenio_nome || selectedConnectionLabel || 'Prefeitura de Ribeirão Preto'} />
+          <InfoLine label="Portal" value={selectedRegistryFlow?.portal || '-'} />
+          <InfoLine label="Última validação" value={selectedRegistryFlow?.ultima_validacao || '-'} />
+          <InfoLine label="Última falha" value={selectedRegistryFlow?.ultima_falha || '-'} />
+          <InfoLine label="Versão" value={selectedRegistryFlow?.fluxo_versao || '-'} />
+        </div>
+
+        <div className="mt-4 flex flex-wrap gap-3">
+          <Button variant="secondary" onClick={() => void loadAutomationRegistry()} disabled={registryLoading}>
+            <RefreshCcw size={16} />
+            {registryLoading ? 'Atualizando...' : 'Usar caminho salvo'}
+          </Button>
+          <Button variant="secondary" onClick={() => void handleRevalidateRegistryFlow()} disabled={!selectedRegistryFlow}>
+            <ShieldAlert size={16} />
+            Revalidar caminho
+          </Button>
+          {selectedRegistryFlow?.registry_file ? (
+            <span className="flex items-center rounded-xl border border-border bg-bg/60 px-3 py-2 text-xs text-slate-400">
+              {selectedRegistryFlow.registry_file}
+            </span>
+          ) : null}
+        </div>
+      </Card>
 
       {activeTab === 'individual' ? (
         <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
@@ -2076,6 +2152,14 @@ function batchStatusTone(status?: string) {
   if (status === 'pausado' || status === 'aguardando_captcha') return 'info';
   if (status === 'pausado_sessao_expirada' || status === 'erro' || status === 'cancelado') return 'danger';
   if (status === 'em_andamento') return 'accent';
+  return 'neutral';
+}
+
+function flowTone(status?: string) {
+  const normalized = String(status || '').toLowerCase();
+  if (normalized === 'validado') return 'success';
+  if (normalized === 'candidato') return 'info';
+  if (normalized === 'falhou' || normalized === 'erro') return 'danger';
   return 'neutral';
 }
 

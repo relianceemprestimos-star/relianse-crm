@@ -1,0 +1,60 @@
+{
+  "schema_version": "1.0",
+  "convenio_id": "tjsp_daycoval",
+  "convenio_nome": "TJSP",
+  "portal": "Daycoval",
+  "status": "validado",
+  "ultima_validacao": "2026-05-26",
+  "login_url": "https://www.daycoval.com.br/",
+  "consulta_url": "",
+  "fluxo_versao": "1.0.0",
+  "fluxo_ativo": "v1",
+  "aliases": [
+    "tjsp",
+    "tj-sp",
+    "daycoval",
+    "tjsp-daycoval"
+  ],
+  "etapas_fluxo": [
+    "Abrir portal Daycoval usado para TJSP.",
+    "Autenticar com credenciais autorizadas.",
+    "Acessar area de consulta de margem/cliente.",
+    "Informar CPF/matricula conforme exigencia do portal.",
+    "Ler retorno de margem e registrar no CRM."
+  ],
+  "seletores_usados": {
+    "login": [
+      "input[type='text']",
+      "input[name*='usuario']"
+    ],
+    "senha": [
+      "input[type='password']"
+    ],
+    "consulta": [
+      "input[name*='cpf']",
+      "input[name*='matricula']",
+      "button[type='submit']"
+    ]
+  },
+  "falhas_conhecidas": [
+    "Portal bancario pode mudar menu conforme perfil.",
+    "Fluxo pode exigir matricula alem do CPF.",
+    "Sessao pode expirar sem aviso visual claro."
+  ],
+  "regras_fallback": [
+    "Nao promover alteracao sem validacao humana.",
+    "Registrar evidencias no registry antes de ajustar seletores.",
+    "Criar versao candidata com o novo caminho quando o portal mudar."
+  ],
+  "evidencias_validacao": [
+    {
+      "tipo": "historico_operacional",
+      "descricao": "Convenio citado como caminho previamente validado pelo CRM.",
+      "data": "2026-05-26"
+    }
+  ],
+  "observacoes_tecnicas": [
+    "Este fluxo fica persistido para evitar reinvestigacao quando o conector dedicado for acionado.",
+    "URL final de consulta deve ser preenchida na proxima revalidacao se o portal expuser endpoint estavel."
+  ]
+}

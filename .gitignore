@@ -40,6 +40,8 @@ backups/
 .frontend_preview_stderr.log
 
 # Evidence, screenshots and local debug artifacts
+automation-registry/runs/
+automation-registry/convenios/**/*.candidate.json
 portal-*.png
 tmp_*
 temp-upload-test.xlsx

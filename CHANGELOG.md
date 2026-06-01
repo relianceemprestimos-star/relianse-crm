@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-06-01
+
+- Criado `automation-registry` persistente para caminhos validados de consulta de margem.
+- Configurado `AUTOMATION_REGISTRY_PATH=/app/automation-registry` e volume Docker `./automation-registry:/app/automation-registry`.
+- Integrado helper de registry ao backend antes da execucao dos robos de margem.
+- Adicionado registro tecnico de falhas com log, screenshot, HTML e versao candidata sem sobrescrever fluxo validado.
+
 ## 2026-05-26
 
 - Backend: adicionada base de protecao de dados sensiveis, rate limit e bloqueio basico de comunicacao sem consentimento.

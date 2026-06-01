@@ -124,6 +124,11 @@ import {
   verifyMetaWebhook,
   WhatsappServiceError,
 } from './services/whatsapp/whatsapp_service.js';
+import {
+  getAutomationFlow,
+  getAutomationRegistrySummary,
+  registerAutomationRevalidation,
+} from './services/automationRegistryService.js';
 
 dotenv.config();
 await initDb();
@@ -308,6 +313,7 @@ app.use('/api/bases', roleMiddleware(operationalRoles));
 app.use('/api/upload', roleMiddleware(operationalRoles));
 app.use('/api/settings', roleMiddleware(operationalRoles));
 app.use('/api/reports', roleMiddleware(operationalRoles));
+app.use('/api/automation-registry', roleMiddleware(operationalRoles));
 app.use('/api/ribeirao', roleMiddleware(operationalRoles));
 app.use('/api/phone-lookup', roleMiddleware(operationalRoles));
 app.use('/api/whatsapp', roleMiddleware(operationalRoles));
@@ -823,6 +829,27 @@ app.get('/api/ribeirao/config', roleMiddleware(operationalRoles), (_req, res) =>
 
 app.get('/api/ribeirao/diagnostics', roleMiddleware(operationalRoles), (_req, res) => {
   return res.json({ diagnostics: getRibeiraoDiagnostics() });
+});
+
+app.get('/api/automation-registry', roleMiddleware(operationalRoles), (_req, res) => {
+  return res.json(getAutomationRegistrySummary());
+});
+
+app.get('/api/automation-registry/:convenioId', roleMiddleware(operationalRoles), (req, res) => {
+  const flow = getAutomationFlow(req.params.convenioId);
+  if (!flow) {
+    return res.status(404).json({ message: 'Fluxo de automacao nao encontrado no registry.' });
+  }
+  return res.json({ flow });
+});
+
+app.post('/api/automation-registry/:convenioId/revalidate', roleMiddleware(operationalRoles), (req, res) => {
+  const result = registerAutomationRevalidation({
+    convenioId: req.params.convenioId,
+    requestedBy: String(req.user?.name || req.get('x-crm-user-name') || 'sistema'),
+    note: String(req.body?.note || ''),
+  });
+  return res.json(result);
 });
 
 app.post('/api/upload', upload.single('file'), (req, res) => {
@@ -1674,4 +1701,3 @@ app.listen(port, () => {
   console.log(`Reliance CRM backend running on port ${port}`);
   console.log(`SQLite database: ${dbPath}`);
 });
-

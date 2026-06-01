@@ -1,0 +1,65 @@
+{
+  "schema_version": "1.0",
+  "convenio_id": "governo_amapa",
+  "convenio_nome": "Governo do Estado do Amapa",
+  "portal": "APConsig",
+  "status": "validado",
+  "ultima_validacao": "2026-05-24",
+  "login_url": "",
+  "consulta_url": "",
+  "fluxo_versao": "1.0.0",
+  "fluxo_ativo": "v1",
+  "aliases": [
+    "governo-amapa",
+    "amapa",
+    "apconsig",
+    "governo_do_amapa"
+  ],
+  "etapas_fluxo": [
+    "Abrir portal APConsig.",
+    "Autenticar com credenciais autorizadas.",
+    "Acessar consulta de margem.",
+    "Informar CPF/matricula do servidor.",
+    "Ler margem de credito, cartao e cartao beneficio quando disponiveis.",
+    "Salvar resultado padronizado no CRM."
+  ],
+  "seletores_usados": {
+    "login": [
+      "input[type='text']",
+      "input[name*='usuario']"
+    ],
+    "senha": [
+      "input[type='password']"
+    ],
+    "consulta": [
+      "input[name*='cpf']",
+      "input[name*='matricula']",
+      "button[type='submit']"
+    ],
+    "resultado": [
+      "table",
+      "[class*='margem']"
+    ]
+  },
+  "falhas_conhecidas": [
+    "Alguns retornos podem trazer margem negativa ou zerada por produto.",
+    "Base pode misturar servidores efetivos e comissionados.",
+    "Portal pode exigir matricula em casos especificos."
+  ],
+  "regras_fallback": [
+    "Preservar o fluxo v1 em caso de erro.",
+    "Registrar evidencia tecnica em runs/logs, runs/screenshots e runs/html-dumps.",
+    "Criar candidata v1.x quando URL ou seletores forem confirmados em nova validacao."
+  ],
+  "evidencias_validacao": [
+    {
+      "tipo": "exportacao_lote",
+      "descricao": "Exportacao local lote21_parcial contem consultas Governo do Estado do Amapa com margens positivas, negativas e zeradas.",
+      "data": "2026-05-24"
+    }
+  ],
+  "observacoes_tecnicas": [
+    "Este registry documenta o caminho para reaproveitamento futuro; nao contem dados pessoais da exportacao.",
+    "URL final deve ser preenchida quando o conector APConsig dedicado estiver ativo no CRM."
+  ]
+}

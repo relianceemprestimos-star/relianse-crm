@@ -1,0 +1,69 @@
+{
+  "schema_version": "1.0",
+  "convenio_id": "prefeitura_ribeirao_preto",
+  "convenio_nome": "Prefeitura de Ribeirao Preto",
+  "portal": "SAEC Consiglog",
+  "status": "validado",
+  "ultima_validacao": "2026-05-26",
+  "login_url": "https://saec.consiglog.com.br/",
+  "consulta_url": "https://saec.consiglog.com.br/Margem/ConsultaMargem.aspx",
+  "fluxo_versao": "1.0.0",
+  "fluxo_ativo": "v1",
+  "aliases": [
+    "prefeitura-ribeirao-preto",
+    "ribeirao-preto",
+    "ribeirao",
+    "saec-consiglog"
+  ],
+  "etapas_fluxo": [
+    "Abrir portal SAEC Consiglog.",
+    "Informar usuario e avancar login.",
+    "Informar senha quando o portal exibir segunda etapa.",
+    "Selecionar convenio Prefeitura de Ribeirao Preto quando houver tela de convenios.",
+    "Abrir Consulta de Margem.",
+    "Informar CPF e aguardar retorno de margem."
+  ],
+  "seletores_usados": {
+    "login": [
+      "input[name='usuario']",
+      "input[type='text']",
+      "#txtUsuario"
+    ],
+    "senha": [
+      "input[type='password']",
+      "#txtSenha"
+    ],
+    "consulta_cpf": [
+      "input[name*='CPF']",
+      "#ctl00_ContentPlaceHolder1_txtCPF",
+      "input[type='text']"
+    ],
+    "botoes": [
+      "input[type='submit']",
+      "button",
+      "a:has-text('Consulta de Margem')"
+    ]
+  },
+  "falhas_conhecidas": [
+    "Portal pode exigir segunda etapa de senha.",
+    "Portal pode informar usuario ja logado e exigir confirmacao de desconexao.",
+    "Mudanca de layout pode impedir abertura direta da tela Consulta de Margem."
+  ],
+  "regras_fallback": [
+    "Se o fluxo validado falhar, manter v1 intacto.",
+    "Registrar log tecnico, screenshot e HTML da pagina.",
+    "Criar versao candidata apenas para investigacao, sem promover automaticamente.",
+    "Solicitar revalidacao manual antes de substituir o fluxo ativo."
+  ],
+  "evidencias_validacao": [
+    {
+      "tipo": "historico_operacional",
+      "descricao": "Fluxo usado pelo modulo Consulta de Margem do CRM para Prefeitura de Ribeirao Preto / SAEC Consiglog.",
+      "data": "2026-05-26"
+    }
+  ],
+  "observacoes_tecnicas": [
+    "O CRM deve preferir este registry ao reconstruir caminhos por heuristica.",
+    "Credenciais continuam vindo do ambiente seguro; este arquivo nao armazena senha."
+  ]
+}

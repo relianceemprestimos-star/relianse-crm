@@ -467,6 +467,42 @@ export interface RibeiraoDiagnostics {
   consultaUrlMasked?: string;
   message?: string;
   hint?: string;
+  automationRegistry?: AutomationRegistryFlow | null;
+}
+
+export interface AutomationRegistryFlow {
+  convenio_id: string;
+  convenio_nome: string;
+  portal: string;
+  status: string;
+  ultima_validacao?: string;
+  ultima_falha?: string;
+  login_url?: string;
+  consulta_url?: string;
+  fluxo_versao?: string;
+  fluxo_ativo?: string;
+  registry_file?: string;
+}
+
+export interface AutomationRegistrySummary {
+  root: string;
+  total: number;
+  validated: number;
+  candidate: number;
+  flows: AutomationRegistryFlow[];
+  recent_failures: Array<{
+    created_at: string;
+    convenio_id: string;
+    convenio_nome?: string;
+    portal?: string;
+    action?: string;
+    stage?: string;
+    error_code?: string;
+    message?: string;
+    log_file?: string;
+    html_dump_file?: string;
+    screenshot_file?: string;
+  }>;
 }
 
 export interface UserRecord {

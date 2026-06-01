@@ -1,0 +1,73 @@
+{
+  "schema_version": "1.0",
+  "convenio_id": "governo_sp",
+  "convenio_nome": "Governo do Estado de Sao Paulo",
+  "portal": "Portal do Consignado",
+  "status": "validado",
+  "ultima_validacao": "2026-05-26",
+  "login_url": "https://www.portaldoconsignado.com.br/home?2",
+  "consulta_url": "https://www.portaldoconsignado.com.br/home?2",
+  "fluxo_versao": "1.0.0",
+  "fluxo_ativo": "v1",
+  "aliases": [
+    "governo-sp",
+    "gov-sp",
+    "govsp",
+    "portal-consignado",
+    "portal-do-consignado"
+  ],
+  "etapas_fluxo": [
+    "Abrir Portal do Consignado.",
+    "Acessar perfil administrativo/consignatario financeiro.",
+    "Resolver captcha autorizado quando o portal solicitar.",
+    "Informar credenciais.",
+    "Selecionar perfil de acesso.",
+    "Abrir menu Consulta de Margem.",
+    "Informar CPF e aguardar retorno do portal."
+  ],
+  "seletores_usados": {
+    "login": [
+      "input[type='text']",
+      "input[name*='login']",
+      "input[name*='usuario']"
+    ],
+    "senha": [
+      "input[type='password']"
+    ],
+    "captcha": [
+      "img",
+      "input[name*='captcha']"
+    ],
+    "consulta_cpf": [
+      "input[name*='CPF']",
+      "input[id*='CPF']",
+      "input[type='text']"
+    ],
+    "menu_consulta": [
+      "a:has-text('Consulta de Margem')",
+      "button:has-text('Consulta de Margem')"
+    ]
+  },
+  "falhas_conhecidas": [
+    "Captcha pode bloquear execucao quando CapSolver nao responder.",
+    "Perfil pode mudar de nome no portal.",
+    "Menu Consulta de Margem pode aparecer somente apos selecionar perfil correto."
+  ],
+  "regras_fallback": [
+    "Usar login_url e consulta_url deste registry antes de qualquer heuristica.",
+    "Registrar falha tecnica com etapa e convenio.",
+    "Salvar HTML e screenshot do ponto de falha.",
+    "Criar versao candidata quando seletores ou URL precisarem mudar."
+  ],
+  "evidencias_validacao": [
+    {
+      "tipo": "historico_operacional",
+      "descricao": "Fluxo Gov SP mantido no robo de consulta com suporte ao Portal do Consignado e CapSolver.",
+      "data": "2026-05-26"
+    }
+  ],
+  "observacoes_tecnicas": [
+    "Nao fixar orgao do cliente: o vinculo deve vir do retorno da consulta.",
+    "Credenciais e chave CapSolver permanecem fora do registry."
+  ]
+}

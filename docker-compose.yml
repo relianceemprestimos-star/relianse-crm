@@ -13,6 +13,7 @@ services:
       DATABASE_PATH: ${DATABASE_PATH:-/app/data/relianse-crm.sqlite}
       UPLOAD_DIR: ${UPLOAD_DIR:-/app/uploads}
       LOG_DIR: ${LOG_DIR:-/app/logs}
+      AUTOMATION_REGISTRY_PATH: ${AUTOMATION_REGISTRY_PATH:-/app/automation-registry}
       MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-25}
       CORS_ORIGIN: ${CORS_ORIGIN:-https://${CRM_DOMAIN:-reliancecrm.com.br}}
       APP_URL: ${APP_URL:-https://${CRM_DOMAIN:-reliancecrm.com.br}}
@@ -57,6 +58,7 @@ services:
       - ./data:/app/data
       - ./uploads:/app/uploads
       - ./logs:/app/logs
+      - ./automation-registry:/app/automation-registry
     dns:
       - 1.1.1.1
       - 8.8.8.8
