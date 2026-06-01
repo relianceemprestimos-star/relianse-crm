@@ -7,7 +7,7 @@ export type ClientStatus =
   | 'convertido';
 
 export type ConsultaStatus = 'com_marg' | 'sem_marg' | 'erro';
-export type ProductType = 'consignacao' | 'credito' | 'cartao' | 'outros';
+export type ProductType = 'consignacao' | 'credito' | 'cartao' | 'cartao_beneficio' | 'outros';
 
 export interface Base {
   id: number;
@@ -59,6 +59,182 @@ export interface Campaign {
     role: string;
   }>;
   bases?: Base[];
+}
+
+export type DispatchCampaignStatus = 'rascunho' | 'em_andamento' | 'concluida' | 'pausada' | string;
+export type DispatchProduct = 'consignado' | 'cartao_consignado' | 'cartao_beneficio' | string;
+
+export interface CampaignCoefficient {
+  cadastrado: boolean;
+  id?: number;
+  data: string;
+  coeficiente: number | null;
+  prazo: number | null;
+  cadastrado_por?: string;
+  cadastrado_em?: string;
+  updated_at?: string;
+}
+
+export interface BankCoefficient {
+  id?: number | null;
+  data: string;
+  convenio: 'gov_sp' | 'prefeitura_rp' | string;
+  banco: string;
+  banco_label: string;
+  produto: DispatchProduct;
+  coeficiente: number | null;
+  taxa: number | null;
+  prazo: number | null;
+  primeiro_vencimento_dias?: number | null;
+  status: 'ativo' | 'inativo' | 'aguardando' | string;
+  cadastrado: boolean;
+  cadastrado_por?: string;
+  cadastrado_em?: string;
+  updated_at?: string;
+}
+
+export interface CampaignOpportunity {
+  client_id: number;
+  nome: string;
+  cpf: string;
+  convenio: 'gov_sp' | 'prefeitura_rp' | string;
+  convenio_label?: string;
+  telefone: string;
+  produto: DispatchProduct;
+  margem_disponivel: number;
+  valor_liberado: number;
+  faixa_valor?: string;
+  faixa_valor_label?: string;
+  prazo: number;
+  coeficiente: number;
+  taxa?: number | null;
+  banco?: string;
+  banco_label?: string;
+  primeiro_vencimento_dias?: number | null;
+  grupo?: string;
+  status_regra?: string;
+  motivo_regra?: string;
+  idade?: number | null;
+  sexo?: string;
+  data_nascimento?: string;
+  orgao?: string;
+  matricula?: string;
+  cargo?: string;
+  vinculo?: string;
+  oferta_complementar: boolean;
+  produto_complementar?: DispatchProduct | null;
+  valor_complementar?: number | null;
+}
+
+export interface CampaignOpportunitySummary {
+  total_importado: number;
+  com_margem: number;
+  sem_margem: number;
+  erro_margem: number;
+  elegiveis: number;
+  sem_oportunidade: number;
+  analise_manual: number;
+  com_telefone: number;
+  sem_telefone: number;
+  aguardando_coeficiente: number;
+}
+
+export interface DispatchCampaign {
+  id: string;
+  nome: string;
+  convenio: string;
+  produto?: string;
+  banco?: string;
+  faixa_valor?: string;
+  mensagem_inicial?: string;
+  followup_mensagem?: string;
+  followup_intervalo_horas?: number;
+  janela_inicio?: string;
+  janela_fim?: string;
+  intervalo_envios_segundos?: number;
+  coeficiente: number;
+  prazo: number;
+  sessao_rewhats?: string;
+  status: DispatchCampaignStatus;
+  criada_em: string;
+  iniciada_em?: string | null;
+  concluida_em?: string | null;
+  total_disparos: number;
+  total_respostas: number;
+  total_aceites: number;
+}
+
+export interface DispatchCampaignClient {
+  id: number;
+  campanha_id: string;
+  client_id: number;
+  nome?: string;
+  cpf?: string;
+  produto: DispatchProduct;
+  margem_disponivel: number;
+  valor_liberado: number;
+  oferta_complementar: boolean;
+  produto_complementar?: DispatchProduct | null;
+  valor_complementar?: number | null;
+  telefone: string;
+  status: string;
+  enviado_em?: string | null;
+  respondeu_em?: string | null;
+  status_atualizado_em?: string | null;
+}
+
+export interface DocumentChecklist {
+  id: number;
+  campanha_id: string;
+  client_id?: number | null;
+  telefone: string;
+  banco: string;
+  status: 'pendente' | 'completo' | 'aguardando_humano' | string;
+  conta_digital: number | boolean;
+  isento_documentos: number | boolean;
+  requer_rg_cnh: number | boolean;
+  requer_comprovante: number | boolean;
+  requer_holerite: number | boolean;
+  requer_dados_bancarios: number | boolean;
+  requer_extrato: number | boolean;
+  recebeu_rg_cnh: number | boolean;
+  recebeu_comprovante: number | boolean;
+  recebeu_holerite: number | boolean;
+  recebeu_dados_bancarios: number | boolean;
+  recebeu_extrato: number | boolean;
+  observacoes?: string;
+  atualizado_em?: string;
+  nome_cliente?: string;
+  documentos_recebidos?: number;
+  pendentes?: Array<{ tipo: string; label: string }>;
+}
+
+export interface ClientDocument {
+  id: number;
+  campanha_id?: string;
+  client_id?: number | null;
+  telefone: string;
+  tipo_documento: string;
+  nome_arquivo: string;
+  url_arquivo?: string;
+  caminho?: string;
+  mimetype?: string;
+  status: 'recebido' | 'validado' | 'rejeitado' | string;
+  document_ai_status?: string;
+  document_ai_text?: string;
+  document_ai_json?: string;
+  document_ai_error?: string;
+  document_ai_processed_at?: string;
+  recebido_em: string;
+  observacao?: string;
+}
+
+export interface ReWhatsSession {
+  id: string;
+  nome?: string;
+  numero?: string;
+  conectado: boolean;
+  status?: string;
 }
 
 export interface MarginRecord {
@@ -140,12 +316,6 @@ export interface Client {
   nova_vida_last_lookup_at_formatted?: string;
   nova_vida_lookup_status?: string;
   phone_lookup_job?: PhoneLookupJob | null;
-  whatsapp_allowed?: boolean | number;
-  whatsapp_opt_out?: boolean | number;
-  whatsapp_blocked?: boolean | number;
-  whatsapp_last_contact_at?: string | null;
-  whatsapp_last_response_at?: string | null;
-  whatsapp_status?: string;
 }
 
 export interface ClientAddress {
@@ -204,120 +374,6 @@ export interface ClientPhone {
   searched_at_formatted?: string;
 }
 
-export interface WhatsappConfig {
-  id?: number;
-  provider: 'unofficial' | 'meta' | string;
-  api_url?: string;
-  has_token?: boolean;
-  default_country_code?: string;
-  default_number?: string;
-  instance_id?: string;
-  enabled?: boolean;
-  send_delay_seconds?: number;
-  daily_limit_per_number?: number;
-  status?: string;
-  qrcode?: string;
-  last_error?: string;
-  last_test_at?: string | null;
-  connected_at?: string | null;
-  created_at?: string | null;
-  updated_at?: string | null;
-}
-
-export interface WhatsappTemplate {
-  id: number;
-  name: string;
-  category: string;
-  body: string;
-  variables?: string[];
-  active: boolean;
-  created_at?: string;
-  updated_at?: string;
-}
-
-export interface WhatsappMessage {
-  id: number;
-  client_id?: number | null;
-  client_name?: string;
-  client_cpf?: string;
-  phone: string;
-  direction: 'inbound' | 'outbound' | string;
-  provider: string;
-  template_id?: number | null;
-  message_body: string;
-  status: 'pending' | 'sent' | 'delivered' | 'read' | 'failed' | 'received' | string;
-  provider_message_id?: string;
-  error_message?: string;
-  sent_by?: number | null;
-  sent_at?: string | null;
-  delivered_at?: string | null;
-  read_at?: string | null;
-  received_at?: string | null;
-  created_at?: string;
-}
-
-export interface WhatsappFlowStep {
-  id?: number;
-  flow_id?: number;
-  step_order: number;
-  trigger_keywords: string[];
-  response_message: string;
-  action_type: string;
-  client_status_to_apply?: string;
-  should_assign_human?: boolean;
-  should_stop_flow?: boolean;
-}
-
-export interface WhatsappFlow {
-  id: number;
-  name: string;
-  description?: string;
-  initial_template_id?: number | null;
-  initial_template_name?: string;
-  initial_message?: string;
-  fallback_message?: string;
-  fallback_human_after?: number;
-  active: boolean;
-  created_at?: string;
-  updated_at?: string;
-  steps?: WhatsappFlowStep[];
-}
-
-export interface WhatsappFlowExecution {
-  id: number;
-  flow_id: number;
-  flow_name?: string;
-  client_id: number;
-  client_name?: string;
-  client_cpf?: string;
-  phone: string;
-  current_step_id?: number | null;
-  status: string;
-  unmatched_count?: number;
-  started_at?: string;
-  finished_at?: string | null;
-  last_message_at?: string | null;
-  created_by?: number | null;
-  created_at?: string;
-  updated_at?: string;
-}
-
-export interface WhatsappFlowLog {
-  id: number;
-  flow_execution_id: number;
-  flow_id?: number;
-  flow_name?: string;
-  client_id: number;
-  client_name?: string;
-  client_cpf?: string;
-  phone: string;
-  inbound_message?: string;
-  matched_trigger?: string;
-  outbound_message?: string;
-  action_taken?: string;
-  created_at?: string;
-}
-
 export interface PhoneLookupJob {
   id: number;
   client_id: number;
@@ -364,50 +420,6 @@ export interface PhoneLookupHistoryItem {
   phones?: ClientPhone[];
   addresses?: ClientAddress[];
   emails?: Array<{ email: string; is_primary?: boolean }>;
-}
-
-export interface CredentialPortalConfig {
-  id: string;
-  name: string;
-  url: string;
-  requiresCaptcha: boolean;
-  requiresAssistedLogin: boolean;
-  providerStatus?: string;
-}
-
-export interface AverbadorCredential {
-  id: number;
-  portal_id: string;
-  portal_name: string;
-  portal_url: string;
-  portal_host?: string;
-  login: string;
-  has_password: boolean;
-  requires_captcha: boolean;
-  requires_assisted_login: boolean;
-  session_status: string;
-  session_status_label?: string;
-  last_access_at?: string | null;
-  session_expires_at?: string | null;
-  last_test_at?: string | null;
-  last_error?: string;
-  created_at?: string;
-  updated_at?: string;
-}
-
-export interface CredentialConnectionLog {
-  id: number;
-  credential_id?: number | null;
-  portal_id: string;
-  portal_name?: string;
-  portal_url?: string;
-  action: string;
-  status: string;
-  message?: string;
-  error_message?: string;
-  created_at: string;
-  created_by?: number | null;
-  created_by_name?: string;
 }
 
 export interface DashboardData {
@@ -467,42 +479,6 @@ export interface RibeiraoDiagnostics {
   consultaUrlMasked?: string;
   message?: string;
   hint?: string;
-  automationRegistry?: AutomationRegistryFlow | null;
-}
-
-export interface AutomationRegistryFlow {
-  convenio_id: string;
-  convenio_nome: string;
-  portal: string;
-  status: string;
-  ultima_validacao?: string;
-  ultima_falha?: string;
-  login_url?: string;
-  consulta_url?: string;
-  fluxo_versao?: string;
-  fluxo_ativo?: string;
-  registry_file?: string;
-}
-
-export interface AutomationRegistrySummary {
-  root: string;
-  total: number;
-  validated: number;
-  candidate: number;
-  flows: AutomationRegistryFlow[];
-  recent_failures: Array<{
-    created_at: string;
-    convenio_id: string;
-    convenio_nome?: string;
-    portal?: string;
-    action?: string;
-    stage?: string;
-    error_code?: string;
-    message?: string;
-    log_file?: string;
-    html_dump_file?: string;
-    screenshot_file?: string;
-  }>;
 }
 
 export interface UserRecord {
@@ -813,6 +789,7 @@ export interface RibeiraoBatchPreviewRow {
   rowNumber: number;
   cpf: string;
   cpf_display: string;
+  name?: string;
   raw_value: string;
   isValid: boolean;
   alerts: string[];
@@ -821,11 +798,13 @@ export interface RibeiraoBatchPreviewRow {
 export interface RibeiraoBatchPreview {
   headers: string[];
   cpf_column: string;
+  name_column?: string;
   total_rows: number;
   valid_rows: number;
   invalid_rows: number;
   preview_rows: RibeiraoBatchPreviewRow[];
   cpfs: string[];
+  clients?: Array<{ cpf: string; cpf_display?: string; name?: string }>;
 }
 
 export interface RibeiraoBatchRecord {
