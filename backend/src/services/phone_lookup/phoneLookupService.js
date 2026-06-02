@@ -162,8 +162,7 @@ export async function searchPhones({ cpf = '', name = '', phone = '', clientId =
   const clientDetails = clientId ? getClientById(Number(clientId)) : null;
   const client = clientDetails?.client || null;
   const searchPhone = String(phone || client?.phone || '').trim();
-  const phoneDigits = cleanDigits(searchPhone);
-  const searchCpf = cleanDigits(cpf || client?.cpf || (phoneDigits.length === 11 ? phoneDigits : ''));
+  const searchCpf = cleanDigits(cpf || client?.cpf || '');
   const searchName = String(name || client?.name || (!searchCpf && searchPhone ? searchPhone : '')).trim();
   if (!searchCpf && !searchName) {
     return { error: 'Informe CPF ou nome para buscar.', status: 400 };
