@@ -42,6 +42,13 @@ import {
   listClientPhones,
   setPrimaryClientPhone,
   updateClientPhoneStatus,
+  getTodayBankCoefficients,
+  saveBankCoefficient,
+  listCampaignOpportunities,
+  runPipelineSimulation,
+  runPendingPipelineSimulations,
+  getPipelineGroups,
+  listPipelineGroupClients,
 } from './db.js';
 import { authMiddleware, loginWithCredentials, roleMiddleware } from './auth.js';
 import { hashPassword, verifyPassword } from './security.js';
@@ -314,6 +321,9 @@ app.use('/api/upload', roleMiddleware(operationalRoles));
 app.use('/api/settings', roleMiddleware(operationalRoles));
 app.use('/api/reports', roleMiddleware(operationalRoles));
 app.use('/api/automation-registry', roleMiddleware(operationalRoles));
+app.use('/api/coeficiente', roleMiddleware(operationalRoles));
+app.use('/api/campanhas/oportunidades', roleMiddleware(operationalRoles));
+app.use('/api/esteira', roleMiddleware(operationalRoles));
 app.use('/api/ribeirao', roleMiddleware(operationalRoles));
 app.use('/api/phone-lookup', roleMiddleware(operationalRoles));
 app.use('/api/whatsapp', roleMiddleware(operationalRoles));
@@ -814,6 +824,63 @@ app.post('/api/bases/:id/archive', (req, res) => {
   return res.json({ base });
 });
 
+app.get('/api/coeficiente/bancos/hoje', (_req, res) => {
+  return res.json(getTodayBankCoefficients());
+});
+
+app.post('/api/coeficiente/bancos', (req, res) => {
+  try {
+    const saved = saveBankCoefficient({
+      convenio: req.body?.convenio,
+      banco: req.body?.banco || req.body?.bank,
+      bancoLabel: req.body?.banco_label || req.body?.bank_label || req.body?.bancoLabel || '',
+      produto: req.body?.produto || 'consignado',
+      coeficiente: req.body?.coeficiente,
+      taxa: req.body?.taxa ?? null,
+      prazo: req.body?.prazo,
+      primeiroVencimentoDias: req.body?.primeiro_vencimento_dias ?? req.body?.primeiroVencimentoDias ?? null,
+      status: req.body?.status || 'ativo',
+      cadastradoPor: String(req.user?.name || ''),
+    });
+    const reprocessed = runPendingPipelineSimulations({ limit: 25 });
+    return res.json({ ...saved, reprocessed });
+  } catch (error) {
+    return res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao salvar coeficiente.' });
+  }
+});
+
+app.get('/api/campanhas/oportunidades', (req, res) => {
+  try {
+    return res.json(listCampaignOpportunities(req.query || {}));
+  } catch (error) {
+    return res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao carregar oportunidades.' });
+  }
+});
+
+app.post('/api/esteira/:id/simular', (req, res) => {
+  try {
+    return res.json(runPipelineSimulation(Number(req.params.id)));
+  } catch (error) {
+    return res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao simular a esteira.' });
+  }
+});
+
+app.get('/api/esteira/:id/grupos', (req, res) => {
+  const result = getPipelineGroups(Number(req.params.id));
+  if (!result) {
+    return res.status(404).json({ message: 'Base da esteira nao encontrada.' });
+  }
+  return res.json(result);
+});
+
+app.get('/api/esteira/:id/grupos/:grupo/clientes', (req, res) => {
+  try {
+    return res.json(listPipelineGroupClients(Number(req.params.id), req.params.grupo, req.query || {}));
+  } catch (error) {
+    return res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao carregar clientes do grupo.' });
+  }
+});
+
 app.get('/api/settings', (_req, res) => {
   res.json({ settings: getSettings() });
 });
@@ -1239,7 +1306,8 @@ app.post('/api/phone-lookup/worker/run', async (req, res) => {
     const userId = getAuthenticatedUserId(req);
     const max = Number(req.body?.max || process.env.PHONE_LOOKUP_MAX_PER_RUN || 50);
     const result = await runPhoneLookupWorker({ max, userId });
-    return res.json(result);
+    const simulation = runPendingPipelineSimulations({ limit: 25 });
+    return res.json({ ...result, simulation });
   } catch (error) {
     return res.status(500).json({ message: error instanceof Error ? error.message : 'Falha ao executar fila de busca.' });
   }

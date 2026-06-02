@@ -35,6 +35,7 @@ type NavItem = {
 
 const navItems: NavItem[] = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, allowedRoles: ['gerencial', 'vendedor'] },
+  { to: '/esteira', label: 'Esteira Inteligente', icon: Workflow, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/campanhas', label: 'Campanhas', icon: Flag, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/upload', label: 'Upload de Listas', icon: Files, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/bases', label: 'Bases', icon: Layers3, allowedRoles: ['gerencial', 'vendedor'] },
@@ -53,6 +54,8 @@ const navItems: NavItem[] = [
 
 const pageTitles: Record<string, string> = {
   '/dashboard': 'Dashboard',
+  '/esteira': 'Esteira Inteligente',
+  '/esteira/': 'Esteira Inteligente',
   '/campanhas': 'Campanhas',
   '/campanhas/': 'Campanhas',
   '/upload': 'Upload de Listas',
@@ -227,4 +230,3 @@ export function Shell() {
     </div>
   );
 }
-

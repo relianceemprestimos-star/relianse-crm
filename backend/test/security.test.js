@@ -232,3 +232,70 @@ test('prefeitura abaixo de 150 mantem consignado com complemento de cartao', () 
   assert.equal(opportunity?.oferta_complementar, true);
   assert.equal(opportunity?.produto_complementar, 'cartao_consignado');
 });
+
+function baseIdFromClient(clientId) {
+  return Number(db.getDb().prepare('SELECT base_id FROM clients WHERE id = ?').get(Number(clientId)).base_id);
+}
+
+test('simulacao da esteira persiste grupos e oculta CPF em lista', () => {
+  db.saveBankCoefficient({ convenio: 'gov_sp', banco: 'daycoval', bancoLabel: 'Daycoval', produto: 'consignado', coeficiente: 0.02, prazo: 96 });
+  const clientId = seedPipelineClient({
+    name: 'Cliente Simulacao Gov',
+    cpf: '90000000006',
+    birthDate: '1988-01-01',
+    age: 38,
+    margins: [{ product_type: 'consignado', gross_margin: 600, net_margin: 600 }],
+  });
+  const baseId = baseIdFromClient(clientId);
+
+  const simulation = db.runPipelineSimulation(baseId);
+  assert.equal(simulation.total_clientes, 1);
+  assert.equal(simulation.prontas, 1);
+  assert.ok(simulation.grupos.some((group) => group.grupo === 'GOV_SP_ELEGIVEL'));
+
+  const clients = db.listPipelineGroupClients(baseId, 'GOV_SP_ELEGIVEL');
+  assert.equal(clients.clientes.length, 1);
+  assert.equal('cpf' in clients.clientes[0], false);
+  assert.equal(clients.clientes[0].valor_liberado, 30000);
+});
+
+test('simulacao separa faixa 20k a 30k e acima de 30k', () => {
+  db.saveBankCoefficient({ convenio: 'gov_sp', banco: 'daycoval', bancoLabel: 'Daycoval', produto: 'consignado', coeficiente: 0.02, prazo: 96 });
+  const clientTwenty = seedPipelineClient({
+    name: 'Cliente Faixa Vinte',
+    cpf: '90000000007',
+    birthDate: '1990-01-01',
+    age: 36,
+    margins: [{ product_type: 'consignado', gross_margin: 500, net_margin: 500 }],
+  });
+  const baseTwenty = baseIdFromClient(clientTwenty);
+  db.runPipelineSimulation(baseTwenty);
+  assert.equal(db.listPipelineGroupClients(baseTwenty, 'GOV_SP_ELEGIVEL').clientes[0].faixa_valor, '20k_30k');
+
+  const clientThirty = seedPipelineClient({
+    name: 'Cliente Faixa Trinta',
+    cpf: '90000000008',
+    birthDate: '1990-01-01',
+    age: 36,
+    margins: [{ product_type: 'consignado', gross_margin: 800, net_margin: 800 }],
+  });
+  const baseThirty = baseIdFromClient(clientThirty);
+  db.runPipelineSimulation(baseThirty);
+  assert.equal(db.listPipelineGroupClients(baseThirty, 'GOV_SP_ELEGIVEL').clientes[0].faixa_valor, 'acima_30k');
+});
+
+test('simulacao fica aguardando coeficiente quando banco elegivel nao foi preenchido', () => {
+  const clientId = seedPipelineClient({
+    convenio: 'Prefeitura de Ribeirao Preto',
+    name: 'Cliente Prefeitura Sem Coeficiente',
+    cpf: '90000000009',
+    birthDate: '1988-01-01',
+    age: 38,
+    gender: 'F',
+    margins: [{ product_type: 'cartao_consignado', gross_margin: 700, net_margin: 700 }],
+  });
+  const baseId = baseIdFromClient(clientId);
+  const simulation = db.runPipelineSimulation(baseId);
+  assert.ok(simulation.aguardando_coeficiente >= 1);
+  assert.ok(simulation.grupos.some((group) => group.grupo === 'AGUARDANDO_COEFICIENTE'));
+});
