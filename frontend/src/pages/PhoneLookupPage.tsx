@@ -126,6 +126,7 @@ function normalizeConsultation(item: any): LookupResult {
 
 export default function PhoneLookupPage() {
   const [cpf, setCpf] = useState('');
+  const [phone, setPhone] = useState('');
   const [name, setName] = useState('');
   const [clientSearch, setClientSearch] = useState('');
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
@@ -212,12 +213,14 @@ export default function PhoneLookupPage() {
     setSelectedClient(client);
     setClientSearch(client.name);
     setCpf(client.cpf || '');
+    setPhone(client.phone || '');
     setName(client.name || '');
     setClientOptions([]);
   }
 
   function clearFields() {
     setCpf('');
+    setPhone('');
     setName('');
     setClientSearch('');
     setSelectedClient(null);
@@ -231,12 +234,14 @@ export default function PhoneLookupPage() {
       setLoading(true);
       const typedSearch = clientSearch.trim();
       const typedDigits = typedSearch.replace(/\D/g, '');
-      const effectiveCpf = cpf.trim() || (typedDigits.length === 11 ? typedDigits : '');
-      const effectiveName = name.trim() || (!effectiveCpf && typedSearch ? typedSearch : '');
+      const typedSearchLooksLikePhone = !selectedClient && typedDigits.length >= 10 && typedDigits.length <= 11;
+      const effectivePhone = phone.trim() || (typedSearchLooksLikePhone ? typedSearch : selectedClient?.phone || '');
+      const effectiveCpf = cpf.trim() || selectedClient?.cpf || (!typedSearchLooksLikePhone && typedDigits.length === 11 ? typedDigits : '');
+      const effectiveName = name.trim() || (!effectiveCpf && !effectivePhone && typedSearch ? typedSearch : '');
       const response = await api.searchPhones({
         cpf: effectiveCpf,
         name: effectiveName,
-        phone: typedSearch,
+        phone: effectivePhone,
         client_id: selectedClient?.id || null,
       });
       const normalized = normalizeConsultation(response);
@@ -287,6 +292,7 @@ export default function PhoneLookupPage() {
       setResult(normalized);
       setActiveTab('summary');
       setCpf(normalized.cpf || '');
+      setPhone(normalized.phones?.[0] ? phoneValue(normalized.phones[0]) : item.telefone_pesquisado || '');
       setName(normalized.full_name || normalized.name || '');
       setClientSearch(response.consultation.client_name || normalized.full_name || normalized.name || '');
       toast.success('Consulta reaberta.');
@@ -316,7 +322,7 @@ export default function PhoneLookupPage() {
       </div>
 
       <Card className="overflow-visible rounded-3xl border-accent/15 bg-panel/80 p-6 shadow-[0_22px_70px_rgba(0,0,0,.22)]">
-        <div className="grid gap-5 lg:grid-cols-[1.4fr_0.75fr_1.05fr]">
+        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-[1.2fr_0.75fr_0.8fr_1fr]">
             <label className="relative block text-sm text-slate-300">
               Cliente do CRM
               <div className="relative mt-2">
@@ -348,6 +354,11 @@ export default function PhoneLookupPage() {
             <label className="block text-sm text-slate-300">
               CPF
               <Input className="mt-2 h-12 rounded-full" value={cpf} onChange={(event) => setCpf(event.target.value)} placeholder="Digite o CPF" />
+            </label>
+
+            <label className="block text-sm text-slate-300">
+              Telefone
+              <Input className="mt-2 h-12 rounded-full" value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="Digite o telefone" />
             </label>
 
             <label className="block text-sm text-slate-300">
