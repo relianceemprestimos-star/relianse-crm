@@ -35,6 +35,12 @@ import type {
   WhatsappFlowLog,
   WhatsappTemplate,
   AutomationRegistrySummary,
+  BankCoefficient,
+  CampaignOpportunity,
+  CampaignOpportunitySummary,
+  PipelineGroup,
+  PipelineGroupClient,
+  PipelineSimulationSummary,
 } from '../types';
 import { clearAuthSession, getAccessSession, getAuthToken } from './session';
 
@@ -290,6 +296,50 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ archived }),
     }),
+  getBankCoefficientsToday: () =>
+    request<{ cadastrado: boolean; data: string; total: number; ativos: number; aguardando: number; bancos: BankCoefficient[] }>(
+      '/api/coeficiente/bancos/hoje'
+    ),
+  saveBankCoefficient: (payload: {
+    convenio: string;
+    banco: string;
+    banco_label?: string;
+    produto?: string;
+    coeficiente: number;
+    taxa?: number | null;
+    prazo: number;
+    primeiro_vencimento_dias?: number | null;
+    status?: string;
+  }) =>
+    request<{ cadastrado: boolean; data: string; total: number; ativos: number; aguardando: number; bancos: BankCoefficient[]; reprocessed?: unknown }>(
+      '/api/coeficiente/bancos',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }
+    ),
+  getCampaignOpportunities: (filters: Record<string, string | number | undefined | null> = {}) =>
+    request<
+      CampaignOpportunitySummary & {
+        coeficiente: number | null;
+        prazo: number | null;
+        coeficientes_banco: BankCoefficient[];
+        total: number;
+        oportunidades: CampaignOpportunity[];
+        grupos: Array<{ grupo: string; total: number }>;
+      }
+    >(`/api/campanhas/oportunidades${buildQuery(filters)}`),
+  simulatePipeline: (esteiraId: number) =>
+    request<PipelineSimulationSummary>(`/api/esteira/${esteiraId}/simular`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+  getPipelineGroups: (esteiraId: number) =>
+    request<{ esteira_id: number; base: Base; grupos: PipelineGroup[]; total_grupos: number }>(`/api/esteira/${esteiraId}/grupos`),
+  getPipelineGroupClients: (esteiraId: number, grupo: string, filters: Record<string, string | number | undefined | null> = {}) =>
+    request<{ esteira_id: number; grupo: string; grupo_label: string; total: number; clientes: PipelineGroupClient[] }>(
+      `/api/esteira/${esteiraId}/grupos/${encodeURIComponent(grupo)}${buildQuery(filters)}`
+    ),
   saveSettings: (settings: Partial<Settings>) =>
     request<{ settings: Settings }>('/api/settings', {
       method: 'POST',

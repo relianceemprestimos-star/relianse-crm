@@ -1035,6 +1035,56 @@ function initSchema(database) {
 
     CREATE UNIQUE INDEX IF NOT EXISTS idx_client_margins_unique ON client_margins(client_id, product_type);
 
+    CREATE TABLE IF NOT EXISTS simulacoes_esteira (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      esteira_id INTEGER NOT NULL,
+      client_id INTEGER NOT NULL,
+      cpf_hash TEXT NOT NULL DEFAULT '',
+      nome TEXT NOT NULL DEFAULT '',
+      convenio TEXT NOT NULL DEFAULT '',
+      convenio_label TEXT NOT NULL DEFAULT '',
+      banco TEXT NOT NULL DEFAULT '',
+      banco_label TEXT NOT NULL DEFAULT '',
+      produto TEXT NOT NULL DEFAULT '',
+      margem_disponivel REAL NOT NULL DEFAULT 0,
+      valor_liberado REAL NOT NULL DEFAULT 0,
+      coeficiente REAL,
+      taxa REAL,
+      prazo INTEGER,
+      primeiro_vencimento TEXT NOT NULL DEFAULT '',
+      faixa_valor TEXT NOT NULL DEFAULT '',
+      faixa_valor_label TEXT NOT NULL DEFAULT '',
+      grupo TEXT NOT NULL DEFAULT '',
+      status_regra TEXT NOT NULL DEFAULT '',
+      motivo_regra TEXT NOT NULL DEFAULT '',
+      idade INTEGER,
+      sexo TEXT NOT NULL DEFAULT '',
+      data_nascimento TEXT NOT NULL DEFAULT '',
+      telefone_status TEXT NOT NULL DEFAULT '',
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT '',
+      FOREIGN KEY (esteira_id) REFERENCES bases(id) ON DELETE CASCADE,
+      FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS grupos_esteira (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      esteira_id INTEGER NOT NULL,
+      grupo TEXT NOT NULL,
+      grupo_label TEXT NOT NULL DEFAULT '',
+      total_clientes INTEGER NOT NULL DEFAULT 0,
+      total_valor_liberado REAL NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (esteira_id) REFERENCES bases(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sim_esteira ON simulacoes_esteira(esteira_id);
+    CREATE INDEX IF NOT EXISTS idx_sim_grupo ON simulacoes_esteira(grupo);
+    CREATE INDEX IF NOT EXISTS idx_sim_convenio ON simulacoes_esteira(convenio);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_grupos_esteira_unique ON grupos_esteira(esteira_id, grupo);
+
     CREATE TABLE IF NOT EXISTS interactions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       client_id INTEGER NOT NULL,
@@ -1361,6 +1411,8 @@ function initSchema(database) {
 
   ensureColumns(database, 'bases', [
     'campaign_id INTEGER',
+    'pipeline_status TEXT NOT NULL DEFAULT \'aguardando_margem\'',
+    'pipeline_simulated_at TEXT',
   ]);
 
   ensureColumns(database, 'interactions', [
@@ -5610,6 +5662,7 @@ function getCoefficientConfig(rows, convenio, banco, produto = '') {
   if (produto) {
     const exact = active.find((row) => String(row.produto || '') === String(produto));
     if (exact) return exact;
+    return null;
   }
   return active[0] || null;
 }
@@ -5829,6 +5882,470 @@ function calculateCampaignOpportunities(client, coefficientRows) {
   }
 
   return ops.filter((item) => item.valor_liberado > 0);
+}
+
+function calcularPrimeiroVencimento(referenceDate = new Date()) {
+  const date = new Date(Date.UTC(referenceDate.getUTCFullYear(), referenceDate.getUTCMonth() + 1, 1));
+  return date.toISOString().slice(0, 10);
+}
+
+function simulationValueBucket(value) {
+  const amount = toMoneyNumber(value);
+  if (amount <= 5000) return { faixa_valor: 'ate_5k', faixa_valor_label: 'Até 5k' };
+  if (amount <= 10000) return { faixa_valor: '5k_10k', faixa_valor_label: '5k a 10k' };
+  if (amount <= 15000) return { faixa_valor: '10k_15k', faixa_valor_label: '10k a 15k' };
+  if (amount <= 20000) return { faixa_valor: '15k_20k', faixa_valor_label: '15k a 20k' };
+  if (amount <= 30000) return { faixa_valor: '20k_30k', faixa_valor_label: '20k a 30k' };
+  return { faixa_valor: 'acima_30k', faixa_valor_label: 'Acima de 30k' };
+}
+
+function simulationGroupLabel(grupo) {
+  const labels = {
+    FUTURO_ELEGIVEL: 'Prefeitura - Futuro elegível',
+    BIB_ELEGIVEL: 'Prefeitura - BIB elegível',
+    BIB_PRAZO_REDUZIDO: 'Prefeitura - BIB prazo reduzido',
+    GOV_SP_ELEGIVEL: 'Governo de SP elegível',
+    AGUARDANDO_COEFICIENTE: 'Aguardando coeficiente',
+    SEM_TELEFONE: 'Sem telefone',
+    SEM_BANCO: 'Sem banco elegível',
+    GOV_SP_SEM_BANCO: 'Governo sem banco elegível',
+    SEM_OPORTUNIDADE: 'Sem oportunidade',
+    SEM_MARGEM_CONSIGNADO: 'Sem margem',
+    MARGEM_COMPLEMENTAR_GOV: 'Governo - cartão já utilizado',
+    ANALISE_MANUAL: 'Análise manual',
+  };
+  return labels[grupo] || String(grupo || 'Não classificado');
+}
+
+function loadPipelineClients(params = {}) {
+  const filters = ["COALESCE(c.status_atendimento, c.status, '') <> 'finalizado'"];
+  const values = [];
+  if (params.esteira_id || params.base_id) {
+    filters.push('c.base_id = ?');
+    values.push(Number(params.esteira_id || params.base_id));
+  }
+  if (params.campaign_id) {
+    filters.push('(c.campaign_id = ? OR b.campaign_id = ?)');
+    values.push(Number(params.campaign_id), Number(params.campaign_id));
+  }
+
+  const rows = queryAll(
+    getDb(),
+    `
+      SELECT
+        c.id,
+        c.name,
+        c.cpf,
+        c.phone,
+        c.raw_data_json,
+        c.consulta_status,
+        c.base_id,
+        COALESCE(NULLIF(b.convenio, ''), NULLIF(cam.convenio, ''), NULLIF(b.nome_base, ''), NULLIF(cam.name, ''), '') AS convenio_text,
+        COALESCE(
+          NULLIF((SELECT cp.normalized_phone FROM client_phones cp WHERE cp.client_id = c.id AND cp.status <> 'inactive' ORDER BY cp.is_primary DESC, cp.id ASC LIMIT 1), ''),
+          NULLIF((SELECT cp.phone_number FROM client_phones cp WHERE cp.client_id = c.id AND cp.status <> 'inactive' ORDER BY cp.is_primary DESC, cp.id ASC LIMIT 1), ''),
+          NULLIF(c.phone, '')
+        ) AS telefone,
+        (
+          SELECT e.birth_date
+          FROM client_enrichment_data e
+          WHERE e.client_id = c.id
+          ORDER BY datetime(e.searched_at) DESC, e.id DESC
+          LIMIT 1
+        ) AS birth_date,
+        (
+          SELECT e.age
+          FROM client_enrichment_data e
+          WHERE e.client_id = c.id
+          ORDER BY datetime(e.searched_at) DESC, e.id DESC
+          LIMIT 1
+        ) AS age,
+        (
+          SELECT e.gender
+          FROM client_enrichment_data e
+          WHERE e.client_id = c.id
+          ORDER BY datetime(e.searched_at) DESC, e.id DESC
+          LIMIT 1
+        ) AS gender,
+        cm.product_type,
+        cm.gross_margin,
+        cm.net_margin
+      FROM clients c
+      LEFT JOIN bases b ON b.id = COALESCE(c.base_id, c.campaign_id)
+      LEFT JOIN campaigns cam ON cam.id = COALESCE(c.campaign_id, b.campaign_id)
+      LEFT JOIN client_margins cm ON cm.client_id = c.id
+      WHERE ${filters.join(' AND ')}
+      ORDER BY c.name ASC, c.id ASC
+    `,
+    values
+  );
+
+  const clients = new Map();
+  for (const row of rows) {
+    const convenio = normalizeCampaignConvention(row.convenio_text);
+    if (!convenio) continue;
+    if (!clients.has(row.id)) {
+      const raw = row.raw_data_json ? safeJsonParse(row.raw_data_json, {}) : {};
+      clients.set(row.id, {
+        id: Number(row.id),
+        base_id: row.base_id === null || row.base_id === undefined ? null : Number(row.base_id),
+        name: row.name || '',
+        cpf: row.cpf || '',
+        convenio,
+        telefone: row.telefone || '',
+        consulta_status: row.consulta_status || '',
+        birth_date: row.birth_date || '',
+        age: row.age === null || row.age === undefined || row.age === '' ? null : Number(row.age),
+        gender: row.gender || '',
+        orgao: raw.orgao || raw.orgao_nome || raw.convenio || '',
+        matricula: raw.matricula || raw.identificacao || raw.identificação || '',
+        cargo: raw.cargo || raw.funcao || raw.cargo_funcao || '',
+        vinculo: raw.vinculo || raw.regime || raw.tipo_vinculo || '',
+        raw,
+        margins: new Map(),
+      });
+    }
+    if (row.product_type) {
+      clients.get(row.id).margins.set(String(row.product_type), {
+        gross_margin: row.gross_margin,
+        net_margin: row.net_margin,
+      });
+    }
+  }
+  return Array.from(clients.values());
+}
+
+function buildSimulationRowsForClient(client, coefficientRows) {
+  const marginDecision = marginEligibility(client);
+  const activeRows = activeCoefficientRowsForConvention(client.convenio, coefficientRows);
+  const decisions = ageBankDecision(client, marginDecision, activeRows);
+  const rows = [];
+  const firstDue = calcularPrimeiroVencimento();
+  const baseRow = {
+    client_id: client.id,
+    nome: client.name,
+    cpf_hash: hashSensitiveValue(client.cpf, 'cpf'),
+    convenio: client.convenio,
+    convenio_label: campaignConventionLabel(client.convenio),
+    idade: client.age === null || client.age === undefined || client.age === '' ? null : Number(client.age),
+    sexo: normalizeGender(client.gender),
+    data_nascimento: client.birth_date || '',
+    telefone_status: client.telefone ? 'com_telefone' : 'sem_telefone',
+    metadata: {
+      matricula: client.matricula || '',
+      cargo: client.cargo || '',
+      vinculo: client.vinculo || '',
+      orgao: client.orgao || '',
+      oferta_complementar: Boolean(marginDecision.complement?.produto),
+      produto_complementar: marginDecision.complement?.produto || '',
+    },
+  };
+  const releasedValue = (margin, coefficient) => Math.floor(toMoneyNumber(margin) / Number(coefficient || 1));
+  const appendBlocked = (decision) => {
+    rows.push({
+      ...baseRow,
+      banco: decision.bank || '',
+      banco_label: decision.bank || '',
+      produto: marginDecision.produto || '',
+      margem_disponivel: toMoneyNumber(marginDecision.margem),
+      valor_liberado: 0,
+      coeficiente: null,
+      taxa: null,
+      prazo: decision.prazo_override || null,
+      primeiro_vencimento: '',
+      faixa_valor: '',
+      faixa_valor_label: '',
+      grupo: decision.group || marginDecision.status || 'ANALISE_MANUAL',
+      status_regra: decision.status || marginDecision.status || 'ANALISE_MANUAL',
+      motivo_regra: decision.reason || marginDecision.reason || '',
+    });
+  };
+  const appendReady = (config, decision, product, marginValue, metadata = {}) => {
+    const valorLiberado = releasedValue(marginValue, config.coeficiente);
+    if (valorLiberado <= 0) return;
+    const bucket = simulationValueBucket(valorLiberado);
+    rows.push({
+      ...baseRow,
+      banco: config.banco,
+      banco_label: config.banco_label || config.banco,
+      produto: product,
+      margem_disponivel: toMoneyNumber(marginValue),
+      valor_liberado: valorLiberado,
+      coeficiente: Number(config.coeficiente || 0),
+      taxa: config.taxa === null || config.taxa === undefined ? null : Number(config.taxa),
+      prazo: Number(decision.prazo_override || config.prazo || 0),
+      primeiro_vencimento: firstDue,
+      ...bucket,
+      grupo: decision.group || 'PRONTO_PARA_SIMULACAO',
+      status_regra: 'PRONTO_PARA_SIMULACAO',
+      motivo_regra: decision.reason || marginDecision.reason || '',
+      metadata: { ...baseRow.metadata, ...metadata },
+    });
+  };
+  const appendWaiting = (decision, product, marginValue) => {
+    rows.push({
+      ...baseRow,
+      banco: decision.bank || '',
+      banco_label: decision.bank || '',
+      produto: product || marginDecision.produto || '',
+      margem_disponivel: toMoneyNumber(marginValue),
+      valor_liberado: 0,
+      coeficiente: null,
+      taxa: null,
+      prazo: decision.prazo_override || null,
+      primeiro_vencimento: '',
+      faixa_valor: '',
+      faixa_valor_label: '',
+      grupo: 'AGUARDANDO_COEFICIENTE',
+      status_regra: 'SEM_COEFICIENTE_ATIVO',
+      motivo_regra: 'coeficiente_diario_nao_cadastrado',
+    });
+  };
+
+  for (const decision of decisions) {
+    if (!decision.bank || decision.status !== 'IDADE_OK') {
+      appendBlocked(decision);
+      continue;
+    }
+    const config = getCoefficientConfig(activeRows, client.convenio, decision.bank, marginDecision.produto);
+    if (!config) {
+      appendWaiting(decision, marginDecision.produto, marginDecision.margem);
+      continue;
+    }
+    appendReady(config, decision, marginDecision.produto, marginDecision.margem);
+    if (marginDecision.complement?.produto && marginDecision.complement?.margem) {
+      const complementConfig = getCoefficientConfig(activeRows, client.convenio, decision.bank, marginDecision.complement.produto);
+      if (complementConfig) {
+        appendReady(complementConfig, decision, marginDecision.complement.produto, marginDecision.complement.margem, {
+          complemento_de: marginDecision.produto,
+        });
+      } else {
+        appendWaiting(decision, marginDecision.complement.produto, marginDecision.complement.margem);
+      }
+    }
+  }
+  if (!rows.length) {
+    appendBlocked({ group: marginDecision.status, status: marginDecision.status, reason: marginDecision.reason });
+  }
+  return rows;
+}
+
+function rebuildPipelineGroupSummary(database, esteiraId, now) {
+  database.prepare('DELETE FROM grupos_esteira WHERE esteira_id = ?').run(Number(esteiraId));
+  const groups = queryAll(
+    database,
+    `
+      SELECT grupo, COUNT(DISTINCT client_id) AS total_clientes, COALESCE(SUM(valor_liberado), 0) AS total_valor_liberado
+      FROM simulacoes_esteira
+      WHERE esteira_id = ?
+      GROUP BY grupo
+      ORDER BY total_clientes DESC, grupo ASC
+    `,
+    [Number(esteiraId)]
+  );
+  const insertGroup = database.prepare(
+    `
+      INSERT INTO grupos_esteira (esteira_id, grupo, grupo_label, total_clientes, total_valor_liberado, status, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `
+  );
+  for (const group of groups) {
+    const grupo = String(group.grupo || 'NAO_CLASSIFICADO');
+    insertGroup.run(
+      Number(esteiraId),
+      grupo,
+      simulationGroupLabel(grupo),
+      Number(group.total_clientes || 0),
+      Number(group.total_valor_liberado || 0),
+      grupo === 'AGUARDANDO_COEFICIENTE' ? 'aguardando' : 'pronto',
+      now
+    );
+  }
+  return groups.map((group) => ({
+    grupo: String(group.grupo || ''),
+    grupo_label: simulationGroupLabel(group.grupo),
+    total_clientes: Number(group.total_clientes || 0),
+    total_valor_liberado: Number(group.total_valor_liberado || 0),
+    status: String(group.grupo || '') === 'AGUARDANDO_COEFICIENTE' ? 'aguardando' : 'pronto',
+  }));
+}
+
+export function runPipelineSimulation(esteiraId, { date = todayIsoDate() } = {}) {
+  const database = getDb();
+  const base = queryOne(database, 'SELECT * FROM bases WHERE id = ? LIMIT 1', [Number(esteiraId)]);
+  if (!base) {
+    throw new Error('Base da esteira nao encontrada.');
+  }
+  const clients = loadPipelineClients({ esteira_id: esteiraId });
+  const coefficientRows = getActiveBankCoefficients(date);
+  const now = nowIso();
+  const insert = database.prepare(
+    `
+      INSERT INTO simulacoes_esteira (
+        esteira_id, client_id, cpf_hash, nome, convenio, convenio_label, banco, banco_label,
+        produto, margem_disponivel, valor_liberado, coeficiente, taxa, prazo, primeiro_vencimento,
+        faixa_valor, faixa_valor_label, grupo, status_regra, motivo_regra, idade, sexo,
+        data_nascimento, telefone_status, metadata_json, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `
+  );
+  database.prepare('DELETE FROM simulacoes_esteira WHERE esteira_id = ?').run(Number(esteiraId));
+  let inserted = 0;
+  let ready = 0;
+  let waiting = 0;
+  for (const client of clients) {
+    for (const row of buildSimulationRowsForClient(client, coefficientRows)) {
+      if (!row) continue;
+      if (row.grupo === 'AGUARDANDO_COEFICIENTE') waiting += 1;
+      if (toMoneyNumber(row.valor_liberado) > 0) ready += 1;
+      insert.run(
+        Number(esteiraId),
+        Number(row.client_id),
+        row.cpf_hash || '',
+        row.nome || '',
+        row.convenio || '',
+        row.convenio_label || '',
+        row.banco || '',
+        row.banco_label || '',
+        row.produto || '',
+        toMoneyNumber(row.margem_disponivel),
+        toMoneyNumber(row.valor_liberado),
+        row.coeficiente === null || row.coeficiente === undefined ? null : Number(row.coeficiente),
+        row.taxa === null || row.taxa === undefined ? null : Number(row.taxa),
+        row.prazo === null || row.prazo === undefined ? null : Number(row.prazo),
+        row.primeiro_vencimento || '',
+        row.faixa_valor || '',
+        row.faixa_valor_label || '',
+        row.grupo || '',
+        row.status_regra || '',
+        row.motivo_regra || '',
+        row.idade === null || row.idade === undefined || row.idade === '' ? null : Number(row.idade),
+        row.sexo || '',
+        row.data_nascimento || '',
+        row.telefone_status || '',
+        JSON.stringify(sanitizeAuditMetadata(row.metadata || {})),
+        now,
+        now
+      );
+      inserted += 1;
+    }
+  }
+  const grupos = rebuildPipelineGroupSummary(database, esteiraId, now);
+  const status = inserted === 0 ? 'sem_dados' : waiting > 0 && ready === 0 ? 'aguardando_coeficiente' : 'simulado';
+  database.prepare('UPDATE bases SET pipeline_status = ?, pipeline_simulated_at = ?, updated_at = ? WHERE id = ?').run(status, now, now, Number(esteiraId));
+  persistDb();
+  return {
+    esteira_id: Number(esteiraId),
+    base,
+    total_clientes: clients.length,
+    total_simulacoes: inserted,
+    prontas: ready,
+    aguardando_coeficiente: waiting,
+    status,
+    grupos,
+  };
+}
+
+export function runPendingPipelineSimulations({ date = todayIsoDate(), limit = 25 } = {}) {
+  const bases = queryAll(
+    getDb(),
+    `
+      SELECT DISTINCT b.id
+      FROM bases b
+      JOIN clients c ON c.base_id = b.id
+      WHERE COALESCE(b.is_active, 1) = 1
+        AND COALESCE(c.consulta_status, '') = 'com_marg'
+      ORDER BY datetime(b.created_at) DESC, b.id DESC
+      LIMIT ?
+    `,
+    [Math.min(Math.max(Number(limit || 25), 1), 100)]
+  );
+  const results = [];
+  for (const base of bases) {
+    results.push(runPipelineSimulation(Number(base.id), { date }));
+  }
+  return { processed: results.length, results };
+}
+
+export function getPipelineGroups(esteiraId) {
+  const base = queryOne(getDb(), 'SELECT * FROM bases WHERE id = ? LIMIT 1', [Number(esteiraId)]);
+  if (!base) return null;
+  const grupos = queryAll(
+    getDb(),
+    `
+      SELECT grupo, grupo_label, total_clientes, total_valor_liberado, status, updated_at
+      FROM grupos_esteira
+      WHERE esteira_id = ?
+      ORDER BY total_clientes DESC, grupo ASC
+    `,
+    [Number(esteiraId)]
+  ).map((row) => ({
+    grupo: row.grupo,
+    grupo_label: row.grupo_label || simulationGroupLabel(row.grupo),
+    total_clientes: Number(row.total_clientes || 0),
+    total_valor_liberado: Number(row.total_valor_liberado || 0),
+    status: row.status || '',
+    updated_at: row.updated_at || '',
+  }));
+  return {
+    esteira_id: Number(esteiraId),
+    base,
+    grupos,
+    total_grupos: grupos.length,
+  };
+}
+
+export function listPipelineGroupClients(esteiraId, grupo, params = {}) {
+  const filters = ['esteira_id = ?', 'grupo = ?'];
+  const values = [Number(esteiraId), String(grupo || '')];
+  if (params.faixa_valor) {
+    filters.push('faixa_valor = ?');
+    values.push(String(params.faixa_valor));
+  }
+  if (params.produto) {
+    filters.push('produto = ?');
+    values.push(String(params.produto));
+  }
+  if (params.banco) {
+    filters.push('banco = ?');
+    values.push(normalizeBankKey(params.banco));
+  }
+  const limit = Math.min(Math.max(Number(params.limit || 100), 1), 500);
+  const rows = queryAll(
+    getDb(),
+    `
+      SELECT
+        id, esteira_id, client_id, nome, convenio, convenio_label, banco, banco_label, produto,
+        margem_disponivel, valor_liberado, coeficiente, taxa, prazo, primeiro_vencimento,
+        faixa_valor, faixa_valor_label, grupo, status_regra, motivo_regra, idade, sexo,
+        data_nascimento, telefone_status, metadata_json, created_at, updated_at
+      FROM simulacoes_esteira
+      WHERE ${filters.join(' AND ')}
+      ORDER BY valor_liberado DESC, nome ASC, id ASC
+      LIMIT ${limit}
+    `,
+    values
+  ).map((row) => ({
+    ...row,
+    id: Number(row.id),
+    esteira_id: Number(row.esteira_id),
+    client_id: Number(row.client_id),
+    margem_disponivel: Number(row.margem_disponivel || 0),
+    valor_liberado: Number(row.valor_liberado || 0),
+    coeficiente: row.coeficiente === null || row.coeficiente === undefined ? null : Number(row.coeficiente),
+    taxa: row.taxa === null || row.taxa === undefined ? null : Number(row.taxa),
+    prazo: row.prazo === null || row.prazo === undefined ? null : Number(row.prazo),
+    idade: row.idade === null || row.idade === undefined ? null : Number(row.idade),
+    metadata: safeJsonParse(row.metadata_json, {}),
+  }));
+  return {
+    esteira_id: Number(esteiraId),
+    grupo: String(grupo || ''),
+    grupo_label: simulationGroupLabel(grupo),
+    total: rows.length,
+    clientes: rows,
+  };
 }
 
 function summarizePipelineClients(clients, activeRows) {

@@ -139,6 +139,54 @@ export interface CampaignOpportunitySummary {
   aguardando_coeficiente: number;
 }
 
+export interface PipelineGroup {
+  grupo: string;
+  grupo_label: string;
+  total_clientes: number;
+  total_valor_liberado: number;
+  status: string;
+  updated_at?: string;
+}
+
+export interface PipelineSimulationSummary {
+  esteira_id: number;
+  base: Base;
+  total_clientes: number;
+  total_simulacoes: number;
+  prontas: number;
+  aguardando_coeficiente: number;
+  status: string;
+  grupos: PipelineGroup[];
+}
+
+export interface PipelineGroupClient {
+  id: number;
+  esteira_id: number;
+  client_id: number;
+  nome: string;
+  convenio: string;
+  convenio_label?: string;
+  banco: string;
+  banco_label: string;
+  produto: DispatchProduct;
+  margem_disponivel: number;
+  valor_liberado: number;
+  coeficiente: number | null;
+  taxa: number | null;
+  prazo: number | null;
+  primeiro_vencimento: string;
+  faixa_valor: string;
+  faixa_valor_label: string;
+  grupo: string;
+  status_regra: string;
+  motivo_regra: string;
+  idade: number | null;
+  sexo: string;
+  data_nascimento: string;
+  telefone_status: string;
+  metadata?: Record<string, unknown>;
+}
+
 export interface DispatchCampaign {
   id: string;
   nome: string;

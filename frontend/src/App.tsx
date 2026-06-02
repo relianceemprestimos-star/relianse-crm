@@ -16,6 +16,8 @@ import WhatsAppApiPage from './pages/WhatsAppApiPage';
 import SettingsPage from './pages/SettingsPage';
 import RibeiraoPage from './pages/RibeiraoPage';
 import PhoneLookupPage from './pages/PhoneLookupPage';
+import EsteiraGruposPage from './pages/EsteiraGruposPage';
+import GrupoClientesPage from './pages/GrupoClientesPage';
 import CredentialsPage from './pages/CredentialsPage';
 import UsersPage from './pages/UsersPage';
 import LoginPage from './pages/LoginPage';
@@ -38,6 +40,9 @@ export default function App() {
           <Route path="/whatsapp-fluxos" element={<WhatsAppApiPage />} />
           <Route path="/upload" element={<UploadPage />} />
           <Route path="/bases" element={<BasesPage />} />
+          <Route path="/esteira" element={<EsteiraGruposPage />} />
+          <Route path="/esteira/:id/grupos" element={<EsteiraGruposPage />} />
+          <Route path="/esteira/:id/grupos/:grupo" element={<GrupoClientesPage />} />
           <Route path="/relatorios" element={<ReportsPage />} />
           <Route path="/consulta-margem" element={<RibeiraoPage />} />
           <Route path="/consulta-ribeirao" element={<RibeiraoPage />} />
