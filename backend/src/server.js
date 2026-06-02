@@ -39,8 +39,21 @@ import {
   updateUserRecord,
   setCampaignUsers,
   updateCampaignRecord,
+  approveDispatchCampaign,
+  createDispatchCampaign,
   listClientPhones,
+  listCampaignOpportunities,
+  listDispatchCampaigns,
+  listCampaignDryRuns,
+  getDispatchCampaignById,
+  getDispatchCampaignPreview,
+  getTodayBankCoefficients,
+  runCampaignDryRun,
+  saveBankCoefficient,
   setPrimaryClientPhone,
+  startDispatchCampaign,
+  updateCampaignClientStatusFromWebhook,
+  updateDispatchCampaignStatus,
   updateClientPhoneStatus,
 } from './db.js';
 import { authMiddleware, loginWithCredentials, roleMiddleware } from './auth.js';
@@ -273,6 +286,23 @@ app.post('/api/whatsapp/webhook', async (req, res) => {
       code: error?.code || 'WHATSAPP_WEBHOOK_ERROR',
     });
   }
+});
+
+app.post('/api/campanhas/status-retorno', (req, res) => {
+  const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  if (!process.env.CRM_WEBHOOK_SECRET || token !== process.env.CRM_WEBHOOK_SECRET) {
+    return res.status(401).json({ message: 'Nao autorizado.' });
+  }
+
+  const result = updateCampaignClientStatusFromWebhook({
+    campanhaId: req.body?.campanha_id || req.body?.campanhaId,
+    telefone: req.body?.telefone || req.body?.phone,
+    status: req.body?.status,
+  });
+  if (!result) {
+    return res.status(400).json({ message: 'Retorno de campanha invalido.' });
+  }
+  return res.json({ ok: true });
 });
 
 app.use('/api', authMiddleware);
@@ -789,6 +819,147 @@ app.post('/api/campaigns/:id/users', requirePrivilegedRole, (req, res) => {
   } catch (error) {
     return res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao atualizar vendedores da campanha.' });
   }
+});
+
+app.get('/api/campanhas/oportunidades', (req, res) => {
+  try {
+    return res.json(listCampaignOpportunities(req.query || {}));
+  } catch (error) {
+    return res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao carregar oportunidades.' });
+  }
+});
+
+app.get('/api/campanhas/coeficientes/bancos/hoje', (_req, res) => {
+  try {
+    return res.json(getTodayBankCoefficients());
+  } catch (error) {
+    return res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao carregar coeficientes.' });
+  }
+});
+
+app.post('/api/campanhas/coeficientes/bancos/hoje', roleMiddleware(operationalRoles), (req, res) => {
+  try {
+    const result = saveBankCoefficient({
+      convenio: req.body.convenio,
+      banco: req.body.banco,
+      bancoLabel: req.body.banco_label || req.body.bancoLabel,
+      produto: req.body.produto,
+      coeficiente: req.body.coeficiente,
+      taxa: req.body.taxa,
+      prazo: req.body.prazo,
+      primeiroVencimentoDias: req.body.primeiro_vencimento_dias ?? req.body.primeiroVencimentoDias,
+      status: req.body.status,
+      cadastradoPor: req.user?.name || req.get('x-crm-user-name') || '',
+    });
+    return res.json(result);
+  } catch (error) {
+    return res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao salvar coeficiente.' });
+  }
+});
+
+app.get('/api/campanhas', (_req, res) => {
+  return res.json({ campanhas: listDispatchCampaigns() });
+});
+
+app.post('/api/campanhas', roleMiddleware(operationalRoles), (req, res) => {
+  try {
+    const campanha = createDispatchCampaign({
+      nome: req.body.nome || req.body.name,
+      esteira_id: req.body.esteira_id,
+      grupo: req.body.grupo,
+      convenio: req.body.convenio,
+      produto: req.body.produto,
+      banco: req.body.banco,
+      faixa_valor: req.body.faixa_valor,
+      sessao_rewhats: req.body.sessao_rewhats,
+      mensagem_inicial: req.body.mensagem_inicial,
+      followup_mensagem: req.body.mensagem_followup || req.body.followup_mensagem,
+      followup_intervalo_horas: req.body.intervalo_followup_horas || req.body.followup_intervalo_horas,
+      janela_inicio: req.body.janela_inicio,
+      janela_fim: req.body.janela_fim,
+      intervalo_envios_segundos: req.body.intervalo_envios_segundos,
+      clientes: Array.isArray(req.body.clientes) ? req.body.clientes : [],
+      apenas_com_telefone: req.body.filtros?.apenas_com_telefone !== false,
+      excluir_opt_out: req.body.filtros?.excluir_opt_out !== false,
+    });
+    return res.json({ sucesso: true, campanha_id: campanha.campanha.id, campanha: campanha.campanha, clientes: campanha.clientes });
+  } catch (error) {
+    return res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao criar campanha.' });
+  }
+});
+
+app.get('/api/campanhas/:id/previa', (req, res) => {
+  const result = getDispatchCampaignPreview(req.params.id);
+  if (!result) {
+    return res.status(404).json({ message: 'Campanha nao encontrada.' });
+  }
+  return res.json(result);
+});
+
+app.post('/api/campanhas/:id/dry-run', roleMiddleware(operationalRoles), (req, res) => {
+  try {
+    const result = runCampaignDryRun(req.params.id);
+    if (!result) {
+      return res.status(404).json({ message: 'Campanha nao encontrada.' });
+    }
+    return res.json({ dry_run: true, nenhum_envio_real: true, ...result.resultado, dry_run_row: result.dry_run, campanha: result.campanha });
+  } catch (error) {
+    return res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao executar dry-run.' });
+  }
+});
+
+app.get('/api/campanhas/:id/dry-runs', (req, res) => {
+  return res.json({ dry_runs: listCampaignDryRuns(req.params.id) });
+});
+
+app.post('/api/campanhas/:id/aprovar', roleMiddleware(operationalRoles), (req, res) => {
+  try {
+    const result = approveDispatchCampaign(req.params.id);
+    if (!result) {
+      return res.status(404).json({ message: 'Campanha nao encontrada.' });
+    }
+    return res.json({ sucesso: true, status: result.campanha.status, campanha: result.campanha });
+  } catch (error) {
+    return res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao aprovar campanha.' });
+  }
+});
+
+app.put('/api/campanhas/:id/status', roleMiddleware(operationalRoles), (req, res) => {
+  try {
+    const result = updateDispatchCampaignStatus(req.params.id, req.body.status);
+    if (!result) {
+      return res.status(404).json({ message: 'Campanha nao encontrada.' });
+    }
+    return res.json({ sucesso: true, campanha: result.campanha });
+  } catch (error) {
+    return res.status(403).json({ message: error instanceof Error ? error.message : 'Falha ao atualizar status.' });
+  }
+});
+
+app.post('/api/campanhas/:id/disparar', roleMiddleware(operationalRoles), (req, res) => {
+  if (req.body?.confirmar !== true) {
+    return res.status(400).json({
+      message: 'Confirmação obrigatória. Esta ação enviará mensagens reais quando o envio real estiver liberado.',
+    });
+  }
+  try {
+    const result = startDispatchCampaign(req.params.id);
+    if (!result) {
+      return res.status(404).json({ message: 'Campanha nao encontrada.' });
+    }
+    return res.json({ sucesso: true, campanha: result.campanha });
+  } catch (error) {
+    const status = error?.code === 'REAL_SEND_BLOCKED' ? 403 : 400;
+    return res.status(status).json({ message: error instanceof Error ? error.message : 'Falha ao iniciar disparo.' });
+  }
+});
+
+app.get('/api/campanhas/:id', (req, res) => {
+  const result = getDispatchCampaignById(req.params.id);
+  if (!result) {
+    return res.status(404).json({ message: 'Campanha nao encontrada.' });
+  }
+  return res.json(result);
 });
 
 app.get('/api/bases', (req, res) => {

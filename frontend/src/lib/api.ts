@@ -237,6 +237,69 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+  getCampaignOpportunities: (filters: Record<string, string | number | undefined | null> = {}) =>
+    request<{
+      coeficiente: number | null;
+      prazo: number | null;
+      total: number;
+      oportunidades: CampaignOpportunity[];
+      resumo: CampaignOpportunitySummary;
+      grupos: Array<{ grupo: string; total: number }>;
+    }>(`/api/campanhas/oportunidades${buildQuery(filters)}`),
+  getBankCoefficientsToday: () =>
+    request<{ data: string; ativos: number; aguardando: number; bancos: BankCoefficient[] }>('/api/campanhas/coeficientes/bancos/hoje'),
+  saveBankCoefficient: (payload: {
+    convenio: string;
+    banco: string;
+    banco_label?: string;
+    produto: string;
+    coeficiente: number;
+    taxa?: number | null;
+    prazo: number;
+    primeiro_vencimento_dias?: number | null;
+    status?: string;
+  }) =>
+    request<{ data: string; ativos: number; aguardando: number; bancos: BankCoefficient[] }>('/api/campanhas/coeficientes/bancos/hoje', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  getDispatchCampaigns: () => request<{ campanhas: DispatchCampaign[] }>('/api/campanhas'),
+  createDispatchCampaign: (payload: Record<string, unknown>) =>
+    request<{ sucesso: boolean; campanha_id: string; campanha: DispatchCampaign; clientes: DispatchCampaignClient[] }>('/api/campanhas', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  getDispatchCampaign: (id: string) =>
+    request<{ campanha: DispatchCampaign; clientes: DispatchCampaignClient[]; contadores: Record<string, number> }>(`/api/campanhas/${id}`),
+  getDispatchCampaignPreview: (id: string) =>
+    request<{
+      campanha: DispatchCampaign;
+      total: number;
+      previa: Array<DispatchCampaignClient & { mensagem_montada: string; chip_seria_usado: string; cpf?: string }>;
+      resumo: Record<string, unknown>;
+    }>(`/api/campanhas/${id}/previa`),
+  runDispatchCampaignDryRun: (id: string) =>
+    request<{
+      dry_run: boolean;
+      nenhum_envio_real: boolean;
+      seriam_enviados: Array<Record<string, unknown>>;
+      excluidos: Array<Record<string, unknown>>;
+      totais: Record<string, unknown>;
+      campanha: DispatchCampaign;
+    }>(`/api/campanhas/${id}/dry-run`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+  approveDispatchCampaign: (id: string) =>
+    request<{ sucesso: boolean; status: string; campanha: DispatchCampaign }>(`/api/campanhas/${id}/aprovar`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+  startDispatchCampaign: (id: string, confirmar = false) =>
+    request<{ sucesso: boolean; campanha: DispatchCampaign }>(`/api/campanhas/${id}/disparar`, {
+      method: 'POST',
+      body: JSON.stringify({ confirmar }),
+    }),
   getDashboard: (filters: Record<string, string | number | undefined | null> = {}) =>
     request<DashboardData>(`/api/dashboard${buildQuery(filters)}`),
   getSettings: () => request<{ settings: Settings }>('/api/settings'),
