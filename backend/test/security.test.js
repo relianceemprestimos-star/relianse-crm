@@ -232,3 +232,40 @@ test('prefeitura abaixo de 150 mantem consignado com complemento de cartao', () 
   assert.equal(opportunity?.oferta_complementar, true);
   assert.equal(opportunity?.produto_complementar, 'cartao_consignado');
 });
+
+test('campanha controlada exige dry-run e bloqueia disparo real por padrao', () => {
+  db.saveBankCoefficient({ convenio: 'gov_sp', banco: 'daycoval', bancoLabel: 'Daycoval', produto: 'consignado', coeficiente: 0.02, prazo: 96 });
+  const clientId = seedPipelineClient({
+    name: 'Cliente Campanha Controlada',
+    cpf: '90000000006',
+    phone: '11900000006',
+    margins: [{ product_type: 'consignado', gross_margin: 300, net_margin: 300 }],
+  });
+  const result = db.listCampaignOpportunities({ convenio: 'gov_sp', produto: 'consignado', banco: 'daycoval' });
+  const opportunity = result.oportunidades.find((item) => item.client_id === clientId);
+  assert.ok(opportunity);
+
+  const campaign = db.createDispatchCampaign({
+    nome: 'Campanha controlada teste',
+    convenio: 'gov_sp',
+    produto: 'consignado',
+    banco: 'daycoval',
+    sessao_rewhats: 'chip-teste',
+    clientes: [opportunity],
+  });
+  assert.equal(campaign.campanha.status, 'RASCUNHO');
+
+  const preview = db.getDispatchCampaignPreview(campaign.campanha.id);
+  assert.equal(preview.total, 1);
+  assert.equal(preview.previa[0].cpf, '***.***.***-**');
+
+  const dryRun = db.runCampaignDryRun(campaign.campanha.id);
+  assert.equal(dryRun.resultado.seriam_enviados.length, 1);
+  assert.equal(dryRun.campanha.status, 'DRY_RUN_OK');
+  assert.equal(db.listCampaignDryRuns(campaign.campanha.id).length, 1);
+
+  const approved = db.approveDispatchCampaign(campaign.campanha.id);
+  assert.equal(approved.campanha.status, 'PRONTA_PARA_DISPARO');
+
+  assert.throws(() => db.startDispatchCampaign(campaign.campanha.id), /Disparo real bloqueado/);
+});

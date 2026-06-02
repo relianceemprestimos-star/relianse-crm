@@ -55,6 +55,7 @@ const pageTitles: Record<string, string> = {
   '/dashboard': 'Dashboard',
   '/campanhas': 'Campanhas',
   '/campanhas/': 'Campanhas',
+  '/campanhas/oportunidades': 'Oportunidades',
   '/upload': 'Upload de Listas',
   '/bases': 'Bases',
   '/fila': 'Fila de Clientes',
@@ -227,4 +228,3 @@ export function Shell() {
     </div>
   );
 }
-

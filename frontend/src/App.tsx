@@ -6,6 +6,12 @@ import { RoleGuard } from './components/RoleGuard';
 import DashboardPage from './pages/DashboardPage';
 import CampaignsPage from './pages/CampaignsPage';
 import CampaignDetailPage from './pages/CampaignDetailPage';
+import CampaignOpportunitiesPage from './pages/CampaignOpportunitiesPage';
+import CreateDispatchCampaignPage from './pages/CreateDispatchCampaignPage';
+import CampaignPreviewPage from './pages/CampaignPreviewPage';
+import CampaignDryRunPage from './pages/CampaignDryRunPage';
+import CampaignDispatchPage from './pages/CampaignDispatchPage';
+import CampaignTrackingPage from './pages/CampaignTrackingPage';
 import UploadPage from './pages/UploadPage';
 import BasesPage from './pages/BasesPage';
 import QueuePage from './pages/QueuePage';
@@ -30,6 +36,12 @@ export default function App() {
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/campanhas" element={<CampaignsPage />} />
+          <Route path="/campanhas/oportunidades" element={<CampaignOpportunitiesPage />} />
+          <Route path="/campanhas/nova" element={<CreateDispatchCampaignPage />} />
+          <Route path="/campanhas/:id/previa" element={<CampaignPreviewPage />} />
+          <Route path="/campanhas/:id/dry-run" element={<CampaignDryRunPage />} />
+          <Route path="/campanhas/:id/disparo" element={<CampaignDispatchPage />} />
+          <Route path="/campanhas/:id/acompanhamento" element={<CampaignTrackingPage />} />
           <Route path="/campanhas/:id" element={<CampaignDetailPage />} />
           <Route path="/fila" element={<QueuePage />} />
           <Route path="/atendimento" element={<AttendancePage />} />

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Archive, Edit3, Plus, Upload, Users } from 'lucide-react';
+import { Archive, Edit3, Plus, Send, Upload, Users } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 import { api } from '../lib/api';
@@ -159,10 +159,16 @@ export default function CampaignsPage() {
         title="Campanhas"
         description="Organize suas bases por convênio, órgão ou estratégia de atendimento."
         action={
-          <Button onClick={openCreate}>
-            <Plus size={16} />
-            Nova campanha
-          </Button>
+          <div className="flex flex-wrap gap-3">
+            <Button variant="secondary" onClick={() => navigate('/campanhas/oportunidades')}>
+              <Send size={16} />
+              Criar disparo controlado
+            </Button>
+            <Button onClick={openCreate}>
+              <Plus size={16} />
+              Nova campanha
+            </Button>
+          </div>
         }
       />
 

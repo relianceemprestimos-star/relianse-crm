@@ -1546,6 +1546,21 @@ function initSchema(database) {
     'created_at TEXT NOT NULL DEFAULT \'\'',
   ]);
 
+  ensureColumns(database, 'campanhas_crm', [
+    'esteira_id INTEGER',
+    'grupo TEXT NOT NULL DEFAULT \'\'',
+    'total_selecionados INTEGER NOT NULL DEFAULT 0',
+    'total_enviados INTEGER NOT NULL DEFAULT 0',
+  ]);
+
+  ensureColumns(database, 'campanha_clientes', [
+    'simulacao_id INTEGER',
+    'banco TEXT NOT NULL DEFAULT \'\'',
+    'prazo INTEGER',
+    'valor_parcela REAL',
+    'faixa_valor TEXT NOT NULL DEFAULT \'\'',
+  ]);
+
   database.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_base_cpf ON clients(base_id, cpf)');
   database.exec('CREATE INDEX IF NOT EXISTS idx_clients_cpf_hash ON clients(cpf_hash)');
   database.exec('CREATE INDEX IF NOT EXISTS idx_client_phones_client ON client_phones(client_id)');
@@ -1560,6 +1575,10 @@ function initSchema(database) {
   database.exec('CREATE INDEX IF NOT EXISTS idx_client_consultation_emails_consultation ON client_consultation_emails(consultation_id)');
   database.exec('CREATE INDEX IF NOT EXISTS idx_customer_consents_customer_channel ON customer_consents(customer_id, channel, consent_status)');
   database.exec('CREATE INDEX IF NOT EXISTS idx_audit_log_entity ON audit_log(entity_type, entity_id, created_at)');
+  database.exec('CREATE INDEX IF NOT EXISTS idx_campanhas_crm_status ON campanhas_crm(status)');
+  database.exec('CREATE INDEX IF NOT EXISTS idx_campanhas_crm_esteira_grupo ON campanhas_crm(esteira_id, grupo)');
+  database.exec('CREATE INDEX IF NOT EXISTS idx_campanha_clientes_campanha_grupo ON campanha_clientes(campanha_id, status)');
+  database.exec('CREATE INDEX IF NOT EXISTS idx_campanha_clientes_busca ON campanha_clientes(campanha_id, banco, produto, faixa_valor)');
 }
 
 function ensureColumns(database, table, columns) {
@@ -6440,6 +6459,7 @@ export function listCampaignOpportunities(params = {}) {
   const faixaMin = params.faixa_min === undefined || params.faixa_min === '' ? null : Number(params.faixa_min);
   const faixaMax = params.faixa_max === undefined || params.faixa_max === '' ? null : Number(params.faixa_max);
   const faixaValor = String(params.faixa_valor || '').trim();
+  const grupo = String(params.grupo || '').trim();
   const idadeMin = params.idade_min === undefined || params.idade_min === '' ? null : Number(params.idade_min);
   const idadeMax = params.idade_max === undefined || params.idade_max === '' ? null : Number(params.idade_max);
   if (convenio) {
@@ -6453,6 +6473,9 @@ export function listCampaignOpportunities(params = {}) {
   }
   if (faixaValor) {
     opportunities = opportunities.filter((item) => item.faixa_valor === faixaValor);
+  }
+  if (grupo) {
+    opportunities = opportunities.filter((item) => item.grupo === grupo);
   }
   if (Number.isFinite(faixaMin)) {
     opportunities = opportunities.filter((item) => item.valor_liberado >= faixaMin);
@@ -6486,6 +6509,8 @@ export function listCampaignOpportunities(params = {}) {
 
 export function createDispatchCampaign({
   nome,
+  esteira_id = null,
+  grupo = '',
   convenio = 'todos',
   sessao_rewhats = '',
   clientes = [],
@@ -6504,9 +6529,28 @@ export function createDispatchCampaign({
   correntista_santander = false,
   conta_diferente_holerite = false,
 }) {
-  const coefficient = getTodayCampaignCoefficient();
-  if (!coefficient.cadastrado) {
-    throw new Error('Coeficiente do dia nao cadastrado.');
+  const selectedClients = Array.isArray(clientes) && clientes.length
+    ? clientes
+    : listCampaignOpportunities({
+        convenio,
+        produto,
+        banco,
+        faixa_valor,
+        grupo,
+      }).oportunidades;
+  if (!selectedClients.length) {
+    throw new Error('Nenhum cliente elegivel para criar campanha.');
+  }
+
+  const normalizedBanco = normalizeBankKey(banco || selectedClients[0]?.banco);
+  const normalizedProduto = String(produto || selectedClients[0]?.produto || '');
+  const normalizedConvenio = String(convenio || selectedClients[0]?.convenio || 'todos');
+  const bankCoefficient = getCoefficientConfig(getActiveBankCoefficients(), normalizedConvenio, normalizedBanco, normalizedProduto);
+  const fallbackCoefficient = getTodayCampaignCoefficient();
+  const coefficientValue = Number(selectedClients[0]?.coeficiente || bankCoefficient?.coeficiente || fallbackCoefficient.coeficiente);
+  const termValue = Number(selectedClients[0]?.prazo || bankCoefficient?.prazo || fallbackCoefficient.prazo);
+  if (!Number.isFinite(coefficientValue) || coefficientValue <= 0 || !Number.isFinite(termValue) || termValue <= 0) {
+    throw new Error('Coeficiente do dia nao cadastrado para este banco/produto.');
   }
   const database = getDb();
   const id = crypto.randomUUID();
@@ -6515,20 +6559,22 @@ export function createDispatchCampaign({
     .prepare(
       `
         INSERT INTO campanhas_crm (
-          id, nome, convenio, produto, banco, faixa_valor, mensagem_inicial,
+          id, nome, esteira_id, grupo, convenio, produto, banco, faixa_valor, mensagem_inicial,
           followup_mensagem, followup_intervalo_horas, janela_inicio, janela_fim,
           intervalo_envios_segundos, incluir_idade_nao_encontrada, apenas_com_telefone,
-          excluir_opt_out, coeficiente, prazo, sessao_rewhats, status, criada_em
+          excluir_opt_out, coeficiente, prazo, sessao_rewhats, status, total_selecionados, total_disparos, criada_em
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PREVIA_GERADA', ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'RASCUNHO', ?, ?, ?)
       `
     )
     .run(
       id,
       String(nome || '').trim(),
-      String(convenio || 'todos'),
-      String(produto || ''),
-      normalizeBankKey(banco),
+      esteira_id === null || esteira_id === undefined || esteira_id === '' ? null : Number(esteira_id),
+      String(grupo || selectedClients[0]?.grupo || ''),
+      normalizedConvenio,
+      normalizedProduto,
+      normalizedBanco,
       String(faixa_valor || ''),
       String(mensagem_inicial || ''),
       String(followup_mensagem || ''),
@@ -6539,27 +6585,37 @@ export function createDispatchCampaign({
       incluir_idade_nao_encontrada ? 1 : 0,
       apenas_com_telefone ? 1 : 0,
       excluir_opt_out ? 1 : 0,
-      coefficient.coeficiente,
-      coefficient.prazo,
+      coefficientValue,
+      termValue,
       String(sessao_rewhats || ''),
+      selectedClients.length,
+      selectedClients.length,
       now
     );
 
   const insert = database.prepare(`
     INSERT INTO campanha_clientes (
-      campanha_id, client_id, produto, margem_disponivel, valor_liberado,
-      oferta_complementar, produto_complementar, valor_complementar, telefone,
+      campanha_id, client_id, simulacao_id, produto, banco, prazo, margem_disponivel,
+      valor_liberado, valor_parcela, faixa_valor, oferta_complementar,
+      produto_complementar, valor_complementar, telefone,
       status, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pendente', ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pendente', ?, ?)
   `);
 
-  for (const client of clientes) {
+  for (const client of selectedClients) {
+    const prazo = Number(client.prazo || termValue || 0);
+    const valorLiberado = toMoneyNumber(client.valor_liberado);
     insert.run(
       id,
       Number(client.client_id),
+      client.simulacao_id === null || client.simulacao_id === undefined ? null : Number(client.simulacao_id),
       String(client.produto || ''),
+      normalizeBankKey(client.banco || normalizedBanco),
+      prazo || null,
       toMoneyNumber(client.margem_disponivel),
-      toMoneyNumber(client.valor_liberado),
+      valorLiberado,
+      prazo ? valorLiberado / prazo : null,
+      String(client.faixa_valor || ''),
       client.oferta_complementar ? 1 : 0,
       client.produto_complementar || null,
       client.valor_complementar === null || client.valor_complementar === undefined ? null : toMoneyNumber(client.valor_complementar),
@@ -6568,7 +6624,7 @@ export function createDispatchCampaign({
       now
     );
   }
-  createDocumentChecklistsForCampaign(database, id, clientes, banco, {
+  createDocumentChecklistsForCampaign(database, id, selectedClients, normalizedBanco, {
     correntista_santander,
     conta_diferente_holerite,
   });
@@ -6602,7 +6658,7 @@ export function getDispatchCampaignById(id) {
   const clientes = queryAll(
     database,
     `
-      SELECT cc.*, c.name AS nome, c.cpf
+      SELECT cc.*, c.name AS nome, '***.***.***-**' AS cpf_mascarado
       FROM campanha_clientes cc
       LEFT JOIN clients c ON c.id = cc.client_id
       WHERE cc.campanha_id = ?
@@ -6621,6 +6677,8 @@ export function getDispatchCampaignById(id) {
       coeficiente: Number(campanha.coeficiente),
       prazo: Number(campanha.prazo),
       total_disparos: Number(campanha.total_disparos || 0),
+      total_selecionados: Number(campanha.total_selecionados || campanha.total_disparos || 0),
+      total_enviados: Number(campanha.total_enviados || campanha.total_disparos || 0),
       total_respostas: Number(campanha.total_respostas || 0),
       total_aceites: Number(campanha.total_aceites || 0),
     },
@@ -6630,6 +6688,8 @@ export function getDispatchCampaignById(id) {
       client_id: Number(row.client_id),
       margem_disponivel: Number(row.margem_disponivel || 0),
       valor_liberado: Number(row.valor_liberado || 0),
+      valor_parcela: row.valor_parcela === null || row.valor_parcela === undefined ? null : Number(row.valor_parcela),
+      prazo: row.prazo === null || row.prazo === undefined ? null : Number(row.prazo),
       oferta_complementar: Number(row.oferta_complementar || 0) === 1,
       valor_complementar: row.valor_complementar === null || row.valor_complementar === undefined ? null : Number(row.valor_complementar),
     })),
@@ -6643,13 +6703,18 @@ export function startDispatchCampaign(id) {
   if (!current) {
     return null;
   }
+  if (String(current.status || '').toUpperCase() !== 'PRONTA_PARA_DISPARO') {
+    const error = new Error('Campanha precisa estar PRONTA_PARA_DISPARO antes do envio real.');
+    error.code = 'CAMPAIGN_NOT_READY';
+    throw error;
+  }
   if (String(process.env.CAMPANHA_REAL_SEND_ENABLED || 'false').toLowerCase() !== 'true') {
     const error = new Error('Disparo real bloqueado nesta fase. Execute dry-run e deixe a campanha como PRONTA_PARA_DISPARO.');
     error.code = 'REAL_SEND_BLOCKED';
     throw error;
   }
   database
-    .prepare("UPDATE campanhas_crm SET status = 'em_andamento', iniciada_em = COALESCE(iniciada_em, ?) WHERE id = ?")
+    .prepare("UPDATE campanhas_crm SET status = 'EM_DISPARO', iniciada_em = COALESCE(iniciada_em, ?) WHERE id = ?")
     .run(nowIso(), current.id);
   persistDb();
   return getDispatchCampaignById(current.id);
@@ -6657,9 +6722,10 @@ export function startDispatchCampaign(id) {
 
 function renderCampaignMessage(template, client, campaign) {
   const value = Number(client.valor_liberado || 0);
-  const installment = campaign?.prazo ? value / Number(campaign.prazo || 1) : 0;
+  const installment = client.valor_parcela || (campaign?.prazo ? value / Number(campaign.prazo || 1) : 0);
+  const firstName = String(client.nome || '').trim().split(/\s+/)[0] || String(client.nome || '');
   return String(template || 'Oie, {nome} 👋 é a Aline, tudo bem?')
-    .replaceAll('{nome}', String(client.nome || ''))
+    .replaceAll('{nome}', firstName)
     .replaceAll('{valor_liberado}', formatMoney(value))
     .replaceAll('{prazo}', String(campaign?.prazo || ''))
     .replaceAll('{parcela}', formatMoney(installment))
@@ -6750,7 +6816,7 @@ export function runCampaignDryRun(id) {
     )
     .run(campanha.id, nowIso(), wouldSend.length, excluded.length, JSON.stringify(result));
   database
-    .prepare("UPDATE campanhas_crm SET status = 'PRONTA_PARA_DISPARO' WHERE id = ?")
+    .prepare("UPDATE campanhas_crm SET status = 'DRY_RUN_OK' WHERE id = ?")
     .run(campanha.id);
   persistDb();
   return {
@@ -6758,6 +6824,94 @@ export function runCampaignDryRun(id) {
     resultado: result,
     campanha: getDispatchCampaignById(campanha.id)?.campanha,
   };
+}
+
+export function getDispatchCampaignPreview(id) {
+  const campaignData = getDispatchCampaignById(id);
+  if (!campaignData) {
+    return null;
+  }
+  const { campanha, clientes } = campaignData;
+  const previa = clientes.map((client) => ({
+    id: client.id,
+    client_id: client.client_id,
+    nome: client.nome || '',
+    cpf: client.cpf_mascarado || '***.***.***-**',
+    telefone: client.telefone || '',
+    produto: client.produto,
+    banco: client.banco || campanha.banco || '',
+    valor_liberado: client.valor_liberado,
+    valor_parcela: client.valor_parcela,
+    prazo: client.prazo || campanha.prazo,
+    faixa_valor: client.faixa_valor || '',
+    chip_seria_usado: campanha.sessao_rewhats || 'não configurado',
+    mensagem_montada: renderCampaignMessage(campanha.mensagem_inicial, client, campanha),
+  }));
+  const valorTotal = previa.reduce((sum, row) => sum + Number(row.valor_liberado || 0), 0);
+  getDb().prepare("UPDATE campanhas_crm SET status = 'PREVIA_GERADA' WHERE id = ? AND status = 'RASCUNHO'").run(campanha.id);
+  persistDb();
+  return {
+    campanha: getDispatchCampaignById(campanha.id)?.campanha || campanha,
+    total: previa.length,
+    previa,
+    resumo: {
+      total_clientes: previa.length,
+      valor_total_estimado: valorTotal,
+      valor_medio: previa.length ? valorTotal / previa.length : 0,
+      banco: campanha.banco || '',
+      coeficiente: campanha.coeficiente,
+      prazo: campanha.prazo,
+      chip: campanha.sessao_rewhats || 'não configurado',
+      followup: campanha.followup_mensagem ? 'configurado' : 'não configurado',
+    },
+  };
+}
+
+export function approveDispatchCampaign(id) {
+  const database = getDb();
+  const campaign = queryOne(database, 'SELECT * FROM campanhas_crm WHERE id = ? LIMIT 1', [String(id || '')]);
+  if (!campaign) {
+    return null;
+  }
+  if (String(campaign.status || '').toUpperCase() !== 'DRY_RUN_OK') {
+    const error = new Error('Campanha precisa ter dry-run concluido antes de aprovar.');
+    error.code = 'DRY_RUN_REQUIRED';
+    throw error;
+  }
+  if (!String(campaign.sessao_rewhats || '').trim()) {
+    const error = new Error('Chip/sessao ReWhats nao configurado.');
+    error.code = 'SESSION_REQUIRED';
+    throw error;
+  }
+  database.prepare("UPDATE campanhas_crm SET status = 'PRONTA_PARA_DISPARO' WHERE id = ?").run(campaign.id);
+  persistDb();
+  return getDispatchCampaignById(campaign.id);
+}
+
+const DISPATCH_STATUS_FLOW = {
+  RASCUNHO: ['PREVIA_GERADA'],
+  PREVIA_GERADA: ['DRY_RUN_OK', 'RASCUNHO'],
+  DRY_RUN_OK: ['PRONTA_PARA_DISPARO', 'PREVIA_GERADA'],
+  PRONTA_PARA_DISPARO: ['EM_DISPARO', 'RASCUNHO'],
+  EM_DISPARO: ['PAUSADA', 'CONCLUIDA'],
+  PAUSADA: ['EM_DISPARO', 'CONCLUIDA'],
+};
+
+export function updateDispatchCampaignStatus(id, status) {
+  const database = getDb();
+  const nextStatus = String(status || '').trim().toUpperCase();
+  const current = queryOne(database, 'SELECT * FROM campanhas_crm WHERE id = ? LIMIT 1', [String(id || '')]);
+  if (!current) return null;
+  const currentStatus = String(current.status || 'RASCUNHO').toUpperCase();
+  const allowed = DISPATCH_STATUS_FLOW[currentStatus] || [];
+  if (!allowed.includes(nextStatus)) {
+    const error = new Error(`Transicao invalida: ${currentStatus} -> ${nextStatus}. Permitidos: ${allowed.join(', ')}`);
+    error.code = 'INVALID_STATUS_TRANSITION';
+    throw error;
+  }
+  database.prepare('UPDATE campanhas_crm SET status = ? WHERE id = ?').run(nextStatus, current.id);
+  persistDb();
+  return getDispatchCampaignById(current.id);
 }
 
 export function listCampaignDryRuns(id) {
@@ -6808,7 +6962,7 @@ export function markCampaignClientSent(clientRowId) {
     .run(nowIso(), nowIso(), nowIso(), Number(clientRowId));
   const row = queryOne(database, 'SELECT campanha_id FROM campanha_clientes WHERE id = ?', [Number(clientRowId)]);
   if (row?.campanha_id) {
-    database.prepare('UPDATE campanhas_crm SET total_disparos = total_disparos + 1 WHERE id = ?').run(row.campanha_id);
+    database.prepare('UPDATE campanhas_crm SET total_disparos = total_disparos + 1, total_enviados = total_enviados + 1 WHERE id = ?').run(row.campanha_id);
   }
   persistDb();
 }
@@ -6830,7 +6984,7 @@ export function markCampaignClientFailed(clientRowId, reason = '') {
 export function completeDispatchCampaign(id) {
   const database = getDb();
   database
-    .prepare("UPDATE campanhas_crm SET status = 'concluida', concluida_em = COALESCE(concluida_em, ?) WHERE id = ?")
+    .prepare("UPDATE campanhas_crm SET status = 'CONCLUIDA', concluida_em = COALESCE(concluida_em, ?) WHERE id = ?")
     .run(nowIso(), String(id || ''));
   persistDb();
   return getDispatchCampaignById(id);
