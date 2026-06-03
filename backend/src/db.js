@@ -1246,6 +1246,55 @@ function initSchema(database) {
       value TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS averbador_credentials (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      portal_id TEXT NOT NULL UNIQUE,
+      portal_name TEXT NOT NULL DEFAULT '',
+      portal_url TEXT NOT NULL DEFAULT '',
+      login TEXT NOT NULL DEFAULT '',
+      encrypted_password TEXT NOT NULL DEFAULT '',
+      requires_captcha INTEGER NOT NULL DEFAULT 0,
+      requires_assisted_login INTEGER NOT NULL DEFAULT 0,
+      session_status TEXT NOT NULL DEFAULT 'nao_conectado',
+      last_access_at TEXT,
+      session_expires_at TEXT,
+      last_test_at TEXT,
+      last_error TEXT NOT NULL DEFAULT '',
+      created_by INTEGER,
+      updated_by INTEGER,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT '',
+      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+      FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS averbador_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      credential_id INTEGER,
+      portal_id TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'nao_conectado',
+      last_login_at TEXT,
+      expires_at TEXT,
+      requires_manual_action INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT '',
+      FOREIGN KEY (credential_id) REFERENCES averbador_credentials(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS credential_connection_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      credential_id INTEGER,
+      portal_id TEXT NOT NULL DEFAULT '',
+      action TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT '',
+      message TEXT NOT NULL DEFAULT '',
+      error_message TEXT NOT NULL DEFAULT '',
+      created_by INTEGER,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (credential_id) REFERENCES averbador_credentials(id) ON DELETE SET NULL,
+      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+    );
+
     CREATE TABLE IF NOT EXISTS ribeirao_query_sessions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL,
@@ -1546,6 +1595,47 @@ function initSchema(database) {
     'created_at TEXT NOT NULL DEFAULT \'\'',
   ]);
 
+  ensureColumns(database, 'averbador_credentials', [
+    'portal_id TEXT NOT NULL DEFAULT \'\'',
+    'portal_name TEXT NOT NULL DEFAULT \'\'',
+    'portal_url TEXT NOT NULL DEFAULT \'\'',
+    'login TEXT NOT NULL DEFAULT \'\'',
+    'encrypted_password TEXT NOT NULL DEFAULT \'\'',
+    'requires_captcha INTEGER NOT NULL DEFAULT 0',
+    'requires_assisted_login INTEGER NOT NULL DEFAULT 0',
+    'session_status TEXT NOT NULL DEFAULT \'nao_conectado\'',
+    'last_access_at TEXT',
+    'session_expires_at TEXT',
+    'last_test_at TEXT',
+    'last_error TEXT NOT NULL DEFAULT \'\'',
+    'created_by INTEGER',
+    'updated_by INTEGER',
+    'created_at TEXT NOT NULL DEFAULT \'\'',
+    'updated_at TEXT NOT NULL DEFAULT \'\'',
+  ]);
+
+  ensureColumns(database, 'averbador_sessions', [
+    'credential_id INTEGER',
+    'portal_id TEXT NOT NULL DEFAULT \'\'',
+    'status TEXT NOT NULL DEFAULT \'nao_conectado\'',
+    'last_login_at TEXT',
+    'expires_at TEXT',
+    'requires_manual_action INTEGER NOT NULL DEFAULT 0',
+    'created_at TEXT NOT NULL DEFAULT \'\'',
+    'updated_at TEXT NOT NULL DEFAULT \'\'',
+  ]);
+
+  ensureColumns(database, 'credential_connection_logs', [
+    'credential_id INTEGER',
+    'portal_id TEXT NOT NULL DEFAULT \'\'',
+    'action TEXT NOT NULL DEFAULT \'\'',
+    'status TEXT NOT NULL DEFAULT \'\'',
+    'message TEXT NOT NULL DEFAULT \'\'',
+    'error_message TEXT NOT NULL DEFAULT \'\'',
+    'created_by INTEGER',
+    'created_at TEXT NOT NULL DEFAULT \'\'',
+  ]);
+
   ensureColumns(database, 'campanhas_crm', [
     'esteira_id INTEGER',
     'grupo TEXT NOT NULL DEFAULT \'\'',
@@ -1575,6 +1665,9 @@ function initSchema(database) {
   database.exec('CREATE INDEX IF NOT EXISTS idx_client_consultation_emails_consultation ON client_consultation_emails(consultation_id)');
   database.exec('CREATE INDEX IF NOT EXISTS idx_customer_consents_customer_channel ON customer_consents(customer_id, channel, consent_status)');
   database.exec('CREATE INDEX IF NOT EXISTS idx_audit_log_entity ON audit_log(entity_type, entity_id, created_at)');
+  database.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_averbador_credentials_portal ON averbador_credentials(portal_id)');
+  database.exec('CREATE INDEX IF NOT EXISTS idx_averbador_sessions_portal ON averbador_sessions(portal_id, status)');
+  database.exec('CREATE INDEX IF NOT EXISTS idx_credential_connection_logs_portal ON credential_connection_logs(portal_id, created_at)');
   database.exec('CREATE INDEX IF NOT EXISTS idx_campanhas_crm_status ON campanhas_crm(status)');
   database.exec('CREATE INDEX IF NOT EXISTS idx_campanhas_crm_esteira_grupo ON campanhas_crm(esteira_id, grupo)');
   database.exec('CREATE INDEX IF NOT EXISTS idx_campanha_clientes_campanha_grupo ON campanha_clientes(campanha_id, status)');
@@ -4879,6 +4972,284 @@ export function recordUserLogin(id) {
     .prepare('UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?')
     .run(nowIso(), nowIso(), id);
   return getUserById(id);
+}
+
+function normalizeCredentialRow(row) {
+  if (!row) {
+    return null;
+  }
+  return {
+    ...row,
+    id: Number(row.id || 0),
+    requires_captcha: Boolean(row.requires_captcha),
+    requires_assisted_login: Boolean(row.requires_assisted_login),
+  };
+}
+
+export function listAverbadorCredentials() {
+  const database = getDb();
+  return queryAll(database, 'SELECT * FROM averbador_credentials ORDER BY portal_name ASC, portal_id ASC').map(
+    normalizeCredentialRow
+  );
+}
+
+export function getAverbadorCredentialById(id) {
+  const database = getDb();
+  return normalizeCredentialRow(queryOne(database, 'SELECT * FROM averbador_credentials WHERE id = ? LIMIT 1', [Number(id || 0)]));
+}
+
+export function getAverbadorCredentialByPortalId(portalId) {
+  const database = getDb();
+  return normalizeCredentialRow(
+    queryOne(database, 'SELECT * FROM averbador_credentials WHERE portal_id = ? LIMIT 1', [String(portalId || '')])
+  );
+}
+
+export function upsertAverbadorCredential(payload = {}) {
+  const database = getDb();
+  const now = nowIso();
+  const portalId = String(payload.portal_id || '').trim();
+  if (!portalId) {
+    throw new Error('portal_id é obrigatório para salvar a credencial.');
+  }
+
+  const current = getAverbadorCredentialByPortalId(portalId);
+  if (current) {
+    database
+      .prepare(
+        `
+          UPDATE averbador_credentials
+          SET
+            portal_name = ?,
+            portal_url = ?,
+            login = ?,
+            encrypted_password = ?,
+            requires_captcha = ?,
+            requires_assisted_login = ?,
+            session_status = ?,
+            last_access_at = ?,
+            session_expires_at = ?,
+            last_test_at = ?,
+            last_error = ?,
+            created_by = COALESCE(created_by, ?),
+            updated_by = ?,
+            updated_at = ?
+          WHERE id = ?
+        `
+      )
+      .run(
+        payload.portal_name || current.portal_name || '',
+        payload.portal_url || current.portal_url || '',
+        payload.login ?? current.login ?? '',
+        payload.encrypted_password ?? current.encrypted_password ?? '',
+        payload.requires_captcha ? 1 : 0,
+        payload.requires_assisted_login ? 1 : 0,
+        payload.session_status || current.session_status || 'nao_conectado',
+        payload.last_access_at ?? current.last_access_at ?? null,
+        payload.session_expires_at ?? current.session_expires_at ?? null,
+        payload.last_test_at ?? current.last_test_at ?? null,
+        payload.last_error ?? current.last_error ?? '',
+        payload.created_by ?? null,
+        payload.updated_by ?? null,
+        now,
+        current.id
+      );
+    return getAverbadorCredentialById(current.id);
+  }
+
+  database
+    .prepare(
+      `
+        INSERT INTO averbador_credentials (
+          portal_id, portal_name, portal_url, login, encrypted_password, requires_captcha,
+          requires_assisted_login, session_status, last_access_at, session_expires_at,
+          last_test_at, last_error, created_by, updated_by, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `
+    )
+    .run(
+      portalId,
+      payload.portal_name || '',
+      payload.portal_url || '',
+      payload.login || '',
+      payload.encrypted_password || '',
+      payload.requires_captcha ? 1 : 0,
+      payload.requires_assisted_login ? 1 : 0,
+      payload.session_status || 'nao_conectado',
+      payload.last_access_at || null,
+      payload.session_expires_at || null,
+      payload.last_test_at || null,
+      payload.last_error || '',
+      payload.created_by ?? null,
+      payload.updated_by ?? null,
+      now,
+      now
+    );
+
+  return getAverbadorCredentialByPortalId(portalId);
+}
+
+export function updateAverbadorCredentialById(id, updates = {}) {
+  const database = getDb();
+  const current = getAverbadorCredentialById(id);
+  if (!current) {
+    return null;
+  }
+  const now = nowIso();
+
+  database
+    .prepare(
+      `
+        UPDATE averbador_credentials
+        SET
+          portal_name = ?,
+          portal_url = ?,
+          login = ?,
+          encrypted_password = ?,
+          requires_captcha = ?,
+          requires_assisted_login = ?,
+          session_status = ?,
+          last_access_at = ?,
+          session_expires_at = ?,
+          last_test_at = ?,
+          last_error = ?,
+          updated_by = ?,
+          updated_at = ?
+        WHERE id = ?
+      `
+    )
+    .run(
+      updates.portal_name ?? current.portal_name ?? '',
+      updates.portal_url ?? current.portal_url ?? '',
+      updates.login ?? current.login ?? '',
+      updates.encrypted_password ?? current.encrypted_password ?? '',
+      (updates.requires_captcha ?? current.requires_captcha) ? 1 : 0,
+      (updates.requires_assisted_login ?? current.requires_assisted_login) ? 1 : 0,
+      updates.session_status ?? current.session_status ?? 'nao_conectado',
+      updates.last_access_at ?? current.last_access_at ?? null,
+      updates.session_expires_at ?? current.session_expires_at ?? null,
+      updates.last_test_at ?? current.last_test_at ?? null,
+      updates.last_error ?? current.last_error ?? '',
+      updates.updated_by ?? current.updated_by ?? null,
+      now,
+      current.id
+    );
+
+  return getAverbadorCredentialById(current.id);
+}
+
+export function upsertAverbadorSession(payload = {}) {
+  const database = getDb();
+  const now = nowIso();
+  const credentialId = payload.credential_id ? Number(payload.credential_id) : null;
+  const portalId = String(payload.portal_id || '').trim();
+  const current = credentialId
+    ? queryOne(database, 'SELECT * FROM averbador_sessions WHERE credential_id = ? ORDER BY id DESC LIMIT 1', [credentialId])
+    : queryOne(database, 'SELECT * FROM averbador_sessions WHERE portal_id = ? ORDER BY id DESC LIMIT 1', [portalId]);
+
+  if (current) {
+    database
+      .prepare(
+        `
+          UPDATE averbador_sessions
+          SET
+            credential_id = ?,
+            portal_id = ?,
+            status = ?,
+            last_login_at = ?,
+            expires_at = ?,
+            requires_manual_action = ?,
+            updated_at = ?
+          WHERE id = ?
+        `
+      )
+      .run(
+        credentialId,
+        portalId || current.portal_id || '',
+        payload.status || current.status || 'nao_conectado',
+        payload.last_login_at ?? current.last_login_at ?? null,
+        payload.expires_at ?? current.expires_at ?? null,
+        payload.requires_manual_action ? 1 : 0,
+        now,
+        current.id
+      );
+    return queryOne(database, 'SELECT * FROM averbador_sessions WHERE id = ?', [current.id]);
+  }
+
+  database
+    .prepare(
+      `
+        INSERT INTO averbador_sessions (
+          credential_id, portal_id, status, last_login_at, expires_at,
+          requires_manual_action, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `
+    )
+    .run(
+      credentialId,
+      portalId,
+      payload.status || 'nao_conectado',
+      payload.last_login_at || null,
+      payload.expires_at || null,
+      payload.requires_manual_action ? 1 : 0,
+      now,
+      now
+    );
+
+  return queryOne(database, 'SELECT * FROM averbador_sessions ORDER BY id DESC LIMIT 1');
+}
+
+export function insertCredentialConnectionLog(payload = {}) {
+  const database = getDb();
+  const now = nowIso();
+  database
+    .prepare(
+      `
+        INSERT INTO credential_connection_logs (
+          credential_id, portal_id, action, status, message, error_message, created_by, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `
+    )
+    .run(
+      payload.credential_id ? Number(payload.credential_id) : null,
+      String(payload.portal_id || ''),
+      String(payload.action || ''),
+      String(payload.status || ''),
+      String(payload.message || ''),
+      String(payload.error_message || ''),
+      payload.created_by ?? null,
+      now
+    );
+  return queryOne(database, 'SELECT * FROM credential_connection_logs ORDER BY id DESC LIMIT 1');
+}
+
+export function listCredentialConnectionLogs(params = {}) {
+  const database = getDb();
+  const limit = Math.min(Math.max(Number(params.limit || 50), 1), 200);
+  const portalId = String(params.portal_id || params.portalId || '').trim();
+  if (portalId) {
+    return queryAll(
+      database,
+      `
+        SELECT *
+        FROM credential_connection_logs
+        WHERE portal_id = ?
+        ORDER BY datetime(created_at) DESC, id DESC
+        LIMIT ?
+      `,
+      [portalId, limit]
+    );
+  }
+  return queryAll(
+    database,
+    `
+      SELECT *
+      FROM credential_connection_logs
+      ORDER BY datetime(created_at) DESC, id DESC
+      LIMIT ?
+    `,
+    [limit]
+  );
 }
 
 export function createRibeiraoBatchRecord({
