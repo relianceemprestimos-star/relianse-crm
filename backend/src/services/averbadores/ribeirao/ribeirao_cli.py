@@ -1788,10 +1788,15 @@ async def _handle_convenio_selection(
     )
 
 
-async def _click_user_already_logged_confirm(connector: PortalSecundarioLegacyConnector) -> bool:
+async def _click_user_already_logged_confirm(connector: PortalSecundarioLegacyConnector, password: str = "") -> bool:
     candidate_selectors = [
         "#ucAjaxModalPopup1_btnConfirmarPopup",
         "input[name='ucAjaxModalPopup1$btnConfirmarPopup']",
+        "#ucAjaxModalPopup1_btnOkPopup",
+        "input[name='ucAjaxModalPopup1$btnOkPopup']",
+        "#Entrar",
+        "input[name='Entrar']",
+        "input[value='Entrar']",
         "input[value='OK']",
         "input[value='Ok']",
         "input[value='Sim']",
@@ -1808,6 +1813,15 @@ async def _click_user_already_logged_confirm(connector: PortalSecundarioLegacyCo
         "a:has-text('Desconectar')",
     ]
     for scope in _login_scopes(connector):
+        if password:
+            for password_selector in ("#txtSenha", "input[name='txtSenha']", "input[type='password']"):
+                try:
+                    password_locator = scope.locator(password_selector).first
+                    if await password_locator.count():
+                        await password_locator.fill(password, timeout=1500)
+                        break
+                except Exception:
+                    continue
         for selector in candidate_selectors:
             for force in (False, True):
                 try:
@@ -1833,7 +1847,65 @@ async def _click_user_already_logged_confirm(connector: PortalSecundarioLegacyCo
                     return True
             except Exception:
                 continue
-    for target in ("ucAjaxModalPopup1$btnConfirmarPopup", "ucAjaxModalPopup1$btnOkPopup", "btnConfirmarPopup"):
+    for scope in _login_scopes(connector):
+        try:
+            clicked = await scope.evaluate(
+                """(password) => {
+                    const normalize = (value) => String(value || "")
+                        .normalize("NFD")
+                        .replace(/[\\u0300-\\u036f]/g, "")
+                        .replace(/\\s+/g, " ")
+                        .trim()
+                        .toLowerCase();
+                    const isVisible = (el) => {
+                        if (!el) return false;
+                        const style = window.getComputedStyle(el);
+                        const rect = el.getBoundingClientRect();
+                        return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+                    };
+                    const passwordInput = document.querySelector("#txtSenha, input[name='txtSenha'], input[type='password']");
+                    if (password && passwordInput) {
+                        passwordInput.removeAttribute("disabled");
+                        passwordInput.value = password;
+                        passwordInput.dispatchEvent(new Event("input", { bubbles: true }));
+                        passwordInput.dispatchEvent(new Event("change", { bubbles: true }));
+                    }
+                    const elements = Array.from(document.querySelectorAll("input,button,a"));
+                    const preferred = elements.find((el) => {
+                        const haystack = normalize([
+                            el.id,
+                            el.name,
+                            el.value,
+                            el.textContent,
+                            el.getAttribute("title"),
+                            el.getAttribute("aria-label"),
+                            el.getAttribute("onclick"),
+                        ].join(" "));
+                        return (
+                            haystack.includes("confirmarpopup") ||
+                            haystack.includes("okpopup") ||
+                            haystack.includes("desconectar") ||
+                            haystack.includes("confirmar") ||
+                            haystack === "entrar" ||
+                            haystack.includes(" entrar ")
+                        );
+                    }) || elements.find((el) => isVisible(el) && ["submit", "button", "image"].includes(normalize(el.type)));
+                    if (preferred) {
+                        preferred.removeAttribute("disabled");
+                        preferred.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+                        preferred.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+                        preferred.click();
+                        return true;
+                    }
+                    return false;
+                }""",
+                password or "",
+            )
+            if clicked:
+                return True
+        except Exception:
+            continue
+    for target in ("ucAjaxModalPopup1$btnConfirmarPopup", "ucAjaxModalPopup1$btnOkPopup", "btnConfirmarPopup", "Entrar"):
         try:
             clicked = await connector.page.evaluate(
                 """(postbackTarget) => {
@@ -1854,8 +1926,38 @@ async def _click_user_already_logged_confirm(connector: PortalSecundarioLegacyCo
         except Exception:
             continue
     try:
-        await connector.page.keyboard.press("Enter")
-        return True
+        submitted = await connector.page.evaluate(
+            """(password) => {
+                try {
+                    const form = document.querySelector("form");
+                    if (!form) return false;
+                    const passwordInput = document.querySelector("#txtSenha, input[name='txtSenha'], input[type='password']");
+                    if (password && passwordInput) {
+                        passwordInput.removeAttribute("disabled");
+                        passwordInput.value = password;
+                    }
+                    const eventTarget = document.querySelector("#__EVENTTARGET");
+                    const eventArgument = document.querySelector("#__EVENTARGUMENT");
+                    if (eventTarget && !eventTarget.value) eventTarget.value = "Entrar";
+                    if (eventArgument && !eventArgument.value) eventArgument.value = "";
+                    const submitMarker = document.createElement("input");
+                    submitMarker.type = "hidden";
+                    submitMarker.name = "Entrar";
+                    submitMarker.value = "Entrar";
+                    form.appendChild(submitMarker);
+                    if (typeof form.requestSubmit === "function") {
+                        form.requestSubmit();
+                    } else {
+                        form.submit();
+                    }
+                    return true;
+                } catch (_) {
+                    return false;
+                }
+            }""",
+            password or "",
+        )
+        return bool(submitted)
     except Exception:
         return False
 
@@ -1870,7 +1972,7 @@ async def _confirm_user_already_logged_disconnect(
     clicked_any = False
     last_snapshot = snapshot
     for attempt in range(1, 4):
-        clicked_any = await _click_user_already_logged_confirm(connector) or clicked_any
+        clicked_any = await _click_user_already_logged_confirm(connector, password) or clicked_any
         print(f"[LOGIN_FLOW] confirmar_desconectar_tentativa_{attempt}: {str(clicked_any).lower()}", file=sys.stderr, flush=True)
         for wait_ms in (1500, 3000, 6000):
             await connector.page.wait_for_timeout(wait_ms)
