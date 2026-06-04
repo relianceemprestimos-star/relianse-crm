@@ -276,7 +276,21 @@ export default function RibeiraoPage() {
     try {
       setBatchHistoryLoading(true);
       const response = await api.getRibeiraoBatchHistory();
-      setBatchHistory((response.rows || []).filter(Boolean));
+      const rows = (response.rows || []).filter(Boolean);
+      setBatchHistory(rows);
+      setCurrentBatch((previous) => {
+        if (previous?.id) {
+          const updatedCurrent = rows.find((batch) => batch.id === previous.id);
+          if (updatedCurrent) {
+            return updatedCurrent;
+          }
+        }
+        const activeBatch = rows.find((batch) => isBatchActive(batch.status));
+        if (activeBatch) {
+          return activeBatch;
+        }
+        return previous;
+      });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Falha ao carregar o histórico de lotes.');
     } finally {
