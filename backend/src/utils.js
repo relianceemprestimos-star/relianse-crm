@@ -65,19 +65,28 @@ export function parseMoney(value) {
     return null;
   }
 
+  const normalizedText = normalizeText(text);
+  const hasNegativeMarker =
+    normalizedText.includes('negativo') ||
+    normalizedText.includes('negativa') ||
+    /^-/.test(text.replace(/[R$\s]/g, '')) ||
+    /-\s*$/.test(text) ||
+    /^\(.*\)$/.test(text);
+
   const normalized = text
     .replace(/[R$\s]/g, '')
     .replace(/\./g, '')
     .replace(',', '.')
+    .replace(/[()]/g, '')
     .replace(/(?!^)-/g, '');
 
   const number = Number(normalized);
   if (Number.isFinite(number)) {
-    return number;
+    return hasNegativeMarker ? -Math.abs(number) : number;
   }
 
   const cleaned = text.replace(/[^\d,-]/g, '');
-  const sign = cleaned.includes('-') ? -1 : 1;
+  const sign = hasNegativeMarker || cleaned.includes('-') ? -1 : 1;
   const digits = cleaned.replace(/-/g, '').replace(/\./g, '').replace(',', '.');
   const fallback = Number(digits);
   return Number.isFinite(fallback) ? sign * fallback : null;

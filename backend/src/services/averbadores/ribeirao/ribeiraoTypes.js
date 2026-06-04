@@ -144,7 +144,7 @@ export function normalizeRibeiraoQueryResult(rawResult, cpf, sessionId, userId, 
   const nonNullMargins = [emprestimoGross, emprestimoNet, cartaoGross, cartaoNet].filter(
     (value) => value !== null && value !== undefined
   );
-  const allMarginsZero = marginsFound && nonNullMargins.every((value) => Number(value) === 0);
+  const hasPositiveMargin = nonNullMargins.some((value) => Number(value) > 0);
 
   const margins = {
     credito: {
@@ -172,9 +172,9 @@ export function normalizeRibeiraoQueryResult(rawResult, cpf, sessionId, userId, 
           : status.includes('not_found') || status.includes('nao_encontrado')
             ? RIBEIRAO_QUERY_STATUSES.NOT_FOUND
             : marginsFound
-              ? allMarginsZero
-                ? RIBEIRAO_QUERY_STATUSES.WITHOUT_MARGIN
-                : RIBEIRAO_QUERY_STATUSES.WITH_MARGIN
+              ? hasPositiveMargin
+                ? RIBEIRAO_QUERY_STATUSES.WITH_MARGIN
+                : RIBEIRAO_QUERY_STATUSES.WITHOUT_MARGIN
               : status.includes('success') || status.includes('sucesso')
                 ? best.net !== null && best.net > 0
                   ? RIBEIRAO_QUERY_STATUSES.WITH_MARGIN

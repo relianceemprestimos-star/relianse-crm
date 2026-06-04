@@ -11,6 +11,8 @@ process.env.HASH_SECRET = 'test-hash-secret';
 
 const protection = await import('../src/dataProtection.js');
 const db = await import('../src/db.js');
+const utils = await import('../src/utils.js');
+const ribeiraoTypes = await import('../src/services/averbadores/ribeirao/ribeiraoTypes.js');
 
 await db.initDb();
 
@@ -85,6 +87,36 @@ test('importacao da esteira aceita coluna de CPF sem nome do cliente', () => {
   assert.equal(analysis.summary.valid_rows, 2);
   assert.equal(analysis.summary.invalid_rows, 0);
   assert.equal(analysis.rows[1].name, 'Cliente 7735');
+});
+
+test('parser de moeda preserva margem negativa do portal', () => {
+  assert.equal(utils.parseMoney('R$ -123,45'), -123.45);
+  assert.equal(utils.parseMoney('R$ 123,45-'), -123.45);
+  assert.equal(utils.parseMoney('(123,45)'), -123.45);
+  assert.equal(utils.parseMoney('123,45 negativo'), -123.45);
+});
+
+test('consulta Ribeirao com margens negativas fica sem margem sem perder valores', () => {
+  const result = ribeiraoTypes.normalizeRibeiraoQueryResult(
+    {
+      status: 'sucesso',
+      payload_extra: {
+        margem_emprestimo_total: 'R$ 0,00',
+        margem_emprestimo_disponivel: 'R$ -42,35',
+        margem_cartao_total: 'R$ 0,00',
+        margem_cartao_disponivel: 'R$ 12,00-',
+      },
+    },
+    '12345678909',
+    1,
+    1
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(result.consultaStatus, ribeiraoTypes.RIBEIRAO_QUERY_STATUSES.WITHOUT_MARGIN);
+  assert.equal(result.margem_emprestimo_disponivel, -42.35);
+  assert.equal(result.margem_cartao_disponivel, -12);
+  assert.equal(result.products.find((item) => item.product_type === 'credito')?.state.label, 'Negativa');
 });
 
 function seedPipelineClient({
