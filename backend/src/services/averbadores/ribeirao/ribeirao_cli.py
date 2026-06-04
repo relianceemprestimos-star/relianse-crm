@@ -1788,6 +1788,113 @@ async def _handle_convenio_selection(
     )
 
 
+async def _click_user_already_logged_confirm(connector: PortalSecundarioLegacyConnector) -> bool:
+    candidate_selectors = [
+        "#ucAjaxModalPopup1_btnConfirmarPopup",
+        "input[name='ucAjaxModalPopup1$btnConfirmarPopup']",
+        "input[value='OK']",
+        "input[value='Ok']",
+        "input[value='Sim']",
+        "input[value='Confirmar']",
+        "input[value*='Desconectar']",
+        "button:has-text('OK')",
+        "button:has-text('Sim')",
+        "button:has-text('Confirmar')",
+        "button:has-text('Desconectar')",
+        "button:has-text('Continuar')",
+        "a:has-text('OK')",
+        "a:has-text('Sim')",
+        "a:has-text('Confirmar')",
+        "a:has-text('Desconectar')",
+    ]
+    for scope in _login_scopes(connector):
+        for selector in candidate_selectors:
+            for force in (False, True):
+                try:
+                    await scope.locator(selector).first.click(timeout=2500, force=force)
+                    return True
+                except Exception:
+                    continue
+            try:
+                clicked = await scope.evaluate(
+                    """(selector) => {
+                        try {
+                            const el = document.querySelector(selector);
+                            if (!el) return false;
+                            el.click();
+                            return true;
+                        } catch (_) {
+                            return false;
+                        }
+                    }""",
+                    selector,
+                )
+                if clicked:
+                    return True
+            except Exception:
+                continue
+    for target in ("ucAjaxModalPopup1$btnConfirmarPopup", "ucAjaxModalPopup1$btnOkPopup", "btnConfirmarPopup"):
+        try:
+            clicked = await connector.page.evaluate(
+                """(postbackTarget) => {
+                    try {
+                        if (typeof __doPostBack === 'function') {
+                            __doPostBack(postbackTarget, '');
+                            return true;
+                        }
+                        return false;
+                    } catch (_) {
+                        return false;
+                    }
+                }""",
+                target,
+            )
+            if clicked:
+                return True
+        except Exception:
+            continue
+    try:
+        await connector.page.keyboard.press("Enter")
+        return True
+    except Exception:
+        return False
+
+
+async def _confirm_user_already_logged_disconnect(
+    connector: PortalSecundarioLegacyConnector,
+    login: str,
+    password: str,
+    timeout_ms: int,
+    snapshot: dict,
+) -> tuple[dict, bool]:
+    clicked_any = False
+    last_snapshot = snapshot
+    for attempt in range(1, 4):
+        clicked_any = await _click_user_already_logged_confirm(connector) or clicked_any
+        print(f"[LOGIN_FLOW] confirmar_desconectar_tentativa_{attempt}: {str(clicked_any).lower()}", file=sys.stderr, flush=True)
+        for wait_ms in (1500, 3000, 6000):
+            await connector.page.wait_for_timeout(wait_ms)
+            last_snapshot = await _capture_login_snapshot(connector)
+            body = _normalize_ribeirao_text(last_snapshot.get("bodySnippet") or "")
+            url = str(last_snapshot.get("url") or "").lower()
+            if "loginselecao.aspx" in url or "selecione o convenio" in body or "convenio sigla acao" in body:
+                selection_snapshot, _selection_debug, selection_ok = await _handle_convenio_selection(
+                    connector,
+                    login,
+                    password,
+                    timeout_ms,
+                    last_snapshot,
+                )
+                last_snapshot = selection_snapshot
+                if selection_ok:
+                    return last_snapshot, True
+            if last_snapshot.get("successFound") or last_snapshot.get("operacionalFound") or last_snapshot.get("consultaMargemFound"):
+                return last_snapshot, True
+            if not _is_user_already_logged_message(body, last_snapshot.get("errorText") or ""):
+                break
+    return last_snapshot, bool(last_snapshot.get("successFound") or last_snapshot.get("operacionalFound") or last_snapshot.get("consultaMargemFound"))
+
+
 async def _retry_login_post_click(
     connector: PortalSecundarioLegacyConnector,
     login: str,
@@ -2696,27 +2803,17 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
             )
             print(f"[LOGIN_FLOW] usuario_ja_logado_detectado: {str(user_already_logged).lower()}", file=sys.stderr, flush=True)
             if user_already_logged:
-                clicked_confirm = await _click_ok_popup(connector)
-                print(f"[LOGIN_FLOW] clicou_confirmar_desconectar: {str(clicked_confirm).lower()}", file=sys.stderr, flush=True)
-                await connector.page.wait_for_timeout(2500)
-                snapshot = await _capture_login_snapshot(connector)
+                snapshot, disconnect_ok = await _confirm_user_already_logged_disconnect(
+                    connector,
+                    login,
+                    password,
+                    timeout_ms,
+                    snapshot,
+                )
                 last_modal = await _capture_login_modal_state(connector)
                 print(f"[LOGIN_FLOW] url depois confirmar desconectar: {snapshot.get('url') or ''}", file=sys.stderr, flush=True)
-                print(f"[LOGIN_FLOW] sucesso apos confirmar desconectar: {str(bool(snapshot.get('successFound') or snapshot.get('operacionalFound') or snapshot.get('consultaMargemFound'))).lower()}", file=sys.stderr, flush=True)
-                confirm_body = _normalize_ribeirao_text(snapshot.get("bodySnippet") or "")
-                confirm_url = str(snapshot.get("url") or "").lower()
-                if "loginselecao.aspx" in confirm_url or "selecione o convenio" in confirm_body or "convenio sigla acao" in confirm_body:
-                    selection_snapshot, selection_debug, selection_ok = await _handle_convenio_selection(
-                        connector,
-                        login,
-                        password,
-                        timeout_ms,
-                        snapshot,
-                    )
-                    snapshot = selection_snapshot
-                    if selection_ok:
-                        print(f"[LOGIN_FLOW] convenios processados com sucesso: {str(bool(snapshot.get('successFound') or snapshot.get('operacionalFound') or snapshot.get('consultaMargemFound'))).lower()}", file=sys.stderr, flush=True)
-                if not (snapshot.get('successFound') or snapshot.get('operacionalFound') or snapshot.get('consultaMargemFound')):
+                print(f"[LOGIN_FLOW] sucesso apos confirmar desconectar: {str(disconnect_ok).lower()}", file=sys.stderr, flush=True)
+                if not disconnect_ok:
                     raise _typed_login_error(
                         'USER_ALREADY_LOGGED_CONFIRM_FAILED',
                         'O portal informou que o usu?rio j? estava logado, mas n?o foi poss?vel confirmar a desconex?o autom?tica.',
@@ -2807,27 +2904,17 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
                 snapshot.get("errorText") or "",
                 snapshot.get("bodySnippet") or "",
             ):
-                clicked_confirm = await _click_ok_popup(connector)
-                print(f"[LOGIN_FLOW] clicou_confirmar_desconectar: {str(clicked_confirm).lower()}", file=sys.stderr, flush=True)
-                await connector.page.wait_for_timeout(2500)
-                snapshot = await _capture_login_snapshot(connector)
+                snapshot, disconnect_ok = await _confirm_user_already_logged_disconnect(
+                    connector,
+                    login,
+                    password,
+                    timeout_ms,
+                    snapshot,
+                )
                 last_modal = await _capture_login_modal_state(connector)
                 print(f"[LOGIN_FLOW] url depois confirmar desconectar: {snapshot.get('url') or ''}", file=sys.stderr, flush=True)
-                print(f"[LOGIN_FLOW] sucesso apos confirmar desconectar: {str(bool(snapshot.get('successFound') or snapshot.get('operacionalFound') or snapshot.get('consultaMargemFound'))).lower()}", file=sys.stderr, flush=True)
-                confirm_body = _normalize_ribeirao_text(snapshot.get("bodySnippet") or "")
-                confirm_url = str(snapshot.get("url") or "").lower()
-                if "loginselecao.aspx" in confirm_url or "selecione o convenio" in confirm_body or "convenio sigla acao" in confirm_body:
-                    selection_snapshot, selection_debug, selection_ok = await _handle_convenio_selection(
-                        connector,
-                        login,
-                        password,
-                        timeout_ms,
-                        snapshot,
-                    )
-                    snapshot = selection_snapshot
-                    if selection_ok:
-                        print(f"[LOGIN_FLOW] convenios processados com sucesso: {str(bool(snapshot.get('successFound') or snapshot.get('operacionalFound') or snapshot.get('consultaMargemFound'))).lower()}", file=sys.stderr, flush=True)
-                if snapshot.get("successFound") or snapshot.get("operacionalFound") or snapshot.get("consultaMargemFound"):
+                print(f"[LOGIN_FLOW] sucesso apos confirmar desconectar: {str(disconnect_ok).lower()}", file=sys.stderr, flush=True)
+                if disconnect_ok:
                     pass
                 else:
                     raise _typed_login_error(
