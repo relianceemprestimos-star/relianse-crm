@@ -2198,8 +2198,8 @@ function isBatchProcessing(status?: string) {
 
 function canDownloadBatchResult(batch?: RibeiraoBatchRecord | null) {
   if (!batch) return false;
-  const hasResultFile = Boolean(String(batch.result_file_path || '').trim());
-  return hasResultFile && (batch.status === 'concluido' || batch.status === 'erro' || batch.status === 'pausado');
+  const hasProcessedRows = Number(batch.processed_count || 0) > 0;
+  return hasProcessedRows && (batch.status === 'concluido' || batch.status === 'erro' || batch.status === 'pausado');
 }
 
 function getBatchNetMargin(item: RibeiraoBatchResultItem, productType: string) {
