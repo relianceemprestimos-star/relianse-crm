@@ -111,20 +111,39 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
     @staticmethod
     def _extract_money(section_text: str, product_patterns: list[str]) -> str | None:
         for product in product_patterns:
-            pattern = rf"{product}\s+(-?\d{{1,3}}(?:\.\d{{3}})*,\d{{2}})"
+            pattern = rf"{product}\s+([−–—-]?\s*\d{{1,3}}(?:\.\d{{3}})*,\d{{2}}\s*[−–—-]?|\(\s*\d{{1,3}}(?:\.\d{{3}})*,\d{{2}}\s*\))"
             match = re.search(pattern, section_text, flags=re.IGNORECASE)
             if match:
-                return match.group(1)
+                return PortalSecundarioLegacyConnector._normalize_money_text(match.group(1))
         return None
 
     @staticmethod
     def _normalize_money_text(value: str) -> str:
-        text = str(value or "").strip()
+        text = str(value or "").replace("−", "-").replace("–", "-").replace("—", "-").strip()
         if not text:
             return ""
         text = re.sub(r"\s+", " ", text)
-        match = re.search(r"-?\d{1,3}(?:\.\d{3})*,\d{2}|-?\d+,\d{2}", text)
-        return match.group(0) if match else text
+        is_negative = bool(
+            re.search(r"(^|\s)-\s*\d", text)
+            or re.search(r"\d\s*-\s*$", text)
+            or re.search(r"^\(\s*.*\s*\)$", text)
+            or re.search(r"negativ[ao]", text, flags=re.IGNORECASE)
+        )
+        match = re.search(r"\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2}", text)
+        if not match:
+            return text
+        amount = match.group(0)
+        return f"-{amount}" if is_negative else amount
+
+    @staticmethod
+    def _money_to_float(value: str) -> float | None:
+        normalized = PortalSecundarioLegacyConnector._normalize_money_text(value)
+        if not normalized or not re.search(r"\d", normalized):
+            return None
+        try:
+            return float(normalized.replace("R$", "").replace(".", "").replace(",", ".").replace(" ", ""))
+        except ValueError:
+            return None
 
     async def _extract_margin_table(self) -> dict:
         try:
@@ -137,7 +156,12 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
                       .trim()
                       .toUpperCase();
                     const clean = (value) => String(value || "").replace(/\\s+/g, " ").trim();
-                    const money = (value) => clean(value).match(/-?\\d{1,3}(?:\\.\\d{3})*,\\d{2}|-?\\d+,\\d{2}/)?.[0] || "";
+                    const money = (value) => {
+                      const text = clean(value).replace(/[−–—]/g, "-");
+                      const negative = /(^|\\s)-\\s*\\d/.test(text) || /\\d\\s*-\\s*$/.test(text) || /^\\(.*\\)$/.test(text) || /negativ[ao]/i.test(text);
+                      const amount = text.match(/\\d{1,3}(?:\\.\\d{3})*,\\d{2}|\\d+,\\d{2}/)?.[0] || "";
+                      return amount ? `${negative ? "-" : ""}${amount}` : "";
+                    };
                     const bodyText = normalize(document.body?.innerText || document.body?.textContent || "");
                     const notFound = /CPF\\/?MATRICULA NAO ENCONTRADO|CPF NAO ENCONTRADO|MATRICULA NAO ENCONTRADA/.test(bodyText);
                     const tables = Array.from(document.querySelectorAll("table"));
@@ -1432,11 +1456,7 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
             raise RuntimeError("MARGIN_ROWS_NOT_FOUND: Nao encontrei linhas de margem na tela de detalhes.")
 
         has_positive_margin = any(
-            any(
-                (value := item.get(key)) and re.search(r"\d", str(value))
-                and (number := float(str(value).replace("R$", "").replace(".", "").replace(",", ".").replace(" ", ""))) > 0
-                for key in ("total", "available")
-            )
+            (number := self._money_to_float(item.get("available") or "")) is not None and number > 0
             for item in margem_rows
         )
         has_any_value = any(
@@ -1473,11 +1493,7 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
                     bool(item.get("total")) or bool(item.get("available")) for item in margem_rows
                 )
                 has_positive_margin = any(
-                    any(
-                        (value := item.get(key)) and re.search(r"\d", str(value))
-                        and (number := float(str(value).replace("R$", "").replace(".", "").replace(",", ".").replace(" ", ""))) > 0
-                        for key in ("total", "available")
-                    )
+                    (number := self._money_to_float(item.get("available") or "")) is not None and number > 0
                     for item in margem_rows
                 )
 
@@ -1578,4 +1594,3 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
             consultado_em=datetime.utcnow(),
             tentativas=tentativas,
         )
-

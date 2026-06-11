@@ -92,6 +92,8 @@ test('importacao da esteira aceita coluna de CPF sem nome do cliente', () => {
 test('parser de moeda preserva margem negativa do portal', () => {
   assert.equal(utils.parseMoney('R$ -123,45'), -123.45);
   assert.equal(utils.parseMoney('R$ 123,45-'), -123.45);
+  assert.equal(utils.parseMoney('R$ 123,45 -'), -123.45);
+  assert.equal(utils.parseMoney('R$ −123,45'), -123.45);
   assert.equal(utils.parseMoney('(123,45)'), -123.45);
   assert.equal(utils.parseMoney('123,45 negativo'), -123.45);
 });
@@ -117,6 +119,28 @@ test('consulta Ribeirao com margens negativas fica sem margem sem perder valores
   assert.equal(result.margem_emprestimo_disponivel, -42.35);
   assert.equal(result.margem_cartao_disponivel, -12);
   assert.equal(result.products.find((item) => item.product_type === 'credito')?.state.label, 'Negativa');
+});
+
+test('consulta Ribeirao com margem bruta positiva e disponivel negativa fica sem margem', () => {
+  const result = ribeiraoTypes.normalizeRibeiraoQueryResult(
+    {
+      status: 'sucesso',
+      payload_extra: {
+        margem_emprestimo_total: 'R$ 2.645,62',
+        margem_emprestimo_disponivel: 'R$ -10,00',
+        margem_cartao_total: 'R$ 900,00',
+        margem_cartao_disponivel: 'R$ 0,00',
+      },
+    },
+    '12345678909',
+    1,
+    1
+  );
+
+  assert.equal(result.consultaStatus, ribeiraoTypes.RIBEIRAO_QUERY_STATUSES.WITHOUT_MARGIN);
+  assert.equal(result.best_net_margin, 0);
+  assert.equal(result.margem_emprestimo_total, 2645.62);
+  assert.equal(result.margem_emprestimo_disponivel, -10);
 });
 
 function seedPipelineClient({

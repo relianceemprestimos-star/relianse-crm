@@ -60,7 +60,9 @@ export function parseMoney(value) {
     return Number.isFinite(value) ? value : null;
   }
 
-  const text = String(value).trim();
+  const text = String(value)
+    .replace(/[−–—]/g, '-')
+    .trim();
   if (!text) {
     return null;
   }

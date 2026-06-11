@@ -144,7 +144,8 @@ export function normalizeRibeiraoQueryResult(rawResult, cpf, sessionId, userId, 
   const nonNullMargins = [emprestimoGross, emprestimoNet, cartaoGross, cartaoNet].filter(
     (value) => value !== null && value !== undefined
   );
-  const hasPositiveMargin = nonNullMargins.some((value) => Number(value) > 0);
+  const netMargins = [emprestimoNet, cartaoNet].filter((value) => value !== null && value !== undefined);
+  const hasPositiveMargin = netMargins.some((value) => Number(value) > 0);
 
   const margins = {
     credito: {
