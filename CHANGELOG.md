@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-07-07
+
+- Fase 1 Yntelli: reorganizado menu operacional para centralizar trabalho em Campanhas.
+- Adicionada alternancia visual entre tema claro e tema escuro.
+- Campanhas agora podem ser filtradas por grupos de convenio/orgao, como Prefeitura de Ribeirao Preto, Governo de SP, MP/MPSP e outros.
+- Clientes, Atendimentos, Upload, Bases e WhatsApp deixam de aparecer como atalhos principais; rotas antigas seguem preservadas para compatibilidade.
+- Credenciais segue como menu gerencial para cadastro de logins dos averbadores.
+- Envio WhatsApp para cliente com ID passa a exigir opt-in ativo.
+- Registrado plano de migracao operacional sem alterar dados de producao.
+
 ## 2026-06-01
 
 - Criado `automation-registry` persistente para caminhos validados de consulta de margem.

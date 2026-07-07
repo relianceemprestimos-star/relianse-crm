@@ -4,8 +4,29 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
+:root,
+html[data-theme='dark'] {
   color-scheme: dark;
+  --color-bg: 5 11 18;
+  --color-panel: 13 24 34;
+  --color-panel-alt: 16 27 38;
+  --color-border: 31 45 58;
+  --color-muted: 148 163 184;
+  --page-text: #f8fafc;
+  --page-start: #050b12;
+  --page-end: #071018;
+}
+
+html[data-theme='light'] {
+  color-scheme: light;
+  --color-bg: 244 248 251;
+  --color-panel: 255 255 255;
+  --color-panel-alt: 235 242 247;
+  --color-border: 197 208 219;
+  --color-muted: 71 85 105;
+  --page-text: #0f172a;
+  --page-start: #f8fafc;
+  --page-end: #eaf1f7;
 }
 
 html {
@@ -20,8 +41,8 @@ body {
   background:
     radial-gradient(circle at top left, rgba(0, 209, 193, 0.08), transparent 35%),
     radial-gradient(circle at top right, rgba(59, 130, 246, 0.08), transparent 28%),
-    linear-gradient(180deg, #050b12 0%, #071018 100%);
-  color: #f8fafc;
+    linear-gradient(180deg, var(--page-start) 0%, var(--page-end) 100%);
+  color: var(--page-text);
 }
 
 * {
@@ -45,4 +66,30 @@ body {
 ::selection {
   background: rgba(0, 209, 193, 0.25);
   color: #fff;
+}
+
+html[data-theme='light'] .text-white,
+html[data-theme='light'] .text-slate-100,
+html[data-theme='light'] .text-slate-200 {
+  color: #0f172a;
+}
+
+html[data-theme='light'] .text-slate-300 {
+  color: #334155;
+}
+
+html[data-theme='light'] .text-slate-400,
+html[data-theme='light'] .text-slate-500 {
+  color: #475569;
+}
+
+html[data-theme='light'] .bg-white\/3,
+html[data-theme='light'] .bg-white\/5 {
+  background-color: rgba(15, 23, 42, 0.04);
+}
+
+html[data-theme='light'] .border-white\/5,
+html[data-theme='light'] .border-white\/8,
+html[data-theme='light'] .border-white\/10 {
+  border-color: rgba(15, 23, 42, 0.08);
 }

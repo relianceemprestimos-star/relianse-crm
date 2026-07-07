@@ -28,6 +28,63 @@ const initialForm: CampaignFormState = {
   user_ids: [],
 };
 
+type CampaignGroup = {
+  id: string;
+  label: string;
+  matcher: (campaign: Campaign) => boolean;
+};
+
+function searchableCampaignText(campaign: Campaign) {
+  return `${campaign.name || ''} ${campaign.convenio || ''} ${campaign.description || ''} ${campaign.product_focus || ''}`.toLowerCase();
+}
+
+const campaignGroups: CampaignGroup[] = [
+  {
+    id: 'prefeitura-ribeirao-preto',
+    label: 'Prefeitura de Ribeirão Preto',
+    matcher: (campaign) => searchableCampaignText(campaign).includes('ribeir'),
+  },
+  {
+    id: 'governo-sp',
+    label: 'Governo de SP',
+    matcher: (campaign) => {
+      const text = searchableCampaignText(campaign);
+      return text.includes('governo de sp') || text.includes('gov sp') || text.includes('estado de sp') || text.includes('sao paulo') || text.includes('são paulo');
+    },
+  },
+  {
+    id: 'ministerio-publico',
+    label: 'MP / MPSP',
+    matcher: (campaign) => {
+      const text = searchableCampaignText(campaign);
+      return text.includes('mpsp') || text.includes('ministerio publico') || text.includes('ministério público') || text.includes('mp ');
+    },
+  },
+  {
+    id: 'tjsp',
+    label: 'TJSP',
+    matcher: (campaign) => searchableCampaignText(campaign).includes('tjsp') || searchableCampaignText(campaign).includes('tribunal de justiça'),
+  },
+  {
+    id: 'prefeitura-ananindeua',
+    label: 'Prefeitura de Ananindeua',
+    matcher: (campaign) => searchableCampaignText(campaign).includes('ananindeua'),
+  },
+  {
+    id: 'governo-amapa',
+    label: 'Governo do Amapá',
+    matcher: (campaign) => {
+      const text = searchableCampaignText(campaign);
+      return text.includes('amapa') || text.includes('amapá');
+    },
+  },
+  {
+    id: 'outros',
+    label: 'Outros convênios',
+    matcher: () => true,
+  },
+];
+
 function statusTone(status: Campaign['status']) {
   if (status === 'active') return 'success';
   if (status === 'inactive') return 'warning';
@@ -45,6 +102,7 @@ export default function CampaignsPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Campaign | null>(null);
   const [form, setForm] = useState<CampaignFormState>(initialForm);
+  const [selectedGroup, setSelectedGroup] = useState(campaignGroups[0].id);
 
   useEffect(() => {
     let active = true;
@@ -71,15 +129,40 @@ export default function CampaignsPage() {
     };
   }, [canAssignUsers]);
 
-  const totals = useMemo(
-    () => ({
-      total: campaigns.length,
-      active: campaigns.filter((campaign) => campaign.status === 'active').length,
-      clients: campaigns.reduce((sum, campaign) => sum + (campaign.total_clients || 0), 0),
-      positive: campaigns.reduce((sum, campaign) => sum + (campaign.total_em_atendimento || 0), 0),
-    }),
+  const visibleCampaigns = useMemo(() => {
+    const group = campaignGroups.find((item) => item.id === selectedGroup) || campaignGroups[0];
+    if (group.id === 'outros') {
+      const specificGroups = campaignGroups.filter((item) => item.id !== 'outros');
+      return campaigns.filter((campaign) => !specificGroups.some((item) => item.matcher(campaign)));
+    }
+    return campaigns.filter((campaign) => group.matcher(campaign));
+  }, [campaigns, selectedGroup]);
+
+  const groupCounts = useMemo(
+    () =>
+      campaignGroups.reduce<Record<string, number>>((acc, group) => {
+        if (group.id === 'outros') {
+          const specificGroups = campaignGroups.filter((item) => item.id !== 'outros');
+          acc[group.id] = campaigns.filter((campaign) => !specificGroups.some((item) => item.matcher(campaign))).length;
+          return acc;
+        }
+        acc[group.id] = campaigns.filter((campaign) => group.matcher(campaign)).length;
+        return acc;
+      }, {}),
     [campaigns]
   );
+
+  const totals = useMemo(
+    () => ({
+      total: visibleCampaigns.length,
+      active: visibleCampaigns.filter((campaign) => campaign.status === 'active').length,
+      clients: visibleCampaigns.reduce((sum, campaign) => sum + (campaign.total_clients || 0), 0),
+      positive: visibleCampaigns.reduce((sum, campaign) => sum + (campaign.total_em_atendimento || 0), 0),
+    }),
+    [visibleCampaigns]
+  );
+
+  const selectedGroupLabel = campaignGroups.find((item) => item.id === selectedGroup)?.label || 'Campanhas';
 
   function openCreate() {
     setEditing(null);
@@ -157,7 +240,7 @@ export default function CampaignsPage() {
     <div className="space-y-8">
       <SectionHeader
         title="Campanhas"
-        description="Organize suas bases por convênio, órgão ou estratégia de atendimento."
+        description="Escolha o convênio ou órgão, abra a campanha e siga para atendimento, base ou relatório no mesmo lugar."
         action={
           <div className="flex flex-wrap gap-3">
             <Button variant="secondary" onClick={() => navigate('/campanhas/oportunidades')}>
@@ -172,6 +255,45 @@ export default function CampaignsPage() {
         }
       />
 
+      <Card className="p-5">
+        <div className="grid gap-4 lg:grid-cols-[1fr_360px] lg:items-end">
+          <div>
+            <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Consulta de campanhas</p>
+            <h3 className="mt-2 text-2xl font-bold text-white">{selectedGroupLabel}</h3>
+            <p className="mt-2 text-sm text-slate-400">
+              Campanhas ficam agrupadas por prefeitura, governo ou órgão. Atendimento e bases devem partir daqui.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              {campaignGroups.map((group) => (
+                <button
+                  key={group.id}
+                  type="button"
+                  onClick={() => setSelectedGroup(group.id)}
+                  className={[
+                    'rounded-full border px-3 py-1 text-xs font-semibold transition',
+                    selectedGroup === group.id
+                      ? 'border-accent/40 bg-accent/15 text-accent'
+                      : 'border-border bg-panelAlt text-slate-400 hover:border-accent/30 hover:text-slate-100',
+                  ].join(' ')}
+                >
+                  {group.label} · {groupCounts[group.id] || 0}
+                </button>
+              ))}
+            </div>
+          </div>
+          <label className="block text-sm text-slate-300">
+            Grupo
+            <Select className="mt-2" value={selectedGroup} onChange={(event) => setSelectedGroup(event.target.value)}>
+              {campaignGroups.map((group) => (
+                <option key={group.id} value={group.id}>
+                  {group.label}
+                </option>
+              ))}
+            </Select>
+          </label>
+        </div>
+      </Card>
+
       <div className="grid gap-4 xl:grid-cols-4">
         <StatCard label="Total de campanhas" value={totals.total} icon={<Users size={18} />} />
         <StatCard label="Campanhas ativas" value={totals.active} />
@@ -183,7 +305,12 @@ export default function CampaignsPage() {
         <Card className="p-8 text-center text-slate-400">Carregando campanhas...</Card>
       ) : (
         <div className="grid gap-4 xl:grid-cols-2">
-          {campaigns.map((campaign) => (
+          {visibleCampaigns.length === 0 ? (
+            <Card className="p-8 text-center text-slate-400">
+              Nenhuma campanha encontrada neste grupo. Crie a campanha ou importe uma base vinculada ao convênio.
+            </Card>
+          ) : null}
+          {visibleCampaigns.map((campaign) => (
             <Card key={campaign.id} className="p-5">
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -219,10 +346,10 @@ export default function CampaignsPage() {
 
               <div className="mt-5 flex flex-wrap gap-3">
                 <Button onClick={() => navigate(`/campanhas/${campaign.id}`)}>
-                  Abrir campanha
+                  Abrir atendimento
                 </Button>
                 <Button variant="secondary" onClick={() => navigate(`/fila?campaign_id=${campaign.id}`)}>
-                  Ver fila
+                  Ver clientes
                 </Button>
                 <Button variant="secondary" onClick={() => navigate(`/relatorios?campaign_id=${campaign.id}`)}>
                   Relatório
@@ -247,12 +374,10 @@ export default function CampaignsPage() {
 
       <Modal
         open={modalOpen}
-        onOpenChange={(open) => {
-          if (!open) {
-            setEditing(null);
-            setForm(initialForm);
-            setModalOpen(false);
-          }
+        onClose={() => {
+          setEditing(null);
+          setForm(initialForm);
+          setModalOpen(false);
         }}
         title={editing ? 'Editar campanha' : 'Nova campanha'}
         description="Defina a estratégia, o convênio e os vendedores autorizados."

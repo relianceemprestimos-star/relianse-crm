@@ -8,6 +8,7 @@ import {
   createWhatsappFlowLogRecord,
   createWhatsappSendJobRecord,
   findClientByPhone,
+  getActiveConsent,
   getActiveWhatsappFlowExecutionForClient,
   getClientById,
   getLastWhatsappOutboundByPhone,
@@ -174,6 +175,9 @@ function validateClientRules(client) {
   if (Number(client.whatsapp_blocked ?? 0) === 1) {
     throw new WhatsappServiceError('Cliente bloqueado para contato no WhatsApp.', 'WHATSAPP_BLOCKED', 403);
   }
+  if (!getActiveConsent(client.id, 'whatsapp')) {
+    throw new WhatsappServiceError('Cliente sem opt-in ativo para WhatsApp.', 'WHATSAPP_CONSENT_REQUIRED', 403);
+  }
 }
 
 function assertRateRules(config, targetPhone) {
@@ -202,7 +206,7 @@ function logSendAttempt({ client, phone, status, code = '', message = '' }) {
   writeWhatsappLog(status === 'failed' ? 'error' : 'info', 'send_message', {
     client_id: client?.id ?? null,
     client_name: client?.name ?? '',
-    phone,
+    phone: '',
     masked_phone: maskPhone(phone),
     status,
     code,
