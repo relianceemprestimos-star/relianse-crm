@@ -4,6 +4,14 @@
 
 O CRM Reliance e um sistema operacional de uso interno para correspondente bancario. A arquitetura atual combina frontend React/Vite, backend Node.js/Express, persistencia SQLite/sql.js e integracoes operacionais com portais de margem, consulta cadastral/telefones e WhatsApp Web.
 
+## Centro operacional
+
+Campanhas passa a ser a porta principal da operacao. O operador escolhe primeiro o grupo de trabalho, como Prefeitura de Ribeirao Preto, Governo de SP, MP/MPSP ou outros convenios, e so entao acessa clientes, bases, relatorios ou atendimento relacionados.
+
+Rotas antigas de clientes, fila, atendimento, upload, bases e WhatsApp permanecem preservadas para compatibilidade tecnica e links internos, mas deixam de ser atalhos principais do menu lateral. Essa decisao reduz confusao operacional sem remover dados nem quebrar fluxos existentes.
+
+Credenciais permanece como modulo gerencial para cadastro dos logins de averbadores e portais. Consulta de margem e consulta de telefones seguem como ferramentas operacionais diretas porque sao usadas em lote e alimentam as campanhas.
+
 ## Classificacao de uso
 
 O projeto permanece classificado como **USO_PROPRIO / USO INTERNO CONTROLADO**. Nao ha arquitetura SaaS ou multi-tenant aprovada nesta fase. Qualquer evolucao para SaaS exige nova investigacao, ADR especifico, isolamento de dados, segregacao de clientes, revisao LGPD e plano de operacao.

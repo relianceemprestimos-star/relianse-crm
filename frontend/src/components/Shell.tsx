@@ -6,19 +6,15 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleHelp,
-  ClipboardList,
-  Files,
   Flag,
   KeyRound,
   Landmark,
   LayoutDashboard,
-  Layers3,
   LogOut,
-  MessagesSquare,
+  Moon,
   PhoneCall,
   Settings,
-  Users,
-  Workflow,
+  Sun,
   Zap,
 } from 'lucide-react';
 
@@ -36,19 +32,11 @@ type NavItem = {
 const navItems: NavItem[] = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/campanhas', label: 'Campanhas', icon: Flag, allowedRoles: ['gerencial', 'vendedor'] },
-  { to: '/upload', label: 'Upload de Listas', icon: Files, allowedRoles: ['gerencial', 'vendedor'] },
-  { to: '/bases', label: 'Bases', icon: Layers3, allowedRoles: ['gerencial', 'vendedor'] },
-  { to: '/fila', label: 'Fila de Clientes', icon: Users, allowedRoles: ['gerencial', 'vendedor'] },
-  { to: '/atendimento', label: 'Atendimentos', icon: ClipboardList, allowedRoles: ['gerencial', 'vendedor'] },
-  { to: '/relatorios', label: 'Relatorios', icon: Zap, allowedRoles: ['gerencial', 'vendedor'] },
-  { to: '/whatsapp-api', label: 'WhatsApp API', icon: MessagesSquare, allowedRoles: ['gerencial', 'vendedor'] },
-  { to: '/whatsapp-fluxos', label: 'Fluxos de WhatsApp', icon: Workflow, allowedRoles: ['gerencial', 'vendedor'] },
-  { to: '/whatsapp', label: 'WhatsApp Web', icon: MessagesSquare, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/consulta-margem', label: 'Consulta de Margem', icon: Landmark, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/consulta-telefones', label: 'Consulta de Telefones', icon: PhoneCall, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/credenciais', label: 'Credenciais', icon: KeyRound, allowedRoles: ['gerencial'] },
-  { to: '/usuarios', label: 'Usuários', icon: Users, allowedRoles: ['gerencial'] },
-  { to: '/configuracoes', label: 'Configurações', icon: Settings, allowedRoles: ['gerencial', 'vendedor'] },
+  { to: '/relatorios', label: 'Relatórios', icon: Zap, allowedRoles: ['gerencial', 'vendedor'] },
+  { to: '/usuarios', label: 'Configurações', icon: Settings, allowedRoles: ['gerencial'] },
 ];
 
 const pageTitles: Record<string, string> = {
@@ -80,12 +68,21 @@ function getPathKey(pathname: string) {
 
 export function Shell() {
   const [collapsed, setCollapsed] = useState(false);
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    const storedTheme = window.localStorage.getItem('reliance-theme');
+    return storedTheme === 'light' ? 'light' : 'dark';
+  });
   const [accessSession, setAccessSession] = useState(() => getAccessSession());
   const { user, logout } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const currentKey = useMemo(() => getPathKey(location.pathname), [location.pathname]);
   const pageTitle = pageTitles[currentKey] || 'Reliance CRM';
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    window.localStorage.setItem('reliance-theme', theme);
+  }, [theme]);
 
   useEffect(() => {
     const handleSessionChange = () => setAccessSession(getAccessSession());
@@ -111,7 +108,7 @@ export function Shell() {
   return (
     <div className="min-h-screen bg-bg text-slate-100">
       <aside
-        className={`fixed inset-y-0 left-0 z-40 hidden border-r border-border bg-[#07131D]/95 backdrop-blur-xl transition-all duration-300 lg:flex ${
+        className={`fixed inset-y-0 left-0 z-40 hidden border-r border-border bg-panel/95 backdrop-blur-xl transition-all duration-300 lg:flex ${
           collapsed ? 'w-20' : 'w-72'
         }`}
       >
@@ -158,10 +155,17 @@ export function Shell() {
                   <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Ambiente</p>
                   <div className="mt-3 flex items-center justify-between gap-3">
                     <div>
-                      <p className="text-sm font-semibold text-white">Modo escuro ativo</p>
-                      <p className="text-xs text-slate-500">Pronto para operaÃ§Ã£o comercial.</p>
+                      <p className="text-sm font-semibold text-white">Tema {theme === 'dark' ? 'escuro' : 'claro'}</p>
+                      <p className="text-xs text-slate-500">Operação centralizada em campanhas.</p>
                     </div>
-                    <Badge tone="accent">Online</Badge>
+                    <button
+                      type="button"
+                      className="rounded-2xl border border-border bg-panelAlt p-2 text-accent transition hover:border-accent/40 hover:bg-accent/10"
+                      onClick={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
+                      title="Alternar tema claro/escuro"
+                    >
+                      {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+                    </button>
                   </div>
                 </>
               ) : (
@@ -193,6 +197,13 @@ export function Shell() {
               </button>
               <button className="rounded-2xl border border-border bg-panel px-3 py-3 text-slate-300 transition hover:bg-white/5">
                 <CircleHelp size={18} />
+              </button>
+              <button
+                className="rounded-2xl border border-border bg-panel px-3 py-3 text-slate-300 transition hover:bg-white/5"
+                onClick={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
+                title="Alternar tema claro/escuro"
+              >
+                {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
               </button>
 
               <div className="flex items-center gap-3 rounded-2xl border border-border bg-panel px-4 py-2">

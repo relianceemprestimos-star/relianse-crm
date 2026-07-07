@@ -23,3 +23,8 @@
 - BR-OPS-001: nao fazer deploy automatico de correcao LGPD/seguranca sem aprovacao explicita.
 - BR-OPS-002: nao transformar o produto em SaaS sem ADR de multi-tenancy, isolamento de dados e revisao juridica.
 - BR-OPS-003: variaveis Nova Vida e Santana/CapSolver devem ser preservadas em `.env.example` e `backend/.env.example`, sem valores reais.
+- BR-OPS-004: Campanhas e o centro operacional do CRM. Cliente, fila, atendimento, upload e bases podem existir como rotas internas, mas o operador deve iniciar pelo grupo de campanha/convenio.
+- BR-OPS-005: Cada campanha deve estar vinculada a um convenio, orgao ou estrategia clara, como Prefeitura de Ribeirao Preto, Governo de SP, MP/MPSP ou outro grupo operacional.
+- BR-OPS-006: Atendimentos devem ser selecionados a partir da campanha/grupo escolhido, mantendo o contexto da origem da base e evitando abas soltas no menu.
+- BR-OPS-007: Credenciais de averbadores devem ser cadastradas no menu Credenciais; usuario comum nao deve depender do Codex ou terminal para conectar portais.
+- BR-OPS-008: Consulta de margem em lote e consulta de telefone continuam como modulos operacionais proprios, mas resultados devem alimentar campanhas ou bases rastreaveis.

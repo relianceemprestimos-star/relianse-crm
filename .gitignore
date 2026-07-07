@@ -49,6 +49,10 @@ backend/data/evidencias/
 backend/data/ribeirao_sessions/
 backend/backend/data/ribeirao_sessions/
 RELATORIO_*.md
+coverage/
+playwright-report/
+test-results/
+*.xlsx.tmp
 
 # OS/cache
 .DS_Store
