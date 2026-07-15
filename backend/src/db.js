@@ -38,6 +38,10 @@ const DEFAULT_SETTINGS = {
   theme: 'dark',
   expected_columns:
     'cpf, nome, margem bruta consignacao, margem liquida consignacao, margem bruta credito, margem liquida credito, margem bruta cartao, margem liquida cartao, status, mensagem',
+  ribeirao_consignado_coefficient: '',
+  ribeirao_consignado_rate: '',
+  ribeirao_cartao_coefficient: '',
+  ribeirao_cartao_rate: '',
 };
 
 const INITIAL_USER_PASSWORD = '12345';
@@ -2827,6 +2831,27 @@ function getClientBaseQuery() {
   `;
 }
 
+function latestClientAgeExpression() {
+  return `CAST(COALESCE(
+    (
+      SELECT ed.age
+      FROM client_enrichment_data ed
+      WHERE ed.client_id = c.id
+        AND ed.age IS NOT NULL
+      ORDER BY datetime(COALESCE(ed.searched_at, ed.created_at)) DESC, ed.id DESC
+      LIMIT 1
+    ),
+    (
+      SELECT cc.age
+      FROM client_consultations cc
+      WHERE cc.client_id = c.id
+        AND cc.age IS NOT NULL
+      ORDER BY datetime(COALESCE(cc.consulted_at, cc.created_at)) DESC, cc.id DESC
+      LIMIT 1
+    )
+  ) AS INTEGER)`;
+}
+
 function parseHeaderAliases(headers, aliases) {
   return matchColumn(headers, aliases);
 }
@@ -3337,6 +3362,18 @@ export function listClients(params = {}) {
     values.push(params.best_product_type);
   }
 
+  const ageMin = Number(params.age_min);
+  if (Number.isFinite(ageMin) && String(params.age_min).trim() !== '') {
+    filters.push(`${latestClientAgeExpression()} >= ?`);
+    values.push(ageMin);
+  }
+
+  const ageMax = Number(params.age_max);
+  if (Number.isFinite(ageMax) && String(params.age_max).trim() !== '') {
+    filters.push(`${latestClientAgeExpression()} <= ?`);
+    values.push(ageMax);
+  }
+
   if (params.margin_state === 'positive') {
     filters.push('COALESCE(c.best_net_margin, 0) > 0');
   }
@@ -3541,6 +3578,18 @@ export function getNextClient(params = {}) {
   if (params.cidade) {
     filters.push('b.cidade = ?');
     values.push(String(params.cidade));
+  }
+
+  const ageMin = Number(params.age_min);
+  if (Number.isFinite(ageMin) && String(params.age_min).trim() !== '') {
+    filters.push(`${latestClientAgeExpression()} >= ?`);
+    values.push(ageMin);
+  }
+
+  const ageMax = Number(params.age_max);
+  if (Number.isFinite(ageMax) && String(params.age_max).trim() !== '') {
+    filters.push(`${latestClientAgeExpression()} <= ?`);
+    values.push(ageMax);
   }
 
   const row = queryOne(
@@ -6524,4 +6573,3 @@ export function archiveBase(id, archived = true) {
   persistDb();
   return queryOne(database, 'SELECT * FROM bases WHERE id = ?', [id]);
 }
-

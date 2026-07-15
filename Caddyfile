@@ -1,8 +1,4 @@
-{$CRM_WWW_DOMAIN} {
-  redir https://{$CRM_DOMAIN}{uri} permanent
-}
-
-{$CRM_DOMAIN} {
+(app_proxy) {
   encode gzip zstd
 
   handle /api/* {
@@ -12,4 +8,16 @@
   handle {
     reverse_proxy frontend:80
   }
+}
+
+{$CRM_WWW_DOMAIN} {
+  redir https://{$CRM_DOMAIN}{uri} permanent
+}
+
+{$CRM_DOMAIN} {
+  import app_proxy
+}
+
+{$CRM_EXTRA_DOMAINS:relianceconsigzap.com.br,www.relianceconsigzap.com.br,mestreviral.com.br,www.mestreviral.com.br} {
+  import app_proxy
 }

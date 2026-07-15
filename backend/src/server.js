@@ -1245,6 +1245,56 @@ app.post('/api/phone-lookup/worker/run', async (req, res) => {
   }
 });
 
+let phoneLookupAutoWorkerRunning = false;
+let phoneLookupAutoWorkerTimer = null;
+
+function phoneLookupAutoWorkerEnabled() {
+  return String(process.env.PHONE_LOOKUP_AUTO_WORKER ?? 'true').toLowerCase() !== 'false';
+}
+
+async function runPendingPhoneLookupAutoWorker(trigger = 'timer') {
+  if (!phoneLookupAutoWorkerEnabled() || phoneLookupAutoWorkerRunning) {
+    return;
+  }
+
+  const pending = listPhoneLookupJobs({ status: 'pending', limit: 1 }).jobs || [];
+  if (!pending.length) {
+    return;
+  }
+
+  phoneLookupAutoWorkerRunning = true;
+  try {
+    const max = Number(process.env.PHONE_LOOKUP_AUTO_WORKER_MAX || process.env.PHONE_LOOKUP_MAX_PER_RUN || 25);
+    const userId = Number(process.env.PHONE_LOOKUP_AUTO_WORKER_USER_ID || 1);
+    const result = await runPhoneLookupWorker({ max, userId });
+    console.log('[PHONE_LOOKUP] fila automatica executada', {
+      trigger,
+      processed: result.processed,
+      max,
+    });
+  } catch (error) {
+    console.error('[PHONE_LOOKUP] falha na fila automatica:', error instanceof Error ? error.message : error);
+  } finally {
+    phoneLookupAutoWorkerRunning = false;
+  }
+}
+
+function startPhoneLookupAutoWorker() {
+  if (!phoneLookupAutoWorkerEnabled() || phoneLookupAutoWorkerTimer) {
+    return;
+  }
+
+  const intervalSeconds = Math.max(30, Number(process.env.PHONE_LOOKUP_AUTO_WORKER_INTERVAL_SECONDS || 120));
+  setTimeout(() => {
+    void runPendingPhoneLookupAutoWorker('startup');
+  }, 15_000);
+  phoneLookupAutoWorkerTimer = setInterval(() => {
+    void runPendingPhoneLookupAutoWorker('timer');
+  }, intervalSeconds * 1000);
+  phoneLookupAutoWorkerTimer.unref?.();
+  console.log('[PHONE_LOOKUP] fila automatica ativa', { intervalSeconds });
+}
+
 app.post('/api/ribeirao/session/start', roleMiddleware(operationalRoles), async (req, res) => {
   const userId = getAuthenticatedUserId(req);
   const login = String(req.body.login || req.body.username || '').trim();
@@ -1700,4 +1750,5 @@ app.listen(port, () => {
   console.log(`[BUILD] ${BUILD_VERSION}`);
   console.log(`Reliance CRM backend running on port ${port}`);
   console.log(`SQLite database: ${dbPath}`);
+  startPhoneLookupAutoWorker();
 });

@@ -447,6 +447,10 @@ export interface Settings {
   daily_limit: string;
   theme: string;
   expected_columns?: string;
+  ribeirao_consignado_coefficient?: string;
+  ribeirao_consignado_rate?: string;
+  ribeirao_cartao_coefficient?: string;
+  ribeirao_cartao_rate?: string;
 }
 
 export interface RibeiraoConfigStatus {

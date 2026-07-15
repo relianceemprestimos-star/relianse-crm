@@ -9,6 +9,7 @@ import CampaignDetailPage from './pages/CampaignDetailPage';
 import UploadPage from './pages/UploadPage';
 import BasesPage from './pages/BasesPage';
 import QueuePage from './pages/QueuePage';
+import RulesCoefficientsPage from './pages/RulesCoefficientsPage';
 import AttendancePage from './pages/AttendancePage';
 import ReportsPage from './pages/ReportsPage';
 import WhatsAppPage from './pages/WhatsAppPage';
@@ -32,6 +33,7 @@ export default function App() {
           <Route path="/campanhas" element={<CampaignsPage />} />
           <Route path="/campanhas/:id" element={<CampaignDetailPage />} />
           <Route path="/fila" element={<QueuePage />} />
+          <Route path="/regras-coeficientes" element={<RulesCoefficientsPage />} />
           <Route path="/atendimento" element={<AttendancePage />} />
           <Route path="/whatsapp" element={<WhatsAppPage />} />
           <Route path="/whatsapp-api" element={<WhatsAppApiPage />} />

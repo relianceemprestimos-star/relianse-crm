@@ -17,6 +17,7 @@ import {
   MessagesSquare,
   PhoneCall,
   Settings,
+  SlidersHorizontal,
   Users,
   Workflow,
   Zap,
@@ -39,6 +40,7 @@ const navItems: NavItem[] = [
   { to: '/upload', label: 'Upload de Listas', icon: Files, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/bases', label: 'Bases', icon: Layers3, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/fila', label: 'Fila de Clientes', icon: Users, allowedRoles: ['gerencial', 'vendedor'] },
+  { to: '/regras-coeficientes', label: 'Regras & Coeficientes', icon: SlidersHorizontal, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/atendimento', label: 'Atendimentos', icon: ClipboardList, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/relatorios', label: 'Relatorios', icon: Zap, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/whatsapp-api', label: 'WhatsApp API', icon: MessagesSquare, allowedRoles: ['gerencial', 'vendedor'] },
@@ -58,6 +60,7 @@ const pageTitles: Record<string, string> = {
   '/upload': 'Upload de Listas',
   '/bases': 'Bases',
   '/fila': 'Fila de Clientes',
+  '/regras-coeficientes': 'Regras & Coeficientes',
   '/atendimento': 'Atendimento',
   '/relatorios': 'Relatorios e acompanhamento',
   '/whatsapp': 'WhatsApp Web',
@@ -227,4 +230,3 @@ export function Shell() {
     </div>
   );
 }
-

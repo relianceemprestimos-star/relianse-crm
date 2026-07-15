@@ -161,6 +161,18 @@ Em VPS com dominio apontado para o servidor:
 curl https://SEU_DOMINIO_AQUI/api/health
 ```
 
+Dominios adicionais que apontam para a mesma VPS podem ser aceitos pelo Caddy via:
+
+```bash
+CRM_EXTRA_DOMAINS=relianceconsigzap.com.br,www.relianceconsigzap.com.br,mestreviral.com.br,www.mestreviral.com.br
+```
+
+Se o SSH estiver recusando conexao na porta operacional, use o console do provedor e rode:
+
+```bash
+bash scripts/vps-repair-access-and-proxy.sh
+```
+
 ## Rodar na VPS
 
 Instalar dependencias basicas:

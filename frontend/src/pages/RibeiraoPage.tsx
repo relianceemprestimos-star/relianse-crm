@@ -70,6 +70,29 @@ const CONNECTION_REGISTRY_IDS: Record<string, string> = {
   'governo-sp-tjsp': 'governo_sp',
 };
 
+function pickPreferredBatch(
+  rows: RibeiraoBatchRecord[],
+  currentBatchId?: number | null
+) {
+  if (!rows.length) {
+    return null;
+  }
+
+  const activeBatch = rows.find((row) => isBatchActive(row.status));
+  if (activeBatch) {
+    return activeBatch;
+  }
+
+  if (currentBatchId) {
+    const currentMatch = rows.find((row) => row.id === currentBatchId);
+    if (currentMatch) {
+      return currentMatch;
+    }
+  }
+
+  return rows[0];
+}
+
 function hasBatchCpfLimit(connection: string) {
   return normalizeMarginConnectionValue(connection) === 'governo_sp_tjsp';
 }
@@ -276,7 +299,9 @@ export default function RibeiraoPage() {
     try {
       setBatchHistoryLoading(true);
       const response = await api.getRibeiraoBatchHistory();
-      setBatchHistory((response.rows || []).filter(Boolean));
+      const rows = (response.rows || []).filter(Boolean);
+      setBatchHistory(rows);
+      setCurrentBatch((previous) => pickPreferredBatch(rows, previous?.id) || previous || null);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Falha ao carregar o histórico de lotes.');
     } finally {
