@@ -1,4 +1,7 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   getAverbadorCredentialById,
@@ -10,7 +13,14 @@ import {
   upsertAverbadorCredential,
   upsertAverbadorSession,
 } from '../../db.js';
+import { resetRibeiraoSessionCache, startRibeiraoSession } from '../averbadores/ribeirao/ribeiraoService.js';
 import { getPortalConfig, normalizePortalId, PORTAL_CONFIGS } from './portalConfigs.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const CREDENTIAL_PROFILE_DIR = process.env.CREDENTIAL_PROFILE_DIR
+  ? path.resolve(process.env.CREDENTIAL_PROFILE_DIR)
+  : path.resolve(process.env.DATA_DIR || path.join(process.cwd(), '../data'), 'credential_profiles');
 
 const STATUS_LABELS = {
   sessao_ativa: 'Sessão ativa',
@@ -19,6 +29,56 @@ const STATUS_LABELS = {
   login_assistido_necessario: 'Login assistido necessário',
   erro_conexao: 'Erro de conexão',
 };
+
+function ensureCredentialProfileDir() {
+  fs.mkdirSync(CREDENTIAL_PROFILE_DIR, { recursive: true });
+}
+
+function credentialProfilePath(portalId = '') {
+  const safePortalId = String(portalId || '')
+    .trim()
+    .replace(/[^a-z0-9_-]/gi, '_')
+    .toLowerCase();
+  ensureCredentialProfileDir();
+  return path.join(CREDENTIAL_PROFILE_DIR, `${safePortalId || 'portal'}.json`);
+}
+
+function normalizeCredentialProfile(input = {}) {
+  const source = input && typeof input === 'object' ? input : {};
+  return {
+    department: String(source.department || source.departamento || '').trim(),
+    email: String(source.email || '').trim(),
+    cellphone: String(source.cellphone || source.celular || source.phone || '').trim(),
+    question_1: String(source.question_1 || source.question1 || source.pergunta_1 || source.pergunta1 || '').trim(),
+    answer_1: String(source.answer_1 || source.answer1 || source.resposta_1 || source.resposta1 || '').trim(),
+    question_2: String(source.question_2 || source.question2 || source.pergunta_2 || source.pergunta2 || '').trim(),
+    answer_2: String(source.answer_2 || source.answer2 || source.resposta_2 || source.resposta2 || '').trim(),
+  };
+}
+
+function hasCredentialProfileData(profile = {}) {
+  return Object.values(normalizeCredentialProfile(profile)).some((value) => String(value || '').trim() !== '');
+}
+
+function readCredentialProfile(portalId = '') {
+  try {
+    const filePath = credentialProfilePath(portalId);
+    if (!fs.existsSync(filePath)) {
+      return normalizeCredentialProfile({});
+    }
+    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    return normalizeCredentialProfile(parsed);
+  } catch {
+    return normalizeCredentialProfile({});
+  }
+}
+
+function writeCredentialProfile(portalId = '', profile = {}) {
+  const normalized = normalizeCredentialProfile(profile);
+  const filePath = credentialProfilePath(portalId);
+  fs.writeFileSync(filePath, JSON.stringify(normalized, null, 2), 'utf8');
+  return normalized;
+}
 
 function nowIso() {
   return new Date().toISOString();
@@ -75,6 +135,7 @@ function sanitizeCredential(row) {
   }
   const config = getPortalConfig(row.portal_id);
   const status = String(row.session_status || 'nao_conectado');
+  const credentialProfile = readCredentialProfile(row.portal_id);
   return {
     id: Number(row.id),
     portal_id: row.portal_id,
@@ -91,6 +152,8 @@ function sanitizeCredential(row) {
     session_expires_at: row.session_expires_at || null,
     last_test_at: row.last_test_at || null,
     last_error: row.last_error || '',
+    credential_profile: credentialProfile,
+    has_profile_completion: hasCredentialProfileData(credentialProfile),
     created_at: row.created_at || '',
     updated_at: row.updated_at || '',
   };
@@ -143,6 +206,7 @@ export function getCredentialSecretByPortal(portalId) {
   return {
     ...sanitizeCredential(row),
     password: decryptSecret(row.encrypted_password || ''),
+    credential_profile: readCredentialProfile(normalized),
   };
 }
 
@@ -157,6 +221,20 @@ export function saveCredential(payload = {}, userId = null) {
   const current = getAverbadorCredentialByPortalId(portalId);
   const shouldEncryptPassword = payload.password !== undefined && String(payload.password || '') !== '';
   const encryptedPassword = shouldEncryptPassword ? encryptSecret(payload.password) : current?.encrypted_password || '';
+  const credentialProfile = normalizeCredentialProfile(
+    payload.credential_profile ||
+      payload.credentialProfile ||
+      payload.profile ||
+      {
+        department: payload.department,
+        email: payload.email,
+        cellphone: payload.cellphone || payload.celular,
+        question_1: payload.question_1 || payload.question1,
+        answer_1: payload.answer_1 || payload.answer1,
+        question_2: payload.question_2 || payload.question2,
+        answer_2: payload.answer_2 || payload.answer2,
+      }
+  );
   const credential = upsertAverbadorCredential({
     portal_id: portalId,
     portal_name: config.name,
@@ -173,6 +251,9 @@ export function saveCredential(payload = {}, userId = null) {
     created_by: current?.created_by || userId,
     updated_by: userId,
   });
+  if (hasCredentialProfileData(credentialProfile) || payload.credential_profile || payload.credentialProfile || payload.profile) {
+    writeCredentialProfile(portalId, credentialProfile);
+  }
   insertCredentialConnectionLog({
     credential_id: credential.id,
     portal_id: portalId,
@@ -240,7 +321,30 @@ export async function testCredential(id, userId = null) {
   }
 
   try {
-    const result = await checkPortalReachable(portalUrl);
+    const password = decryptSecret(current.encrypted_password || '');
+    const credentialProfile = readCredentialProfile(current.portal_id);
+    let result;
+    if (['prefeitura_ribeirao_preto'].includes(current.portal_id)) {
+      resetRibeiraoSessionCache();
+      const session = await startRibeiraoSession({
+        userId: userId || current.updated_by || current.created_by || 1,
+        credentialId: id,
+        login: current.login,
+        password,
+        credentialProfile,
+        timeoutSeconds: 900,
+        role: 'gerencial',
+      });
+      const sessionStatus = String(session?.status || '').toLowerCase();
+      if (sessionStatus !== 'conectado') {
+        const error = new Error(session?.message || session?.error_message || 'O portal não confirmou a autenticação.');
+        error.code = session?.error_code || sessionStatus || 'LOGIN_FAILED';
+        throw error;
+      }
+      result = { ok: true, session, status: 200 };
+    } else {
+      result = await checkPortalReachable(portalUrl);
+    }
     if (!result.ok) {
       throw new Error(`Portal respondeu status ${result.status}.`);
     }
@@ -397,7 +501,7 @@ export function getCredentialGate(portalId) {
     return {
       allowed: false,
       code: 'ASSISTED_LOGIN_REQUIRED',
-      message: 'Este portal exige login assistido por CAPTCHA. Acesse Credenciais > Governo de SP.',
+      message: `Este portal exige login assistido por CAPTCHA. Acesse Credenciais > ${config.name}.`,
       credential: sanitizeCredential(current),
     };
   }
