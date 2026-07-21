@@ -5,6 +5,7 @@ import re
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, urljoin
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
@@ -75,6 +76,22 @@ def normalize_phone_number(value: Any) -> str | None:
     if digits[:2] == "00":
         return None
     return f"+55{digits}"
+
+
+def normalize_search_phone(value: Any) -> str:
+    digits = clean_digits(value)
+    if digits.startswith("55") and len(digits) > 11:
+        digits = digits[2:]
+    return digits
+
+
+def normalize_match_text(value: Any) -> str:
+    return (
+        str(value or "")
+        .encode("ascii", "ignore")
+        .decode("ascii")
+        .lower()
+    )
 
 
 def phone_type(normalized: str, raw_label: str = "") -> str:
@@ -361,6 +378,200 @@ def find_search_navigation(page) -> list[dict[str, Any]]:
     )
 
 
+def visible_input_info(locator) -> dict[str, Any] | None:
+    try:
+        info = locator.evaluate(
+            """el => ({
+              id: el.id || "",
+              name: el.getAttribute("name") || "",
+              placeholder: el.getAttribute("placeholder") || "",
+              ariaLabel: el.getAttribute("aria-label") || "",
+              title: el.getAttribute("title") || "",
+              type: el.getAttribute("type") || "",
+              value: el.value || "",
+              visible: !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length)
+            })"""
+        )
+        if not info.get("visible") or str(info.get("type") or "").lower() in ("hidden", "submit", "button"):
+            return None
+        return info
+    except Exception:
+        return None
+
+
+def find_search_field(page, terms: list[str]):
+    inputs = page.locator("input, textarea")
+    wanted = [normalize_match_text(term) for term in terms]
+    for index in range(min(inputs.count(), 80)):
+        locator = inputs.nth(index)
+        info = visible_input_info(locator)
+        if not info:
+            continue
+        haystack = normalize_match_text(" ".join(str(info.get(key) or "") for key in ("id", "name", "placeholder", "ariaLabel", "title")))
+        if any(term in haystack for term in wanted):
+            return locator, info
+    return None, None
+
+
+def has_advanced_search_fields(page) -> bool:
+    name_field, _ = find_search_field(page, ["nome"])
+    phone_field, _ = find_search_field(page, ["celular"])
+    return bool(name_field or phone_field)
+
+
+def open_advanced_search_modal(page) -> bool:
+    if has_advanced_search_fields(page):
+        return True
+
+    controls = page.locator("button, a, [role=button], input[type=button], input[type=submit]")
+    for index in range(min(controls.count(), 80)):
+        locator = controls.nth(index)
+        try:
+            info = locator.evaluate(
+                """el => ({
+                  tag: el.tagName,
+                  id: el.id || "",
+                  name: el.getAttribute("name") || "",
+                  text: ((el.innerText || el.value || el.getAttribute("aria-label") || el.getAttribute("title") || "")).trim(),
+                  href: el.getAttribute("href") || "",
+                  className: String(el.className || ""),
+                  visible: !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length)
+                })"""
+            )
+            if not info.get("visible"):
+                continue
+            haystack = normalize_match_text(" ".join(str(info.get(key) or "") for key in ("id", "name", "text", "href", "className")))
+            if not any(term in haystack for term in ("pesquis", "buscar", "busca", "localizar", "filtro", "filter", "tune", "sliders", "search")):
+                continue
+            locator.click(timeout=4000, force=True)
+            page.wait_for_timeout(1200)
+            if has_advanced_search_fields(page):
+                return True
+        except Exception:
+            continue
+    return has_advanced_search_fields(page)
+
+
+def fill_advanced_search_field(page, terms: list[str], value: str) -> dict[str, Any] | None:
+    if not value:
+        return None
+    locator, info = find_search_field(page, terms)
+    if not locator:
+        return None
+    locator.fill(value, timeout=5000)
+    return info
+
+
+def click_advanced_search_submit(page) -> dict[str, Any] | None:
+    selectors = [
+        "button:has-text('Pesquisar')",
+        "input[value='Pesquisar']",
+        "input[value*='Pesquisar']",
+        "button:has-text('Buscar')",
+        "input[value*='Buscar']",
+    ]
+    for selector in selectors:
+        try:
+            locator = page.locator(selector)
+            if locator.count() <= 0:
+                continue
+            target = locator.last
+            target.click(timeout=5000, force=True)
+            page.wait_for_timeout(6000)
+            return {"selector": selector}
+        except Exception:
+            continue
+    return None
+
+
+def open_first_advanced_search_result(page) -> dict[str, Any] | None:
+    selectors = [
+        ".btn-person-details",
+        "button:has-text('person_search')",
+        "a:has-text('person_search')",
+        "button[title*='detal']",
+        "a[title*='detal']",
+    ]
+    for selector in selectors:
+        try:
+            locator = page.locator(selector)
+            if locator.count() <= 0:
+                continue
+            onclick = locator.first.evaluate("el => el.getAttribute('onclick') || ''")
+            match = re.search(r"pesquisaCPFCNPJ\('([^']+)'\s*,\s*'([^']+)'", str(onclick or ""))
+            if match:
+                document_token = match.group(1)
+                document_type = match.group(2).lower()
+                if document_type in ("pf", "pj"):
+                    target_url = urljoin(page.url, f"/{document_type}/Cadastro?documento={quote(document_token, safe='!')}")
+                    page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
+                    page.wait_for_timeout(7000)
+                    return {"selector": selector, "mode": "direct_goto", "url": target_url}
+
+            locator.first.click(timeout=6000, force=True)
+            page.wait_for_timeout(7000)
+            return {"selector": selector}
+        except Exception:
+            continue
+    return None
+
+
+def try_advanced_name_phone_search(page, name: str, phone: str) -> dict[str, Any] | None:
+    search_phone = normalize_search_phone(phone)
+    if not name and not search_phone:
+        return None
+
+    opened = open_advanced_search_modal(page)
+    if not opened:
+        return None
+
+    filled_name = fill_advanced_search_field(page, ["nome"], name)
+    filled_phone = fill_advanced_search_field(page, ["celular"], search_phone)
+    if not filled_name and not filled_phone:
+        return {
+            "status": "requires_manual_login",
+            "code": "NOVA_VIDA_ADVANCED_SEARCH_FIELDS_NOT_FOUND",
+            "message": "A pesquisa do Nova Vida abriu, mas os campos Nome/Celular nao foram encontrados.",
+            "phones": [],
+            "page": collect_page(page),
+        }
+
+    submit = click_advanced_search_submit(page)
+    if not submit:
+        return {
+            "status": "requires_manual_login",
+            "code": "NOVA_VIDA_ADVANCED_SEARCH_BUTTON_NOT_FOUND",
+            "message": "A pesquisa do Nova Vida abriu, mas o botao Pesquisar nao foi encontrado.",
+            "phones": [],
+            "page": collect_page(page),
+            "searchInput": {"name": filled_name, "phone": filled_phone},
+        }
+
+    detail_click = open_first_advanced_search_result(page)
+    page_data = collect_page(page)
+    phones = extract_phones_from_page(page)
+    enrichment = parse_personal_data(page)
+    if phones or enrichment.get("full_name") or enrichment.get("cpf") or enrichment.get("addresses") or enrichment.get("emails"):
+        return {
+            "status": "success" if phones else "not_found",
+            "code": "" if phones else "NOVA_VIDA_NO_PHONES_FOUND",
+            "message": "Telefones encontrados no Nova Vida." if phones else "Cadastro encontrado no Nova Vida, mas nenhum telefone foi localizado.",
+            "phones": phones,
+            **enrichment,
+            "searchInput": {"name": filled_name, "phone": filled_phone, "submit": submit, "detail": detail_click},
+            "page": page_data,
+        }
+
+    return {
+        "status": "not_found",
+        "code": "NOVA_VIDA_NOT_FOUND",
+        "message": "Nenhum resultado encontrado no Nova Vida para nome/celular informado.",
+        "phones": [],
+        "searchInput": {"name": filled_name, "phone": filled_phone, "submit": submit, "detail": detail_click},
+        "page": page_data,
+    }
+
+
 def extract_phones_from_page(page) -> list[dict[str, Any]]:
     rows = page.evaluate(
         """() => {
@@ -533,23 +744,25 @@ def parse_personal_data(page) -> dict[str, Any]:
     }
 
 
-def try_generic_search(page, cpf: str, name: str) -> dict[str, Any]:
+def try_generic_search(page, cpf: str, name: str, phone: str = "") -> dict[str, Any]:
     data = collect_page(page)
     nav = find_search_navigation(page)
-    query = clean_digits(cpf) or name
+    search_cpf = clean_digits(cpf)
+    search_phone = normalize_search_phone(phone)
+    query = search_cpf or name or search_phone
 
     if not query:
         return {
             "status": "failed",
             "code": "NOVA_VIDA_SEARCH_INPUT_REQUIRED",
-            "message": "Informe CPF ou nome para buscar.",
+            "message": "Informe CPF, nome ou celular para buscar.",
             "phones": [],
             "page": data,
             "navigationCandidates": nav,
         }
 
-    if page.locator("#documento").count() > 0:
-        page.fill("#documento", query, timeout=10000)
+    if search_cpf and page.locator("#documento").count() > 0:
+        page.fill("#documento", search_cpf, timeout=10000)
         try:
             with page.expect_navigation(wait_until="domcontentloaded", timeout=20000):
                 page.locator("#buscaDashboard button[type=submit], #buscaDashboard input[type=submit]").first.click(timeout=10000)
@@ -591,6 +804,10 @@ def try_generic_search(page, cpf: str, name: str) -> dict[str, Any]:
                 "searchInput": {"id": "documento", "name": "documento"},
                 "page": page_data,
             }
+
+    advanced_result = try_advanced_name_phone_search(page, name, search_phone)
+    if advanced_result is not None:
+        return advanced_result
 
     candidates = page.locator(
         "input[type=text], input[type=search], input:not([type]), textarea"
@@ -641,8 +858,8 @@ def try_generic_search(page, cpf: str, name: str) -> dict[str, Any]:
     }
 
 
-def search_with_auto_reconnect(page, cpf: str, name: str) -> dict[str, Any]:
-    result = try_generic_search(page, cpf, name)
+def search_with_auto_reconnect(page, cpf: str, name: str, phone: str = "") -> dict[str, Any]:
+    result = try_generic_search(page, cpf, name, phone)
     if not is_login_screen(page):
         if result.get("status") == "success":
             save_session_state(page)
@@ -661,7 +878,7 @@ def search_with_auto_reconnect(page, cpf: str, name: str) -> dict[str, Any]:
             "login": reconnect,
         }
 
-    retry = try_generic_search(page, cpf, name)
+    retry = try_generic_search(page, cpf, name, phone)
     retry["reconnectAttempted"] = True
     retry["reconnectOk"] = True
     if retry.get("status") == "success":
@@ -692,7 +909,7 @@ def command_map() -> None:
             browser.close()
 
 
-def command_search(cpf: str, name: str) -> None:
+def command_search(cpf: str, name: str, phone: str = "") -> None:
     with sync_playwright() as playwright:
         browser = launch_browser(playwright)
         context = new_context(browser)
@@ -706,6 +923,7 @@ def command_search(cpf: str, name: str) -> None:
                         "source": SOURCE,
                         "cpf": clean_digits(cpf),
                         "name": name or "",
+                        "phone": normalize_search_phone(phone),
                         "phones": [],
                         "code": login.get("code", "NOVA_VIDA_LOGIN_FAILED"),
                         "message": login.get("message", "Falha no login Nova Vida."),
@@ -714,12 +932,13 @@ def command_search(cpf: str, name: str) -> None:
                 )
                 return
 
-            result = search_with_auto_reconnect(page, cpf, name)
+            result = search_with_auto_reconnect(page, cpf, name, phone)
             output(
                 {
                     "source": SOURCE,
                     "cpf": clean_digits(cpf),
                     "name": name or "",
+                    "phone": normalize_search_phone(phone),
                     **result,
                 }
             )
@@ -730,6 +949,7 @@ def command_search(cpf: str, name: str) -> None:
                     "source": SOURCE,
                     "cpf": clean_digits(cpf),
                     "name": name or "",
+                    "phone": normalize_search_phone(phone),
                     "phones": [],
                     "code": "NOVA_VIDA_TIMEOUT",
                     "message": str(exc)[:300],
@@ -742,6 +962,7 @@ def command_search(cpf: str, name: str) -> None:
                     "source": SOURCE,
                     "cpf": clean_digits(cpf),
                     "name": name or "",
+                    "phone": normalize_search_phone(phone),
                     "phones": [],
                     "code": "NOVA_VIDA_WORKER_ERROR",
                     "message": f"{type(exc).__name__}: {str(exc)[:260]}",
@@ -760,11 +981,12 @@ def main() -> None:
     search = sub.add_parser("search")
     search.add_argument("--cpf", default="")
     search.add_argument("--name", default="")
+    search.add_argument("--phone", default="")
     args = parser.parse_args()
     if args.command == "map":
         command_map()
     elif args.command == "search":
-        command_search(args.cpf, args.name)
+        command_search(args.cpf, args.name, args.phone)
 
 
 if __name__ == "__main__":

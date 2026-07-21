@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import toast from 'react-hot-toast';
+import { useNavigate } from 'react-router-dom';
 
 import { api } from '../lib/api';
 import { formatCpfDisplay, formatPhoneDisplay } from '../lib/whatsapp';
 import { formatCurrencyDisplay, productLabel } from '../lib/margins';
 import type { Base, Campaign, ClientsResponse, ProductType, ReportResponse } from '../types';
-import { Badge, Card, Input, Select, SectionHeader, StatCard } from '../components/ui';
+import { Badge, Button, Card, Input, Select, SectionHeader, StatCard } from '../components/ui';
 
 type ReportFilters = {
   from: string;
@@ -23,6 +24,7 @@ type ReportFilters = {
 };
 
 export default function ReportsPage() {
+  const navigate = useNavigate();
   const [data, setData] = useState<ReportResponse | null>(null);
   const [bases, setBases] = useState<Base[]>([]);
   const [options, setOptions] = useState<ClientsResponse['meta'] | null>(null);
@@ -102,6 +104,11 @@ export default function ReportsPage() {
       <SectionHeader
         title="Relatórios e acompanhamento"
         description="Acompanhe o volume de atendimentos, margem positiva por base e os casos com erro de consulta."
+        action={
+          <Button variant="secondary" onClick={() => navigate('/relatorios/captcha')}>
+            Motor de CAPTCHA
+          </Button>
+        }
       />
 
       <Card className="p-5">

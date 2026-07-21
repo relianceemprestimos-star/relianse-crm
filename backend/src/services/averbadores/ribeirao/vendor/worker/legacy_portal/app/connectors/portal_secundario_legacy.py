@@ -139,16 +139,32 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
                     const clean = (value) => String(value || "").replace(/\\s+/g, " ").trim();
                     const money = (value) => clean(value).match(/-?\\d{1,3}(?:\\.\\d{3})*,\\d{2}|-?\\d+,\\d{2}/)?.[0] || "";
                     const bodyText = normalize(document.body?.innerText || document.body?.textContent || "");
-                    const notFound = /CPF\\/?MATRICULA NAO ENCONTRADO|CPF NAO ENCONTRADO|MATRICULA NAO ENCONTRADA/.test(bodyText);
+                    const notFound = /CPF\\/?MATRICULA NAO ENCONTRADO|CPF NAO ENCONTRADO|MATRICULA NAO ENCONTRADA|DADOS DE CADASTRO NAO LOCALIZADO|CADASTRO NAO LOCALIZADO|SERVIDOR NAO LOCALIZADO/.test(bodyText);
+                    const notAllowed = /CLIENTE NAO PERMITE CONSULTA|CLIENTE NAO AUTORIZA CONSULTA|CONSULTA NAO PERMITIDA|NAO PERMITE CONSULTA|SEM PERMISSAO PARA CONSULTA|CONSULTA BLOQUEADA/.test(bodyText);
                     const tables = Array.from(document.querySelectorAll("table"));
                     const rows = [];
                     const pageText = clean(document.body?.innerText || document.body?.textContent || "");
                     const metadata = {};
                     let tableFound = false;
 
+                    const isBadMetaValue = (key, value) => {
+                      const text = clean(value);
+                      if (!text) return true;
+                      const normalized = normalize(text);
+                      if (normalized.includes("DETALHES DA MARGEM") || normalized.includes("MARGEM TOTAL")) return true;
+                      if (normalized.includes("USUARIO:") || normalized.includes("CONSIGNATARIA:")) return true;
+                      if (normalized.includes("TIPO ACESSO:") || normalized.includes("CORRESPONDENTE:")) return true;
+                      if (normalized.includes("SERVIDOR: MATRICULA:") || normalized.includes("CPF: TIPO DO SERVIDOR")) return true;
+                      if (normalized === "DATA INCLUSAO" || normalized.startsWith("DATA INCLUSAO")) return true;
+                      if (key !== "orgao" && text.length > 120) return true;
+                      if (key === "nome_portal" && /^(SERVIDOR|NOME|DATA INCLUSAO)$/i.test(text)) return true;
+                      if (key === "matricula" && !/\\d/.test(text)) return true;
+                      return false;
+                    };
                     const setMeta = (key, value) => {
                       const text = clean(value);
-                      if (text && !metadata[key]) metadata[key] = text;
+                      if (!text || isBadMetaValue(key, text)) return;
+                      if (!metadata[key] || isBadMetaValue(key, metadata[key])) metadata[key] = text;
                     };
                     const normalizeKey = (value) => normalize(value).replace(/[^A-Z0-9]/g, "");
                     const metaKeyFromLabel = (label) => {
@@ -173,6 +189,60 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
                           setMeta(key, value);
                         }
                       }
+                    };
+                    const captureMetadataFromVisibleInputs = () => {
+                      const isVisible = (el) => {
+                        if (!el) return false;
+                        const style = window.getComputedStyle(el);
+                        const rect = el.getBoundingClientRect();
+                        return style && style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+                      };
+                      const values = Array.from(document.querySelectorAll("input,textarea,select"))
+                        .filter((el) => {
+                          const type = String(el.getAttribute("type") || "").toLowerCase();
+                          return isVisible(el) && !["hidden", "password", "submit", "button", "checkbox", "radio", "image"].includes(type);
+                        })
+                        .map((el) => {
+                          if (el.tagName === "SELECT") {
+                            const option = el.options?.[el.selectedIndex];
+                            return clean(option?.textContent || el.value || "");
+                          }
+                          return clean(el.value || el.getAttribute("value") || "");
+                        })
+                        .filter(Boolean);
+
+                      const normalizeValue = (value) => normalize(value);
+                      const nameCandidate = values.find((value) => {
+                        const normalized = normalizeValue(value);
+                        if (!/[A-Z]/.test(normalized)) return false;
+                        if (value.replace(/\\D/g, "").length >= 8) return false;
+                        if (/^(ATIVO|INATIVO|EFETIVO|TEMPORARIO|TEMPORARIO|CLT|ESTATUTARIO)/.test(normalized)) return false;
+                        if (normalized.includes("SECRETARIA") || normalized.includes("PREFEITURA") || normalized.includes("MUNICIPAL")) return false;
+                        if (normalized.includes("BANCO") || normalized.includes("DAYCOVAL") || normalized.includes("CORRESPONDENTE")) return false;
+                        return value.length >= 6 && value.length <= 100;
+                      });
+                      const matriculaCandidate = values.find((value) => {
+                        const digits = value.replace(/\\D/g, "");
+                        return /^0{2,}\\d{3,}$/.test(digits) && !normalizeValue(value).includes("R$");
+                      }) || values.find((value) => {
+                        const digits = value.replace(/\\D/g, "");
+                        return digits.length >= 4 && digits.length < 11 && !normalizeValue(value).includes("R$");
+                      });
+                      const vinculoCandidate = values.find((value) =>
+                        /(EFETIVO|TEMPOR[ÁA]RIO|COMISSIONADO|ESTATUT[ÁA]RIO|CLT)/i.test(value)
+                      );
+                      const orgaoCandidate = values.find((value) =>
+                        /(SECRETARIA|PREFEITURA|MUNICIPAL|C[ÂA]MARA|SA[ÚU]DE|EDUCA[ÇC][ÃA]O|ADMINISTRA[ÇC][ÃA]O)/i.test(value)
+                      );
+                      const cargoCandidate = values.find((value) =>
+                        /(PROFESSOR|AGENTE|AUXILIAR|TECNICO|T[ÉE]CNICO|MOTORISTA|ENFERMEIRO|MEDICO|M[ÉE]DICO|GUARDA|DIRETOR|COORDENADOR)/i.test(value)
+                      );
+
+                      setMeta("nome_portal", nameCandidate || "");
+                      setMeta("matricula", matriculaCandidate || "");
+                      setMeta("orgao", orgaoCandidate || "");
+                      setMeta("cargo", cargoCandidate || "");
+                      setMeta("vinculo", vinculoCandidate || "");
                     };
                     const captureMetadataFromText = () => {
                       const fields = [
@@ -309,9 +379,56 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
                       }
                     }
 
+                    if (!rows.length && bodyText.includes("MARGEM BRUTA") && bodyText.includes("MARGEM DISPONIVEL")) {
+                      const sliceBetween = (source, startMarker, endMarkers) => {
+                        const start = source.indexOf(startMarker);
+                        if (start < 0) return "";
+                        let end = source.length;
+                        for (const marker of endMarkers || []) {
+                          const pos = source.indexOf(marker, start + startMarker.length);
+                          if (pos > start && pos < end) end = pos;
+                        }
+                        return source.slice(start, end);
+                      };
+                      const grossSection = sliceBetween(bodyText, "MARGEM BRUTA", ["DADOS FUNCIONAIS", "MARGEM DISPONIVEL"]);
+                      const netSection = sliceBetween(bodyText, "MARGEM DISPONIVEL", ["IMPRIMIR", "VOLTAR", "QUEM SOMOS"]);
+                      const products = [
+                        { service: "CONSIGNACOES FACULTATIVAS", aliases: ["CONSIGNACOES FACULTATIVAS", "CONSIGNACAO FACULTATIVA"] },
+                        { service: "CARTAO DE CREDITO", aliases: ["CARTAO DE CREDITO", "CARTAO CREDITO"] },
+                        { service: "CARTAO DE BENEFICIO", aliases: ["CARTAO DE BENEFICIO", "CARTAO BENEFICIO"] },
+                      ];
+                      const findValue = (section, aliases) => {
+                        for (const alias of aliases) {
+                          const idx = section.indexOf(alias);
+                          if (idx < 0) continue;
+                          const chunk = section.slice(idx, idx + 180);
+                          const values = chunk.match(/-?\\d{1,3}(?:\\.\\d{3})*,\\d{2}|-?\\d+,\\d{2}/g) || [];
+                          if (values.length) return values[0];
+                        }
+                        return "";
+                      };
+                      for (const product of products) {
+                        const total = findValue(grossSection, product.aliases);
+                        const available = findValue(netSection, product.aliases);
+                        if (!total && !available) continue;
+                        rows.push({
+                          service: product.service,
+                          total,
+                          reserved: "",
+                          available,
+                          raw_cells: [product.service, total, "", available],
+                          raw_normalized_cells: [product.service, total, "", available],
+                        });
+                      }
+                      if (rows.length) {
+                        tableFound = true;
+                      }
+                    }
+
+                    captureMetadataFromVisibleInputs();
                     captureMetadataFromText();
 
-                    return { notFound, tableFound, rows, metadata, bodyText, tableCount: tables.length };
+                    return { notFound, notAllowed, tableFound, rows, metadata, bodyText, tableCount: tables.length };
                 }"""
             )
             return data if isinstance(data, dict) else {"notFound": False, "tableFound": False, "rows": [], "bodyText": ""}
@@ -604,6 +721,114 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
         except Exception:
             return False
 
+    async def _clear_matricula_if_present(self) -> bool:
+        try:
+            cleared = await self.page.evaluate(
+                """() => {
+                    const normalize = (v) => String(v || "")
+                      .normalize("NFD")
+                      .replace(/[\\u0300-\\u036f]/g, "")
+                      .toLowerCase()
+                      .trim();
+                    const isVisible = (el) => {
+                      if (!el) return false;
+                      const style = window.getComputedStyle(el);
+                      if (!style) return false;
+                      const rect = el.getBoundingClientRect();
+                      return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
+                    };
+                    const clearInput = (input) => {
+                      if (!input || !(input instanceof HTMLInputElement)) return false;
+                      if (!isVisible(input) || input.disabled || input.readOnly) return false;
+                      input.focus();
+                      input.value = "";
+                      input.dispatchEvent(new Event("input", { bubbles: true }));
+                      input.dispatchEvent(new Event("change", { bubbles: true }));
+                      return true;
+                    };
+                    const labels = Array.from(document.querySelectorAll("label, span, strong, td, div"));
+                    for (const label of labels) {
+                      const text = normalize(label.textContent || "");
+                      if (!text.includes("matricula")) continue;
+                      const scope = label.closest("div,fieldset,section,article,tr,td,form") || document.body;
+                      const input =
+                        scope.querySelector("input[name*='matricula' i]") ||
+                        scope.querySelector("input[id*='matricula' i]") ||
+                        scope.querySelector("input[type='text']");
+                      if (clearInput(input)) return true;
+                    }
+                    const fallback =
+                      document.querySelector("input[name*='matricula' i]") ||
+                      document.querySelector("input[id*='matricula' i]");
+                    return clearInput(fallback);
+                }"""
+            )
+            return bool(cleared)
+        except Exception:
+            return False
+
+    async def _select_ribeirao_servico_padrao(self) -> bool:
+        if "governo_sp" in str(getattr(self, "portal_id", "") or "").lower():
+            return True
+        target_label = str(os.getenv("RIBEIRAO_CONSULTA_SERVICO") or "CARTÃO - 1 - 0014").strip()
+        target_label_alt = self._normalize_text(target_label)
+        try:
+            selected = await self.page.evaluate(
+                """(targetLabel, targetLabelAlt) => {
+                    const normalize = (v) => String(v || "")
+                      .normalize("NFD")
+                      .replace(/[\\u0300-\\u036f]/g, "")
+                      .replace(/\\s+/g, " ")
+                      .trim()
+                      .toUpperCase();
+                    const isVisible = (el) => {
+                      if (!el) return false;
+                      const style = window.getComputedStyle(el);
+                      if (!style) return false;
+                      const rect = el.getBoundingClientRect();
+                      return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
+                    };
+                    const findTargetIndex = (select) => {
+                      const options = Array.from(select.options || []);
+                      const preferred = options.findIndex((opt) => {
+                        const text = normalize(opt.textContent || opt.label || opt.value || "");
+                        return text === targetLabelAlt || text.includes(targetLabelAlt) || text.includes("CARTAO - 1 - 0014") || text.includes("0014");
+                      });
+                      return preferred >= 0 ? preferred : -1;
+                    };
+                    const applySelect = (select) => {
+                      if (!select || !(select instanceof HTMLSelectElement) || !isVisible(select) || select.disabled) return false;
+                      const index = findTargetIndex(select);
+                      if (index < 0) return false;
+                      select.selectedIndex = index;
+                      select.dispatchEvent(new Event("input", { bubbles: true }));
+                      select.dispatchEvent(new Event("change", { bubbles: true }));
+                      return true;
+                    };
+                    const labels = Array.from(document.querySelectorAll("label, span, strong, td, div"));
+                    for (const label of labels) {
+                      const text = normalize(label.textContent || "");
+                      if (!text.startsWith("SERVICO")) continue;
+                      const scope = label.closest("div,fieldset,section,article,tr,td,form") || document.body;
+                      const select =
+                        scope.querySelector("select[name*='servico' i]") ||
+                        scope.querySelector("select[id*='servico' i]") ||
+                        scope.querySelector("select");
+                      if (applySelect(select)) return true;
+                    }
+                    const fallback =
+                      document.querySelector("select[name*='servico' i]") ||
+                      document.querySelector("select[id*='servico' i]") ||
+                      Array.from(document.querySelectorAll("select")).find((el) => isVisible(el));
+                    return applySelect(fallback);
+                }""",
+                target_label,
+                target_label_alt,
+            )
+            return bool(selected)
+        except Exception:
+            return False
+
     async def _click_any(self, raw_selector: str) -> bool:
         for selector in self._selector_options(raw_selector):
             try:
@@ -674,6 +899,10 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
                 current_url = ""
             if "ConsultaMargemDados.aspx" in current_url:
                 return
+            if "ServidorMatriculaLista.aspx" in current_url:
+                if await self._handle_matricula_selection_page():
+                    await self.page.wait_for_timeout(900)
+                    continue
             try:
                 body_text = await self.page.locator("body").inner_text(timeout=1200)
             except Exception:
@@ -681,11 +910,114 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
             normalized_body = self._normalize_text(body_text)
             if "DETALHES DA MARGEM" in normalized_body:
                 return
+            if "LISTA DE MATRICULA" in normalized_body or (
+                "MATRICULA" in normalized_body and "SERVIDOR" in normalized_body
+            ):
+                if await self._handle_matricula_selection_page():
+                    await self.page.wait_for_timeout(900)
+                    continue
             if "CPF/MATRICULA NAO ENCONTRADO" in normalized_body or "CPF NAO ENCONTRADO" in normalized_body:
                 return
             if await self._wait_any(self.settings.pdc_selector_result_ready, 800):
                 return
             await self.page.wait_for_timeout(500)
+
+    async def _handle_matricula_selection_page(self) -> bool:
+        try:
+            clicked = await self.page.evaluate(
+                """() => {
+                    const normalize = (value) =>
+                      String(value || "")
+                        .normalize("NFD")
+                        .replace(/[\\u0300-\\u036f]/g, "")
+                        .toLowerCase()
+                        .trim();
+                    const isVisible = (el) => {
+                      if (!el) return false;
+                      const style = window.getComputedStyle(el);
+                      if (!style) return false;
+                      const rect = el.getBoundingClientRect();
+                      return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
+                    };
+                    const canClick = (el) => {
+                      if (!el || !isVisible(el)) return false;
+                      if (el instanceof HTMLInputElement || el instanceof HTMLButtonElement) return !el.disabled;
+                      return true;
+                    };
+                    const clickNode = (el) => {
+                        if (!canClick(el)) return false;
+                        try {
+                          el.click();
+                          return true;
+                        } catch (_) {
+                          return false;
+                        }
+                    };
+                    const resolveActionTarget = (el) => {
+                      if (!el) return null;
+                      if (el instanceof HTMLImageElement) {
+                        return el.closest("a,button") || el;
+                      }
+                      return el;
+                    };
+                    const actionLike = (el) => {
+                      const target = resolveActionTarget(el);
+                      const text = normalize(target?.textContent || target?.value || target?.getAttribute("title") || "");
+                      const href = normalize(target?.getAttribute("href") || "");
+                      const onclick = normalize(target?.getAttribute("onclick") || "");
+                      if (text.includes("selecion") || text.includes("acessar") || text.includes("detalh") || text.includes("consult")) return true;
+                      if (href.startsWith("javascript:__dopostback")) return true;
+                      if (onclick.includes("__dopostback") || onclick.includes("consult")) return true;
+                      return false;
+                    };
+                    const candidateControls = (scope) => {
+                      const nodes = Array.from(scope.querySelectorAll("a,button,input[type='button'],input[type='submit'],img"));
+                      return nodes
+                        .map((el) => resolveActionTarget(el))
+                        .filter((el, idx, arr) => el && arr.indexOf(el) === idx)
+                        .filter((el) => canClick(el) && actionLike(el));
+                    };
+
+                    const rows = Array.from(document.querySelectorAll("tr")).filter((row) => {
+                      const text = normalize(row.textContent || "");
+                      const hasAction = candidateControls(row).length > 0;
+                      const tdCount = row.querySelectorAll("td").length;
+                      return hasAction && tdCount > 0 && (text.includes("matricula") || text.includes("cpf") || text.includes("nome") || /\\d{3,}/.test(text));
+                    });
+
+                    for (const row of rows) {
+                      const controls = candidateControls(row);
+                      for (const control of controls) {
+                        if (clickNode(control)) return true;
+                      }
+                    }
+
+                    const tables = Array.from(document.querySelectorAll("table"));
+                    for (const table of tables) {
+                      const tableRows = Array.from(table.querySelectorAll("tr"));
+                      for (const row of tableRows) {
+                        if (row.querySelectorAll("td").length === 0) continue;
+                        const controls = candidateControls(row);
+                        for (const control of controls) {
+                          if (clickNode(control)) return true;
+                        }
+                      }
+                    }
+
+                    const fallback = Array.from(document.querySelectorAll("a,button,input[type='button'],input[type='submit'],img"))
+                      .map((el) => resolveActionTarget(el))
+                      .filter((el, idx, arr) => el && arr.indexOf(el) === idx)
+                      .filter((el) => canClick(el) && actionLike(el));
+                    for (const control of fallback) {
+                      if (clickNode(control)) return true;
+                    }
+
+                    return false;
+                }"""
+            )
+            return bool(clicked)
+        except Exception:
+            return False
 
     async def _is_login_submit_disabled(self) -> bool | None:
         selectors = self._selector_options(self.settings.pdc_selector_login_submit)
@@ -1112,6 +1444,8 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
     async def _prepare_consulta_context(self) -> None:
         if await self._wait_any(self.settings.pdc_selector_cpf_input, 1200):
             await self._select_orgao_governo_sp()
+            await self._select_ribeirao_servico_padrao()
+            await self._clear_matricula_if_present()
             return
 
         await self._open_consulta_margem()
@@ -1126,6 +1460,8 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
                 ok = False
         if not ok:
             raise RuntimeError("Nao encontrei campo CPF do servidor na tela de consulta.")
+        await self._select_ribeirao_servico_padrao()
+        await self._clear_matricula_if_present()
 
     async def _is_login_screen(self) -> bool:
         url = (self.page.url or "").lower()
@@ -1241,6 +1577,8 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
             await self.start()
 
         await self._ensure_consulta_ready()
+        await self._select_ribeirao_servico_padrao()
+        await self._clear_matricula_if_present()
 
         filled = await self._fill_cpf_servidor(cpf)
         if not filled:
@@ -1281,6 +1619,8 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
         )
         if extracted_table.get("notFound"):
             raise RuntimeError("CPF_NOT_FOUND: CPF/Matricula nao encontrado.")
+        if extracted_table.get("notAllowed"):
+            raise RuntimeError("CLIENT_QUERY_NOT_ALLOWED: Cliente nao permite consulta.")
 
         table_rows = extracted_table.get("rows") or []
         metadata = extracted_table.get("metadata") or {}
@@ -1310,6 +1650,8 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
         emprestimo_disponivel = ""
         cartao_total = ""
         cartao_disponivel = ""
+        cartao_beneficio_total = ""
+        cartao_beneficio_disponivel = ""
         margem_rows = []
 
         for row in table_rows:
@@ -1329,7 +1671,10 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
                 }
             )
 
-            if "EMPRESTIMO" in service:
+            if "BENEFICIO" in service:
+                cartao_beneficio_total = cartao_beneficio_total or total
+                cartao_beneficio_disponivel = cartao_beneficio_disponivel or available
+            elif "EMPRESTIMO" in service or "FACULTATIV" in service or "CONSIGNAC" in service:
                 emprestimo_total = emprestimo_total or total
                 emprestimo_disponivel = emprestimo_disponivel or available
             elif "CARTAO" in service:
@@ -1340,23 +1685,46 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
             fallback = await self._extract_margens_from_text()
             emprestimo_total = fallback.get("bruta_facultativa") or ""
             emprestimo_disponivel = fallback.get("disp_facultativa") or ""
-            cartao_total = fallback.get("bruta_cartao") or fallback.get("bruta_cartao_beneficio") or ""
-            cartao_disponivel = fallback.get("disp_cartao") or fallback.get("disp_cartao_beneficio") or ""
-            if emprestimo_total or emprestimo_disponivel or cartao_total or cartao_disponivel:
-                margem_rows = [
-                    {
-                        "service": "MARGEM EMPRESTIMO",
-                        "total": emprestimo_total,
-                        "reserved": "",
-                        "available": emprestimo_disponivel,
-                    },
-                    {
-                        "service": "MARGEM CARTAO",
-                        "total": cartao_total,
-                        "reserved": "",
-                        "available": cartao_disponivel,
-                    },
-                ]
+            cartao_total = fallback.get("bruta_cartao") or ""
+            cartao_disponivel = fallback.get("disp_cartao") or ""
+            cartao_beneficio_total = fallback.get("bruta_cartao_beneficio") or ""
+            cartao_beneficio_disponivel = fallback.get("disp_cartao_beneficio") or ""
+            if (
+                emprestimo_total
+                or emprestimo_disponivel
+                or cartao_total
+                or cartao_disponivel
+                or cartao_beneficio_total
+                or cartao_beneficio_disponivel
+            ):
+                margem_rows = []
+                if emprestimo_total or emprestimo_disponivel:
+                    margem_rows.append(
+                        {
+                            "service": "CONSIGNACOES FACULTATIVAS",
+                            "total": emprestimo_total,
+                            "reserved": "",
+                            "available": emprestimo_disponivel,
+                        }
+                    )
+                if cartao_total or cartao_disponivel:
+                    margem_rows.append(
+                        {
+                            "service": "CARTAO CONSIGNADO",
+                            "total": cartao_total,
+                            "reserved": "",
+                            "available": cartao_disponivel,
+                        }
+                    )
+                if cartao_beneficio_total or cartao_beneficio_disponivel:
+                    margem_rows.append(
+                        {
+                            "service": "CARTAO BENEFICIO",
+                            "total": cartao_beneficio_total,
+                            "reserved": "",
+                            "available": cartao_beneficio_disponivel,
+                        }
+                    )
 
         if not margem_rows:
             raise RuntimeError("MARGIN_ROWS_NOT_FOUND: Nao encontrei linhas de margem na tela de detalhes.")
@@ -1378,27 +1746,52 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
             fallback_values = await self._extract_margens_from_text()
             fallback_emprestimo_total = fallback_values.get("bruta_facultativa") or fallback_values.get("margem_emprestimo_total") or ""
             fallback_emprestimo_disponivel = fallback_values.get("disp_facultativa") or fallback_values.get("margem_emprestimo_disponivel") or ""
-            fallback_cartao_total = fallback_values.get("bruta_cartao") or fallback_values.get("bruta_cartao_beneficio") or fallback_values.get("margem_cartao_total") or ""
-            fallback_cartao_disponivel = fallback_values.get("disp_cartao") or fallback_values.get("disp_cartao_beneficio") or fallback_values.get("margem_cartao_disponivel") or ""
-            if fallback_emprestimo_total or fallback_emprestimo_disponivel or fallback_cartao_total or fallback_cartao_disponivel:
+            fallback_cartao_total = fallback_values.get("bruta_cartao") or fallback_values.get("margem_cartao_total") or ""
+            fallback_cartao_disponivel = fallback_values.get("disp_cartao") or fallback_values.get("margem_cartao_disponivel") or ""
+            fallback_cartao_beneficio_total = fallback_values.get("bruta_cartao_beneficio") or fallback_values.get("margem_cartao_beneficio_total") or ""
+            fallback_cartao_beneficio_disponivel = fallback_values.get("disp_cartao_beneficio") or fallback_values.get("margem_cartao_beneficio_disponivel") or ""
+            if (
+                fallback_emprestimo_total
+                or fallback_emprestimo_disponivel
+                or fallback_cartao_total
+                or fallback_cartao_disponivel
+                or fallback_cartao_beneficio_total
+                or fallback_cartao_beneficio_disponivel
+            ):
                 emprestimo_total = emprestimo_total or fallback_emprestimo_total
                 emprestimo_disponivel = emprestimo_disponivel or fallback_emprestimo_disponivel
                 cartao_total = cartao_total or fallback_cartao_total
                 cartao_disponivel = cartao_disponivel or fallback_cartao_disponivel
-                margem_rows = [
-                    {
-                        "service": "MARGEM EMPRESTIMO",
-                        "total": emprestimo_total,
-                        "reserved": "",
-                        "available": emprestimo_disponivel,
-                    },
-                    {
-                        "service": "MARGEM CARTAO",
-                        "total": cartao_total,
-                        "reserved": "",
-                        "available": cartao_disponivel,
-                    },
-                ]
+                cartao_beneficio_total = cartao_beneficio_total or fallback_cartao_beneficio_total
+                cartao_beneficio_disponivel = cartao_beneficio_disponivel or fallback_cartao_beneficio_disponivel
+                margem_rows = []
+                if emprestimo_total or emprestimo_disponivel:
+                    margem_rows.append(
+                        {
+                            "service": "CONSIGNACOES FACULTATIVAS",
+                            "total": emprestimo_total,
+                            "reserved": "",
+                            "available": emprestimo_disponivel,
+                        }
+                    )
+                if cartao_total or cartao_disponivel:
+                    margem_rows.append(
+                        {
+                            "service": "CARTAO CONSIGNADO",
+                            "total": cartao_total,
+                            "reserved": "",
+                            "available": cartao_disponivel,
+                        }
+                    )
+                if cartao_beneficio_total or cartao_beneficio_disponivel:
+                    margem_rows.append(
+                        {
+                            "service": "CARTAO BENEFICIO",
+                            "total": cartao_beneficio_total,
+                            "reserved": "",
+                            "available": cartao_beneficio_disponivel,
+                        }
+                    )
                 has_any_value = any(
                     bool(item.get("total")) or bool(item.get("available")) for item in margem_rows
                 )
@@ -1419,7 +1812,9 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
             f"emprestimo_total={emprestimo_total or ''} | "
             f"emprestimo_disponivel={emprestimo_disponivel or ''} | "
             f"cartao_total={cartao_total or ''} | "
-            f"cartao_disponivel={cartao_disponivel or ''}",
+            f"cartao_disponivel={cartao_disponivel or ''} | "
+            f"cartao_beneficio_total={cartao_beneficio_total or ''} | "
+            f"cartao_beneficio_disponivel={cartao_beneficio_disponivel or ''}",
             file=sys.stderr,
             flush=True,
         )
@@ -1439,7 +1834,7 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
             status="sucesso" if has_positive_margin else "sem_marg",
             margem_disponivel=emprestimo_disponivel,
             margem_cartao=cartao_disponivel,
-            margem_cartao_beneficio="",
+            margem_cartao_beneficio=cartao_beneficio_disponivel,
             payload_extra={
                 "nome_portal": metadata.get("nome_portal") or "",
                 "matricula": metadata.get("matricula") or "",
@@ -1455,8 +1850,10 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
                 "facultativa_disponivel": emprestimo_disponivel or "",
                 "cartao_margem_consignavel": cartao_total or "",
                 "cartao_disponivel": cartao_disponivel or "",
-                "cartao_beneficio_margem_consignavel": "",
-                "cartao_beneficio_disponivel": "",
+                "cartao_beneficio_margem_consignavel": cartao_beneficio_total or "",
+                "cartao_beneficio_disponivel": cartao_beneficio_disponivel or "",
+                "margem_cartao_beneficio_total": cartao_beneficio_total or "",
+                "margem_cartao_beneficio_disponivel": cartao_beneficio_disponivel or "",
                 "detalhes_margem": {
                     "rows": margem_rows,
                     "table_found": table_found,
@@ -1508,4 +1905,3 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
             consultado_em=datetime.utcnow(),
             tentativas=tentativas,
         )
-

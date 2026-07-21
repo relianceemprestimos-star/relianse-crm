@@ -68,6 +68,7 @@ function canAutoLookup(client) {
 function statusFromProvider(providerStatus) {
   const status = String(providerStatus || '').toLowerCase();
   if (status === 'success') return 'success';
+  if (status === 'not_found') return 'not_found';
   if (status === 'requires_manual_login') return 'requires_manual_login';
   return 'failed';
 }
@@ -162,11 +163,10 @@ export async function searchPhones({ cpf = '', name = '', phone = '', clientId =
   const clientDetails = clientId ? getClientById(Number(clientId)) : null;
   const client = clientDetails?.client || null;
   const searchPhone = String(phone || client?.phone || '').trim();
-  const phoneDigits = cleanDigits(searchPhone);
-  const searchCpf = cleanDigits(cpf || client?.cpf || (phoneDigits.length === 11 ? phoneDigits : ''));
-  const searchName = String(name || client?.name || (!searchCpf && searchPhone ? searchPhone : '')).trim();
-  if (!searchCpf && !searchName) {
-    return { error: 'Informe CPF ou nome para buscar.', status: 400 };
+  const searchCpf = cleanDigits(cpf || client?.cpf || '');
+  const searchName = String(name || client?.name || '').trim();
+  if (!searchCpf && !searchName && !searchPhone) {
+    return { error: 'Informe CPF, nome ou celular para buscar.', status: 400 };
   }
 
   if (searchCpf.length === 11) {
@@ -181,12 +181,13 @@ export async function searchPhones({ cpf = '', name = '', phone = '', clientId =
     }
   }
 
-  const result = await searchPhoneNovaVida({ cpf: searchCpf, name: searchName });
+  const result = await searchPhoneNovaVida({ cpf: searchCpf, name: searchName, phone: searchPhone });
   const finalStatus = statusFromProvider(result.status);
+  const resultCpf = cleanDigits(result.cpf || searchCpf);
   const savedConsultation = saveClientConsultationSnapshot({
     clientId: client?.id ?? null,
     createdBy: userId,
-    cpf: searchCpf,
+    cpf: resultCpf,
     nome: result.full_name || result.name || searchName,
     telefonePesquisado: searchPhone,
     status: finalStatus,
@@ -197,8 +198,8 @@ export async function searchPhones({ cpf = '', name = '', phone = '', clientId =
 
   logPhoneLookupRecord({
     clientId: client?.id ?? null,
-    cpf: searchCpf,
-    cpfMasked: searchCpf ? maskCpf(searchCpf) : '',
+    cpf: resultCpf,
+    cpfMasked: resultCpf ? maskCpf(resultCpf) : '',
     name: result.name || searchName,
     source: 'Fonte externa',
     status: finalStatus,
@@ -209,7 +210,8 @@ export async function searchPhones({ cpf = '', name = '', phone = '', clientId =
   });
   logLookup('manual_search_finished', {
     clientId: client?.id ?? null,
-    cpf: searchCpf ? maskCpf(searchCpf) : '',
+    cpf: resultCpf ? maskCpf(resultCpf) : '',
+    phoneSearch: Boolean(searchPhone),
     status: finalStatus,
     phonesFound: result.phones?.length || 0,
     consultationId: savedConsultation?.id ?? null,
@@ -243,7 +245,7 @@ export async function searchPhones({ cpf = '', name = '', phone = '', clientId =
     cache_hit: false,
     consultation_id: savedConsultation?.id ?? null,
     client_id: client?.id ?? null,
-    cpf: searchCpf,
+    cpf: resultCpf,
     name: result.name || searchName,
     full_name: result.full_name || result.name || searchName,
     birth_date: result.birth_date || '',

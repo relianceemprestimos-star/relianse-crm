@@ -1,6 +1,7 @@
 ﻿import { useEffect, useState, type ReactNode } from 'react';
 import { KeyRound, MoonStar, Save, Settings as SettingsIcon, UserCircle2, Users, Volume2, Webhook } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { useNavigate } from 'react-router-dom';
 
 import { useAuth } from '../components/AuthProvider';
 import { UsersManagerPanel } from '../components/UsersManagerPanel';
@@ -10,6 +11,7 @@ import type { RibeiraoConfigStatus, Settings } from '../types';
 import { Badge, Button, Card, Input, SectionHeader, Textarea } from '../components/ui';
 
 export default function SettingsPage() {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const [settings, setSettings] = useState<Settings>({
     company_name: 'Reliance CRM',
@@ -226,6 +228,33 @@ export default function SettingsPage() {
                   </Button>
                 </div>
               </SectionBlock>
+
+              {user?.role === 'gerencial' ? (
+                <SectionBlock icon={<SettingsIcon size={18} />} title="Integrações">
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <Button variant="secondary" className="justify-between" onClick={() => navigate('/whatsapp-api')}>
+                      Rewhats API
+                      <span>URL + Token</span>
+                    </Button>
+                    <Button variant="secondary" className="justify-between" onClick={() => navigate('/whatsapp')}>
+                      WhatsApp Web
+                      <span>Conexão</span>
+                    </Button>
+                    <Button variant="secondary" className="justify-between" onClick={() => navigate('/credenciais')}>
+                      Credenciais
+                      <span>Averbadores</span>
+                    </Button>
+                    <Button variant="secondary" className="justify-between" onClick={() => navigate('/configuracoes/captcha')}>
+                      Motor de CAPTCHA
+                      <span>OCR + fallback</span>
+                    </Button>
+                    <Button variant="secondary" className="justify-between" onClick={() => navigate('/usuarios')}>
+                      Usuários
+                      <span>Permissões</span>
+                    </Button>
+                  </div>
+                </SectionBlock>
+              ) : null}
 
               {user?.role === 'gerencial' ? (
                 <SectionBlock icon={<Users size={18} />} title="Consulta de Margem">

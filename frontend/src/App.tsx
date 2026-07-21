@@ -9,6 +9,7 @@ import CampaignDetailPage from './pages/CampaignDetailPage';
 import UploadPage from './pages/UploadPage';
 import BasesPage from './pages/BasesPage';
 import QueuePage from './pages/QueuePage';
+import RulesCoefficientsPage from './pages/RulesCoefficientsPage';
 import AttendancePage from './pages/AttendancePage';
 import ReportsPage from './pages/ReportsPage';
 import WhatsAppPage from './pages/WhatsAppPage';
@@ -32,12 +33,16 @@ export default function App() {
           <Route path="/campanhas" element={<CampaignsPage />} />
           <Route path="/campanhas/:id" element={<CampaignDetailPage />} />
           <Route path="/fila" element={<QueuePage />} />
+          <Route path="/regras-coeficientes" element={<RulesCoefficientsPage />} />
           <Route path="/atendimento" element={<AttendancePage />} />
+          <Route path="/atendimentos" element={<AttendancePage />} />
           <Route path="/whatsapp" element={<WhatsAppPage />} />
           <Route path="/whatsapp-api" element={<WhatsAppApiPage />} />
           <Route path="/whatsapp-fluxos" element={<WhatsAppApiPage />} />
           <Route path="/upload" element={<UploadPage />} />
           <Route path="/bases" element={<BasesPage />} />
+          <Route path="/clientes" element={<Navigate to="/campanhas" replace />} />
+          <Route path="/propostas" element={<Navigate to="/campanhas" replace />} />
           <Route path="/relatorios" element={<ReportsPage />} />
           <Route path="/consulta-margem" element={<RibeiraoPage />} />
           <Route path="/consulta-ribeirao" element={<RibeiraoPage />} />

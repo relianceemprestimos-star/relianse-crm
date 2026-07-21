@@ -7,7 +7,9 @@ import { BUILD_VERSION } from '../../../build.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const PYTHON_BIN = process.env.PYTHON_BIN || 'python';
+function getPythonBin() {
+  return process.env.PYTHON_BIN || 'python';
+}
 
 function pathExists(candidate) {
   try {
@@ -44,6 +46,18 @@ export function getRibeiraoCliPath() {
   return path.join(__dirname, 'ribeirao_cli.py');
 }
 
+function getAmapaCliPath() {
+  return path.join(__dirname, 'amapa_cli.py');
+}
+
+function getSantanaApiCliPath() {
+  return path.join(__dirname, 'santana_api_cli.py');
+}
+
+function getSantanaWebCliPath() {
+  return path.join(__dirname, 'santana_web_cli.py');
+}
+
 function buildEnv(extra = {}) {
   const env = {
     ...process.env,
@@ -64,10 +78,14 @@ function resolveRepoRoot() {
 }
 
 export function runRibeiraoCommand(payload, { timeoutMs = 180000 } = {}) {
+  return runJsonCli(getRibeiraoCliPath(), payload, { timeoutMs });
+}
+
+function runJsonCli(scriptPath, payload, { timeoutMs = 180000, env: extraEnv = {} } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(PYTHON_BIN, ['-u', getRibeiraoCliPath()], {
+    const child = spawn(getPythonBin(), ['-u', scriptPath], {
       cwd: process.cwd(),
-      env: buildEnv(),
+      env: buildEnv(extraEnv),
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     });
@@ -122,6 +140,18 @@ export function runRibeiraoCommand(payload, { timeoutMs = 180000 } = {}) {
   });
 }
 
+export function runAmapaCommand(payload, { timeoutMs = 180000, env = {} } = {}) {
+  return runJsonCli(getAmapaCliPath(), payload, { timeoutMs, env });
+}
+
+export function runSantanaCommand(payload, { timeoutMs = 180000, env = {} } = {}) {
+  return runJsonCli(getSantanaApiCliPath(), payload, { timeoutMs, env });
+}
+
+export function runSantanaWebCommand(payload, { timeoutMs = 300000, env = {} } = {}) {
+  return runJsonCli(getSantanaWebCliPath(), payload, { timeoutMs, env });
+}
+
 export function startRibeiraoSessionBackground(payload) {
   const sessionId = payload?.session_id || payload?.sessionId || '1';
   const payloadDir = path.resolve(resolveRepoRoot(), 'data', 'ribeirao_sessions');
@@ -151,18 +181,18 @@ export function startRibeiraoSessionBackground(payload) {
     }
   };
 
-    const child = spawn(PYTHON_BIN, ['-u', getRibeiraoCliPath(), '--payload-file', payloadPath], {
-      cwd: process.cwd(),
-      env: buildEnv(),
-      stdio: ['ignore', 'ignore', 'pipe'],
-      windowsHide: true,
-    });
+  const child = spawn(getPythonBin(), ['-u', getRibeiraoCliPath(), '--payload-file', payloadPath], {
+    cwd: process.cwd(),
+    env: buildEnv(),
+    stdio: ['ignore', 'ignore', 'pipe'],
+    windowsHide: true,
+  });
 
-    if (child.stderr) {
-      child.stderr.on('data', (chunk) => {
-        process.stderr.write(chunk.toString('utf8'));
-      });
-    }
+  if (child.stderr) {
+    child.stderr.on('data', (chunk) => {
+      process.stderr.write(chunk.toString('utf8'));
+    });
+  }
 
   child.on('error', (error) => {
     writeFallbackStatus('erro_login', error instanceof Error ? error.message : 'Falha ao iniciar worker Ribeirao.');

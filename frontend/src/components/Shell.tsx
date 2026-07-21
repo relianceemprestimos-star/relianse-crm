@@ -7,18 +7,14 @@ import {
   ChevronRight,
   CircleHelp,
   ClipboardList,
-  Files,
   Flag,
-  KeyRound,
   Landmark,
   LayoutDashboard,
-  Layers3,
   LogOut,
-  MessagesSquare,
   PhoneCall,
+  ReceiptText,
   Settings,
-  Users,
-  Workflow,
+  UserRound,
   Zap,
 } from 'lucide-react';
 
@@ -35,44 +31,49 @@ type NavItem = {
 
 const navItems: NavItem[] = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, allowedRoles: ['gerencial', 'vendedor'] },
+  { to: '/clientes', label: 'Clientes', icon: UserRound, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/campanhas', label: 'Campanhas', icon: Flag, allowedRoles: ['gerencial', 'vendedor'] },
-  { to: '/upload', label: 'Upload de Listas', icon: Files, allowedRoles: ['gerencial', 'vendedor'] },
-  { to: '/bases', label: 'Bases', icon: Layers3, allowedRoles: ['gerencial', 'vendedor'] },
-  { to: '/fila', label: 'Fila de Clientes', icon: Users, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/atendimento', label: 'Atendimentos', icon: ClipboardList, allowedRoles: ['gerencial', 'vendedor'] },
-  { to: '/relatorios', label: 'Relatorios', icon: Zap, allowedRoles: ['gerencial', 'vendedor'] },
-  { to: '/whatsapp-api', label: 'WhatsApp API', icon: MessagesSquare, allowedRoles: ['gerencial', 'vendedor'] },
-  { to: '/whatsapp-fluxos', label: 'Fluxos de WhatsApp', icon: Workflow, allowedRoles: ['gerencial', 'vendedor'] },
-  { to: '/whatsapp', label: 'WhatsApp Web', icon: MessagesSquare, allowedRoles: ['gerencial', 'vendedor'] },
+  { to: '/propostas', label: 'Propostas', icon: ReceiptText, allowedRoles: ['gerencial', 'vendedor'] },
+  { to: '/relatorios', label: 'Relatórios', icon: Zap, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/consulta-margem', label: 'Consulta de Margem', icon: Landmark, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/consulta-telefones', label: 'Consulta de Telefones', icon: PhoneCall, allowedRoles: ['gerencial', 'vendedor'] },
-  { to: '/credenciais', label: 'Credenciais', icon: KeyRound, allowedRoles: ['gerencial'] },
-  { to: '/usuarios', label: 'Usuários', icon: Users, allowedRoles: ['gerencial'] },
   { to: '/configuracoes', label: 'Configurações', icon: Settings, allowedRoles: ['gerencial', 'vendedor'] },
 ];
 
+const FRONTEND_BUILD_VERSION = 'campaign-clients-navigation-2026-07-06-01';
+
 const pageTitles: Record<string, string> = {
   '/dashboard': 'Dashboard',
+  '/clientes': 'Clientes',
   '/campanhas': 'Campanhas',
   '/campanhas/': 'Campanhas',
-  '/upload': 'Upload de Listas',
-  '/bases': 'Bases',
-  '/fila': 'Fila de Clientes',
-  '/atendimento': 'Atendimento',
+  '/upload': 'Clientes',
+  '/bases': 'Clientes',
+  '/fila': 'Atendimentos',
+  '/atendimento': 'Atendimentos',
+  '/propostas': 'Propostas',
   '/relatorios': 'Relatorios e acompanhamento',
-  '/whatsapp': 'WhatsApp Web',
-  '/whatsapp-api': 'WhatsApp API',
-  '/whatsapp-fluxos': 'Fluxos de WhatsApp',
+  '/whatsapp': 'Atendimentos',
+  '/whatsapp-api': 'Configurações',
+  '/whatsapp-fluxos': 'Campanhas',
   '/consulta-margem': 'Consulta de Margem',
   '/consulta-ribeirao': 'Consulta de Margem',
   '/consulta-telefones': 'Consulta de Telefones',
-  '/credenciais': 'Credenciais',
-  '/usuarios': 'Usuários',
+  '/configuracoes/captcha': 'Motor de CAPTCHA',
+  '/relatorios/captcha': 'Motor de CAPTCHA',
+  '/credenciais': 'Configurações',
+  '/usuarios': 'Configurações',
   '/configuracoes': 'Configurações',
 };
 
 function getPathKey(pathname: string) {
   if (pathname.startsWith('/consulta-ribeirao')) return '/consulta-margem';
+  if (pathname.startsWith('/whatsapp-api') || pathname.startsWith('/credenciais') || pathname.startsWith('/usuarios') || pathname.startsWith('/configuracoes/captcha')) return '/configuracoes';
+  if (pathname.startsWith('/relatorios/captcha')) return '/relatorios';
+  if (pathname.startsWith('/whatsapp-fluxos')) return '/campanhas';
+  if (pathname.startsWith('/upload') || pathname.startsWith('/bases')) return '/clientes';
+  if (pathname.startsWith('/fila') || pathname.startsWith('/whatsapp')) return '/atendimento';
   const exact = navItems.find((item) => pathname.startsWith(item.to));
   return exact?.to || '/dashboard';
 }
@@ -87,6 +88,7 @@ export function Shell() {
   const pageTitle = pageTitles[currentKey] || 'Reliance CRM';
 
   useEffect(() => {
+    console.log('[FRONTEND_BUILD]', FRONTEND_BUILD_VERSION);
     const handleSessionChange = () => setAccessSession(getAccessSession());
     window.addEventListener(ACCESS_SESSION_CHANGED_EVENT, handleSessionChange);
     window.addEventListener('storage', handleSessionChange);

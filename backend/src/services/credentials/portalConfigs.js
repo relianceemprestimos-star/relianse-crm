@@ -21,7 +21,23 @@ export const PORTAL_CONFIGS = [
     url: 'https://consignataria.apconsig.ap.gov.br/login',
     requiresCaptcha: false,
     requiresAssistedLogin: false,
-    providerStatus: 'pending_provider',
+    providerStatus: 'implemented',
+  },
+  {
+    id: 'prefeitura_santana_parnaiba',
+    name: 'Prefeitura de Santana de Parnaíba',
+    url: 'https://santana.rf1consig.com.br/servidor/principal',
+    requiresCaptcha: true,
+    requiresAssistedLogin: false,
+    providerStatus: 'web_portal_until_api',
+  },
+  {
+    id: 'prefeitura_ananindeua',
+    name: 'Prefeitura de Ananindeua',
+    url: 'https://santana.rf1consig.com.br/servidor/principal',
+    requiresCaptcha: true,
+    requiresAssistedLogin: false,
+    providerStatus: 'web_portal_until_api',
   },
 ];
 
@@ -39,6 +55,12 @@ export function normalizePortalId(portalId) {
   }
   if (value === 'prefeitura-ribeirao-preto') {
     return 'prefeitura_ribeirao_preto';
+  }
+  if (value === 'prefeitura-santana-parnaiba') {
+    return 'prefeitura_santana_parnaiba';
+  }
+  if (value === 'prefeitura-ananindeua' || value === 'ananindeua') {
+    return 'prefeitura_ananindeua';
   }
   return value;
 }

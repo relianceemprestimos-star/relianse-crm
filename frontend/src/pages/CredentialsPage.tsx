@@ -15,16 +15,24 @@ import {
 import toast from 'react-hot-toast';
 
 import { ApiError, api } from '../lib/api';
-import type { AverbadorCredential, CredentialConnectionLog, CredentialPortalConfig } from '../types';
+import type { AverbadorCredential, CredentialConnectionLog, CredentialPortalConfig, CredentialProfileData } from '../types';
 import { Badge, Button, Card, Input, SectionHeader } from '../components/ui';
 
 type Draft = {
   portal_url: string;
+  api_url: string;
   login: string;
   password: string;
+  credential_profile: CredentialProfileData;
 };
 
-const DEFAULT_PORTAL_ID = 'governo_sp';
+const DEFAULT_PORTAL_ID = 'prefeitura_ribeirao_preto';
+
+function getInitialPortalId() {
+  if (typeof window === 'undefined') return DEFAULT_PORTAL_ID;
+  const portalId = new URLSearchParams(window.location.search).get('portal');
+  return portalId || DEFAULT_PORTAL_ID;
+}
 
 function portalLabel(portal?: Partial<CredentialPortalConfig & AverbadorCredential> | null) {
   return portal?.name || portal?.portal_name || 'Portal';
@@ -72,19 +80,49 @@ function formatDateTime(value?: string | null) {
   }).format(date);
 }
 
+function emptyCredentialProfile(): CredentialProfileData {
+  return {
+    department: '',
+    email: '',
+    cellphone: '',
+    question_1: '',
+    answer_1: '',
+    question_2: '',
+    answer_2: '',
+  };
+}
+
+function normalizeCredentialProfile(profile?: CredentialProfileData | null): CredentialProfileData {
+  return {
+    ...emptyCredentialProfile(),
+    ...(profile || {}),
+  };
+}
+
+function requiresProfileCompletion(portalId?: string | null) {
+  return portalId === 'prefeitura_ribeirao_preto';
+}
+
 export default function CredentialsPage() {
   const [portals, setPortals] = useState<CredentialPortalConfig[]>([]);
   const [credentials, setCredentials] = useState<AverbadorCredential[]>([]);
   const [logs, setLogs] = useState<CredentialConnectionLog[]>([]);
-  const [selectedPortalId, setSelectedPortalId] = useState(DEFAULT_PORTAL_ID);
-  const [draft, setDraft] = useState<Draft>({ portal_url: '', login: '', password: '' });
+  const [selectedPortalId, setSelectedPortalId] = useState(getInitialPortalId);
+  const [draft, setDraft] = useState<Draft>({
+    portal_url: '',
+    api_url: '',
+    login: '',
+    password: '',
+    credential_profile: emptyCredentialProfile(),
+  });
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState('');
 
   const selectedPortal = portals.find((portal) => portal.id === selectedPortalId) || portals[0] || null;
   const selectedCredential = credentials.find((credential) => credential.portal_id === selectedPortalId) || null;
-  const isSpPortal = selectedPortalId === 'governo_sp';
+  const requiresAssistedLogin = Boolean(selectedPortal?.requiresAssistedLogin || selectedCredential?.requires_assisted_login);
+  const providerPending = selectedPortal?.providerStatus === 'pending_provider';
 
   const portalRows = useMemo(() => {
     return portals.map((portal) => ({
@@ -102,8 +140,10 @@ export default function CredentialsPage() {
     const portal = portals.find((item) => item.id === selectedPortalId);
     setDraft({
       portal_url: credential?.portal_url || portal?.url || '',
+      api_url: credential?.api_url || portal?.apiBaseUrl || '',
       login: credential?.login || '',
       password: '',
+      credential_profile: normalizeCredentialProfile(credential?.credential_profile),
     });
   }, [credentials, portals, selectedPortalId]);
 
@@ -118,9 +158,13 @@ export default function CredentialsPage() {
       setPortals(portalResponse.portals || []);
       setCredentials(credentialResponse.credentials || []);
       setLogs(logResponse.rows || []);
-      if (!selectedPortalId && portalResponse.portals?.[0]?.id) {
-        setSelectedPortalId(portalResponse.portals[0].id);
-      }
+      const availablePortalIds = new Set((portalResponse.portals || []).map((portal) => portal.id));
+      const requestedPortalId = getInitialPortalId();
+      setSelectedPortalId((currentPortalId) => {
+        if (availablePortalIds.has(requestedPortalId)) return requestedPortalId;
+        if (availablePortalIds.has(currentPortalId)) return currentPortalId;
+        return portalResponse.portals?.[0]?.id || DEFAULT_PORTAL_ID;
+      });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Falha ao carregar credenciais.');
     } finally {
@@ -135,8 +179,10 @@ export default function CredentialsPage() {
       const payload = {
         portal_id: selectedPortal.id,
         portal_url: draft.portal_url || selectedPortal.url,
+        api_url: draft.api_url || selectedPortal.apiBaseUrl || '',
         login: draft.login,
         password: draft.password,
+        credential_profile: draft.credential_profile,
       };
       const response = selectedCredential?.id
         ? await api.updateCredential(selectedCredential.id, payload)
@@ -163,7 +209,11 @@ export default function CredentialsPage() {
   }
 
   async function handleTest() {
-    const credential = selectedCredential || (await persistCredential(true));
+    if (providerPending) {
+      toast.error('O conector deste portal ainda não está implementado.');
+      return;
+    }
+    const credential = await persistCredential(true);
     if (!credential?.id) {
       toast.error('Salve a credencial antes de testar.');
       return;
@@ -221,6 +271,51 @@ export default function CredentialsPage() {
     }
   }
 
+  async function handlePortalQuickConnect(portalId: string) {
+    selectPortal(portalId);
+    const portal = portals.find((item) => item.id === portalId);
+    const credential = credentials.find((item) => item.portal_id === portalId);
+
+    if (!portal) {
+      toast.error('Portal não encontrado.');
+      return;
+    }
+
+    if (!credential?.id) {
+      toast.error('Salve a credencial deste portal antes de conectar.');
+      return;
+    }
+
+    if (portal.providerStatus === 'pending_provider') {
+      toast.error('O conector deste portal ainda não está implementado.');
+      return;
+    }
+
+    try {
+      setActionLoading(`quick-connect:${portalId}`);
+      if (portal.requiresAssistedLogin) {
+        const response = await api.startAssistedLogin(credential.id);
+        setCredentials((items) => [...items.filter((item) => item.portal_id !== response.credential.portal_id), response.credential]);
+        await refreshLogs();
+        if (response.portal_url) {
+          window.open(response.portal_url, '_blank', 'noopener,noreferrer');
+        }
+        toast.success('Login assistido iniciado. Conclua o acesso no portal e confirme a sessão.');
+        return;
+      }
+
+      const response = await api.testCredential(credential.id);
+      setCredentials((items) => [...items.filter((item) => item.portal_id !== response.credential.portal_id), response.credential]);
+      await refreshLogs();
+      toast.success('Portal conectado com sucesso.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Falha ao conectar portal.';
+      toast.error(message);
+    } finally {
+      setActionLoading('');
+    }
+  }
+
   function openPortal() {
     const url = draft.portal_url || selectedPortal?.url;
     if (!url) {
@@ -228,6 +323,13 @@ export default function CredentialsPage() {
       return;
     }
     window.open(url, '_blank', 'noopener,noreferrer');
+  }
+
+  function selectPortal(portalId: string) {
+    setSelectedPortalId(portalId);
+    if (typeof window !== 'undefined') {
+      window.history.replaceState(null, '', `/credenciais?portal=${encodeURIComponent(portalId)}`);
+    }
   }
 
   return (
@@ -246,7 +348,7 @@ export default function CredentialsPage() {
               <button
                 key={portal.id}
                 type="button"
-                onClick={() => setSelectedPortalId(portal.id)}
+                onClick={() => selectPortal(portal.id)}
                 className={[
                   'rounded-2xl border px-5 py-4 text-left text-sm font-semibold transition',
                   active
@@ -256,7 +358,11 @@ export default function CredentialsPage() {
               >
                 <span className="block">{portal.name}</span>
                 <span className="mt-1 block text-xs font-normal text-slate-500">
-                  {portal.requiresAssistedLogin ? 'Login assistido' : 'Login direto'}
+                  {portal.providerStatus === 'pending_provider'
+                    ? 'Conector pendente'
+                    : portal.requiresAssistedLogin
+                      ? 'Login assistido'
+                      : 'Login direto'}
                 </span>
               </button>
             );
@@ -285,6 +391,21 @@ export default function CredentialsPage() {
                 onChange={(event) => setDraft((current) => ({ ...current, portal_url: event.target.value }))}
                 placeholder={selectedPortal?.url || 'https://'}
               />
+            </label>
+
+            <label className="block text-sm font-medium text-slate-300">
+              URL da API
+              <Input
+                className="mt-2"
+                value={draft.api_url}
+                onChange={(event) => setDraft((current) => ({ ...current, api_url: event.target.value }))}
+                placeholder={selectedPortal?.apiBaseUrl || 'Opcional para portais com API'}
+              />
+              {selectedPortal?.providerStatus === 'implemented_rf1_api' ? (
+                <p className="mt-2 text-xs text-slate-500">
+                  Este convênio usa a API RF1 para consulta. Se ficar vazio, o CRM tenta inferir pela URL do portal.
+                </p>
+              ) : null}
             </label>
 
             <div className="grid gap-4 md:grid-cols-2">
@@ -321,6 +442,126 @@ export default function CredentialsPage() {
                 </div>
               </label>
             </div>
+
+            {requiresProfileCompletion(selectedPortal?.id) ? (
+              <div className="rounded-3xl border border-cyan-400/20 bg-cyan-500/5 p-5">
+                <div className="mb-4">
+                  <p className="text-sm font-semibold text-white">Complemento de acesso do portal</p>
+                  <p className="mt-1 text-xs leading-6 text-slate-400">
+                    Use estes campos quando o portal pedir “Complete seu cadastro” antes de liberar a sessão automática.
+                  </p>
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <label className="block text-sm font-medium text-slate-300">
+                    Departamento
+                    <Input
+                      className="mt-2"
+                      value={draft.credential_profile.department || ''}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          credential_profile: { ...current.credential_profile, department: event.target.value },
+                        }))
+                      }
+                      placeholder="Departamento exibido no portal"
+                    />
+                  </label>
+
+                  <label className="block text-sm font-medium text-slate-300">
+                    E-mail
+                    <Input
+                      className="mt-2"
+                      value={draft.credential_profile.email || ''}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          credential_profile: { ...current.credential_profile, email: event.target.value },
+                        }))
+                      }
+                      placeholder="E-mail solicitado pelo portal"
+                    />
+                  </label>
+
+                  <label className="block text-sm font-medium text-slate-300">
+                    Celular
+                    <Input
+                      className="mt-2"
+                      value={draft.credential_profile.cellphone || ''}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          credential_profile: { ...current.credential_profile, cellphone: event.target.value },
+                        }))
+                      }
+                      placeholder="Celular solicitado pelo portal"
+                    />
+                  </label>
+
+                  <div className="hidden md:block" />
+
+                  <label className="block text-sm font-medium text-slate-300">
+                    Pergunta 1
+                    <Input
+                      className="mt-2"
+                      value={draft.credential_profile.question_1 || ''}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          credential_profile: { ...current.credential_profile, question_1: event.target.value },
+                        }))
+                      }
+                      placeholder="Texto da pergunta 1"
+                    />
+                  </label>
+
+                  <label className="block text-sm font-medium text-slate-300">
+                    Resposta 1
+                    <Input
+                      className="mt-2"
+                      value={draft.credential_profile.answer_1 || ''}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          credential_profile: { ...current.credential_profile, answer_1: event.target.value },
+                        }))
+                      }
+                      placeholder="Resposta da pergunta 1"
+                    />
+                  </label>
+
+                  <label className="block text-sm font-medium text-slate-300">
+                    Pergunta 2
+                    <Input
+                      className="mt-2"
+                      value={draft.credential_profile.question_2 || ''}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          credential_profile: { ...current.credential_profile, question_2: event.target.value },
+                        }))
+                      }
+                      placeholder="Texto da pergunta 2"
+                    />
+                  </label>
+
+                  <label className="block text-sm font-medium text-slate-300">
+                    Resposta 2
+                    <Input
+                      className="mt-2"
+                      value={draft.credential_profile.answer_2 || ''}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          credential_profile: { ...current.credential_profile, answer_2: event.target.value },
+                        }))
+                      }
+                      placeholder="Resposta da pergunta 2"
+                    />
+                  </label>
+                </div>
+              </div>
+            ) : null}
           </div>
 
           <div className="mt-6 rounded-3xl border border-border bg-bg/60 p-5">
@@ -349,11 +590,11 @@ export default function CredentialsPage() {
               <Save size={16} />
               {actionLoading === 'save' ? 'Salvando...' : 'Salvar credencial'}
             </Button>
-            <Button variant="secondary" onClick={() => void handleTest()} disabled={actionLoading === 'test'}>
+            <Button variant="secondary" onClick={() => void handleTest()} disabled={actionLoading === 'test' || providerPending}>
               <RefreshCcw size={16} />
-              {actionLoading === 'test' ? 'Testando...' : 'Testar conexão'}
+              {actionLoading === 'test' ? 'Conectando...' : providerPending ? 'Conector pendente' : 'Testar login'}
             </Button>
-            {isSpPortal ? (
+            {requiresAssistedLogin ? (
               <>
                 <Button className="bg-lime-300 text-slate-950 hover:brightness-105" onClick={() => void handleAssistedLogin()} disabled={actionLoading === 'assisted'}>
                   <ShieldCheck size={16} />
@@ -365,9 +606,9 @@ export default function CredentialsPage() {
                 </Button>
               </>
             ) : (
-              <Button className="bg-lime-300 text-slate-950 hover:brightness-105" onClick={() => void handleTest()} disabled={actionLoading === 'test'}>
+              <Button className="bg-lime-300 text-slate-950 hover:brightness-105" onClick={() => void handleTest()} disabled={actionLoading === 'test' || providerPending}>
                 <KeyRound size={16} />
-                Conectar
+                {providerPending ? 'Ainda não disponível' : 'Salvar e conectar'}
               </Button>
             )}
             <Button variant="ghost" onClick={openPortal}>
@@ -378,7 +619,7 @@ export default function CredentialsPage() {
         </Card>
 
         <div className="space-y-6">
-          {isSpPortal ? (
+          {requiresAssistedLogin ? (
             <Card className="border-amber-400/30 bg-amber-500/10 p-6">
               <div className="flex items-start gap-3">
                 <div className="rounded-2xl border border-amber-300/30 bg-amber-300/10 p-3 text-amber-200">
@@ -392,7 +633,7 @@ export default function CredentialsPage() {
                   <div className="mt-5 rounded-2xl border border-amber-300/20 bg-slate-950/35 p-4">
                     <p className="font-semibold text-white">Login assistido obrigatório</p>
                     <p className="mt-1 text-sm text-amber-50/80">
-                      O Governo de SP exige autenticação humana via CAPTCHA. Utilize o login assistido para realizar o acesso com segurança.
+                      Este portal exige autenticação com CAPTCHA. Utilize o login assistido para realizar o acesso com segurança.
                     </p>
                   </div>
                   <p className="mt-4 text-xs text-amber-50/75">
@@ -415,7 +656,9 @@ export default function CredentialsPage() {
                 </p>
                 <div className="mt-5 grid gap-3 text-sm">
                   <FlowLine label="Prefeitura de Ribeirão Preto" value="Worker Playwright existente conectado ao lote." tone="success" />
-                  <FlowLine label="Governo de SP" value="Preparado para sessão assistida por CAPTCHA." tone="info" />
+                  <FlowLine label="Estado de SP / TJSP" value="Login automatizado pelo robô com CapSolver." tone="success" />
+                  <FlowLine label="Prefeitura de Santana de Parnaíba" value="API RF1 para consulta; robô com CapSolver fica como fallback." tone="success" />
+                  <FlowLine label="Prefeitura de Ananindeua" value="API RF1 para consulta individual e lote." tone="success" />
                   <FlowLine label="Governo do Amapá" value="Credencial centralizada; provider pendente." tone="neutral" />
                 </div>
               </div>
@@ -473,21 +716,26 @@ export default function CredentialsPage() {
                   </td>
                   <td className="px-4 py-4">
                     <div className="flex flex-wrap gap-2">
-                      <Button variant="secondary" className="px-3 py-2" onClick={() => setSelectedPortalId(portal.id)}>
+                      <Button variant="secondary" className="px-3 py-2" onClick={() => selectPortal(portal.id)}>
                         Abrir
                       </Button>
-                      <Button variant="ghost" className="px-3 py-2" onClick={() => setSelectedPortalId(portal.id)}>
+                      <Button variant="ghost" className="px-3 py-2" onClick={() => selectPortal(portal.id)}>
                         Editar
                       </Button>
-                      {portal.requiresAssistedLogin ? (
-                        <Button variant="ghost" className="px-3 py-2" onClick={() => setSelectedPortalId(portal.id)}>
-                          Assistido
-                        </Button>
-                      ) : (
-                        <Button variant="ghost" className="px-3 py-2" onClick={() => setSelectedPortalId(portal.id)}>
-                          Conectar
-                        </Button>
-                      )}
+                      <Button
+                        variant="ghost"
+                        className="px-3 py-2"
+                        onClick={() => void handlePortalQuickConnect(portal.id)}
+                        disabled={actionLoading === `quick-connect:${portal.id}`}
+                      >
+                        {portal.requiresAssistedLogin
+                          ? actionLoading === `quick-connect:${portal.id}`
+                            ? 'Iniciando...'
+                            : 'Assistido'
+                          : actionLoading === `quick-connect:${portal.id}`
+                            ? 'Conectando...'
+                            : 'Conectar'}
+                      </Button>
                     </div>
                   </td>
                 </tr>

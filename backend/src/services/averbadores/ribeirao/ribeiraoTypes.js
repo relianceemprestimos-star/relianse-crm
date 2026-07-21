@@ -174,7 +174,9 @@ export function normalizeRibeiraoQueryResult(rawResult, cpf, sessionId, userId, 
             : marginsFound
               ? allMarginsZero
                 ? RIBEIRAO_QUERY_STATUSES.WITHOUT_MARGIN
-                : RIBEIRAO_QUERY_STATUSES.WITH_MARGIN
+                : best.net !== null && best.net > 0
+                  ? RIBEIRAO_QUERY_STATUSES.WITH_MARGIN
+                  : RIBEIRAO_QUERY_STATUSES.WITHOUT_MARGIN
               : status.includes('success') || status.includes('sucesso')
                 ? best.net !== null && best.net > 0
                   ? RIBEIRAO_QUERY_STATUSES.WITH_MARGIN

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Archive, Edit3, Plus, Upload, Users } from 'lucide-react';
+import { Archive, Edit3, Plus, Upload, Users, Workflow } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 import { api } from '../lib/api';
@@ -45,6 +45,7 @@ export default function CampaignsPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Campaign | null>(null);
   const [form, setForm] = useState<CampaignFormState>(initialForm);
+  const [campaignFilter, setCampaignFilter] = useState<'all' | 'pref_ribeirao' | 'mp'>('all');
 
   useEffect(() => {
     let active = true;
@@ -71,14 +72,35 @@ export default function CampaignsPage() {
     };
   }, [canAssignUsers]);
 
+  const campaignGroupOptions = [
+    { value: 'all', label: 'Todas as campanhas' },
+    { value: 'pref_ribeirao', label: 'Prefeitura de Ribeirão Preto' },
+    { value: 'mp', label: 'MP' },
+  ] as const;
+
+  const selectedCampaignGroup = campaignGroupOptions.find((option) => option.value === campaignFilter) || campaignGroupOptions[0];
+
+  const filteredCampaigns = useMemo(() => {
+    return campaigns.filter((campaign) => {
+      const text = `${campaign.name || ''} ${campaign.convenio || ''} ${campaign.description || ''}`.toLowerCase();
+      if (campaignFilter === 'pref_ribeirao') {
+        return text.includes('ribeirão') || text.includes('ribeirao');
+      }
+      if (campaignFilter === 'mp') {
+        return text.includes('mpsp') || text.includes('mp ') || text.includes('ministério público') || text.includes('ministerio publico');
+      }
+      return true;
+    });
+  }, [campaignFilter, campaigns]);
+
   const totals = useMemo(
     () => ({
-      total: campaigns.length,
-      active: campaigns.filter((campaign) => campaign.status === 'active').length,
-      clients: campaigns.reduce((sum, campaign) => sum + (campaign.total_clients || 0), 0),
-      positive: campaigns.reduce((sum, campaign) => sum + (campaign.total_em_atendimento || 0), 0),
+      total: filteredCampaigns.length,
+      active: filteredCampaigns.filter((campaign) => campaign.status === 'active').length,
+      clients: filteredCampaigns.reduce((sum, campaign) => sum + (campaign.total_clients || 0), 0),
+      positive: filteredCampaigns.reduce((sum, campaign) => sum + (campaign.total_em_atendimento || 0), 0),
     }),
-    [campaigns]
+    [filteredCampaigns]
   );
 
   function openCreate() {
@@ -159,12 +181,45 @@ export default function CampaignsPage() {
         title="Campanhas"
         description="Organize suas bases por convênio, órgão ou estratégia de atendimento."
         action={
-          <Button onClick={openCreate}>
-            <Plus size={16} />
-            Nova campanha
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={() => navigate('/whatsapp-fluxos')}>
+              <Workflow size={16} />
+              Fluxos de WhatsApp
+            </Button>
+            <Button onClick={openCreate}>
+              <Plus size={16} />
+              Nova campanha
+            </Button>
+          </div>
         }
       />
+
+      <Card className="p-4">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-end">
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Consulta de campanhas</p>
+            <p className="mt-1 text-sm text-slate-400">Escolha um grupo para consultar as campanhas sem criar abas separadas no menu lateral.</p>
+          </div>
+          <label className="block">
+            <span className="mb-2 block text-xs uppercase tracking-[0.18em] text-slate-500">Grupo</span>
+            <Select
+              value={campaignFilter}
+              onChange={(event) => setCampaignFilter(event.target.value as typeof campaignFilter)}
+              className="min-h-[52px] text-base font-semibold"
+            >
+              {campaignGroupOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </Select>
+          </label>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-2 text-sm text-slate-400">
+          <Badge tone="accent">{selectedCampaignGroup.label}</Badge>
+          <span>{filteredCampaigns.length} campanha(s) encontrada(s) neste grupo.</span>
+        </div>
+      </Card>
 
       <div className="grid gap-4 xl:grid-cols-4">
         <StatCard label="Total de campanhas" value={totals.total} icon={<Users size={18} />} />
@@ -177,7 +232,10 @@ export default function CampaignsPage() {
         <Card className="p-8 text-center text-slate-400">Carregando campanhas...</Card>
       ) : (
         <div className="grid gap-4 xl:grid-cols-2">
-          {campaigns.map((campaign) => (
+          {filteredCampaigns.length === 0 ? (
+            <Card className="p-8 text-center text-slate-400">Nenhuma campanha encontrada neste filtro.</Card>
+          ) : null}
+          {filteredCampaigns.map((campaign) => (
             <Card key={campaign.id} className="p-5">
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -215,8 +273,8 @@ export default function CampaignsPage() {
                 <Button onClick={() => navigate(`/campanhas/${campaign.id}`)}>
                   Abrir campanha
                 </Button>
-                <Button variant="secondary" onClick={() => navigate(`/fila?campaign_id=${campaign.id}`)}>
-                  Ver fila
+                <Button variant="secondary" onClick={() => navigate(`/atendimento?campaign_id=${campaign.id}`)}>
+                  Atendimentos
                 </Button>
                 <Button variant="secondary" onClick={() => navigate(`/relatorios?campaign_id=${campaign.id}`)}>
                   Relatório

@@ -40,6 +40,11 @@ function safeMessage(value) {
     .slice(0, 500);
 }
 
+function normalizeLookupPhone(value) {
+  const digits = cleanDigits(value);
+  return digits.startsWith('55') && digits.length > 11 ? digits.slice(2) : digits;
+}
+
 async function runNovaVidaCli(args = []) {
   const scriptPath = path.join(__dirname, 'nova_vida_cli.py');
   try {
@@ -76,10 +81,24 @@ function readFixture(client) {
   if (!fs.existsSync(fullPath)) return null;
   const raw = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
   const cpf = cleanDigits(client.cpf);
+  const phone = normalizeLookupPhone(client.phone || client.telefone);
   if (Array.isArray(raw)) {
-    return raw.find((entry) => cleanDigits(entry.cpf) === cpf || String(entry.name || '').toLowerCase() === String(client.name || '').toLowerCase()) || null;
+    return raw.find((entry) => {
+      const entryPhones = [
+        entry.phone,
+        entry.telefone,
+        entry.celular,
+        ...(Array.isArray(entry.phones) ? entry.phones : []),
+        ...(Array.isArray(entry.telefones) ? entry.telefones : []),
+      ];
+      return (
+        (cpf && cleanDigits(entry.cpf) === cpf) ||
+        (client.name && String(entry.name || '').toLowerCase() === String(client.name || '').toLowerCase()) ||
+        (phone && entryPhones.some((value) => normalizeLookupPhone(typeof value === 'object' ? value.number || value.phone_number || value.normalized : value) === phone))
+      );
+    }) || null;
   }
-  return raw[cpf] || raw[String(client.name || '').toLowerCase()] || null;
+  return raw[cpf] || raw[String(client.name || '').toLowerCase()] || raw[phone] || null;
 }
 
 export function getNovaVidaDiagnostics() {
@@ -135,11 +154,19 @@ export async function lookupPhoneNovaVida(client) {
     };
   }
 
-  const result = await runNovaVidaCli(['search', '--cpf', cleanDigits(client.cpf), '--name', client.name || '']);
+  const result = await runNovaVidaCli([
+    'search',
+    '--cpf',
+    cleanDigits(client.cpf),
+    '--name',
+    client.name || '',
+    '--phone',
+    normalizeLookupPhone(client.phone || client.telefone),
+  ]);
   const phones = dedupePhones(result.phones || []);
   return {
     source: 'Nova Vida',
-    cpf: cleanDigits(client.cpf),
+    cpf: cleanDigits(result.cpf || client.cpf),
     name: result.name || client.name || '',
     full_name: result.full_name || result.name || client.name || '',
     birth_date: result.birth_date || '',
@@ -172,10 +199,11 @@ export async function lookupPhoneNovaVida(client) {
   };
 }
 
-export async function searchPhoneNovaVida({ cpf = '', name = '' } = {}) {
+export async function searchPhoneNovaVida({ cpf = '', name = '', phone = '' } = {}) {
   return lookupPhoneNovaVida({
     cpf,
     name,
+    phone,
     phones: [],
   });
 }

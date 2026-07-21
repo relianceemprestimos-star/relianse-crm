@@ -49,6 +49,7 @@ import {
   applyRibeiraoResultToClient,
   getRibeiraoDiagnostics,
   getRibeiraoHistoryById,
+  getLatestConnectedRibeiraoSession,
   getRibeiraoConfigStatus,
   getRibeiraoSessionGate,
   getRibeiraoSessionStatus,
@@ -59,8 +60,8 @@ import {
 } from './services/averbadores/ribeirao/ribeiraoService.js';
 import {
   cancelRibeiraoBatch,
-  exportRibeiraoBatchResultsXlsx,
   getRibeiraoBatchHistory,
+  getRibeiraoBatchResultDownloadInfo,
   getRibeiraoBatchResults,
   getRibeiraoBatchStatus,
   loadRibeiraoBatchCpfsFromBase,
@@ -100,6 +101,14 @@ import {
   updateCredential,
 } from './services/credentials/credentialService.js';
 import { normalizePortalId } from './services/credentials/portalConfigs.js';
+import {
+  getBalance as getCaptchaBalance,
+  getCaptchaEngineConfig,
+  getCaptchaReport,
+  listCaptchaLogs,
+  saveCaptchaEngineConfig,
+  testExternalProvider,
+} from './services/captcha/captchaManager.js';
 import {
   connectWhatsapp,
   getWhatsappConfig,
@@ -311,6 +320,7 @@ app.use('/api/reports', roleMiddleware(operationalRoles));
 app.use('/api/ribeirao', roleMiddleware(operationalRoles));
 app.use('/api/phone-lookup', roleMiddleware(operationalRoles));
 app.use('/api/whatsapp', roleMiddleware(operationalRoles));
+app.use('/api/captcha-engine', roleMiddleware(['gerencial']));
 
 function handleWhatsappError(res, error) {
   const status = error instanceof WhatsappServiceError ? error.status : 500;
@@ -398,6 +408,75 @@ app.get('/api/whatsapp/status', async (_req, res) => {
   } catch (error) {
     return handleWhatsappError(res, error);
   }
+});
+
+app.get('/api/captcha-engine/config', roleMiddleware(['gerencial']), (_req, res) => {
+  return res.json({ config: getCaptchaEngineConfig() });
+});
+
+app.post('/api/captcha-engine/config', roleMiddleware(['gerencial']), (req, res) => {
+  try {
+    const config = saveCaptchaEngineConfig(req.body || {}, getAuthenticatedUserId(req));
+    return res.json({ config });
+  } catch (error) {
+    return res.status(400).json({ message: error instanceof Error ? error.message : 'Falha ao salvar Motor de CAPTCHA.' });
+  }
+});
+
+app.post('/api/captcha-engine/test-provider', roleMiddleware(['gerencial']), async (_req, res) => {
+  try {
+    const result = await testExternalProvider();
+    return res.json(result);
+  } catch (error) {
+    return res.status(400).json({ ok: false, message: error instanceof Error ? error.message : 'Falha ao testar provider externo.' });
+  }
+});
+
+app.get('/api/captcha-engine/balance', roleMiddleware(['gerencial']), async (_req, res) => {
+  try {
+    const result = await getCaptchaBalance();
+    return res.json(result);
+  } catch (error) {
+    return res.status(400).json({ ok: false, message: error instanceof Error ? error.message : 'Saldo indisponível.' });
+  }
+});
+
+app.get('/api/captcha-engine/logs', roleMiddleware(['gerencial']), (req, res) => {
+  return res.json({ rows: listCaptchaLogs(req.query || {}) });
+});
+
+app.get('/api/captcha-engine/report', roleMiddleware(['gerencial']), (req, res) => {
+  return res.json(getCaptchaReport(req.query || {}));
+});
+
+app.get('/api/captcha-engine/logs/export', roleMiddleware(['gerencial']), (req, res) => {
+  const rows = listCaptchaLogs({ ...(req.query || {}), limit: 1000 });
+  const headers = [
+    'id',
+    'portal',
+    'portal_label',
+    'batch_id',
+    'cpf_masked',
+    'provider',
+    'status',
+    'confidence',
+    'error_code',
+    'error_message',
+    'cost_estimated',
+    'duration_ms',
+    'created_at',
+  ];
+  const csv = [
+    headers.join(';'),
+    ...rows.map((row) =>
+      headers
+        .map((header) => `"${String(row[header] ?? '').replace(/"/g, '""')}"`)
+        .join(';')
+    ),
+  ].join('\n');
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="motor-captcha-logs.csv"');
+  return res.send(`\ufeff${csv}`);
 });
 
 app.get('/api/whatsapp/config', (_req, res) => {
@@ -1220,19 +1299,60 @@ app.post('/api/phone-lookup/worker/run', async (req, res) => {
 
 app.post('/api/ribeirao/session/start', roleMiddleware(operationalRoles), async (req, res) => {
   const userId = getAuthenticatedUserId(req);
-  const login = String(req.body.login || req.body.username || '').trim();
-  const password = String(req.body.password || '').trim();
+  const portalId = normalizePortalId(req.body.portal_id || req.body.portalId || 'prefeitura_ribeirao_preto');
+  const credentialGate = getCredentialGate(portalId);
+  const credentialSecret = getCredentialSecretByPortal(portalId);
+  const credentialId = Number(credentialSecret?.id || 0) || null;
+  const login = String(req.body.login || req.body.username || credentialSecret?.login || '').trim();
+  const password = String(req.body.password || credentialSecret?.password || '').trim();
+  const credentialProfile = req.body.credential_profile || req.body.credentialProfile || credentialSecret?.credential_profile || null;
   const role = getRequestRole(req);
 
   try {
+    if (portalId !== 'prefeitura_ribeirao_preto') {
+      return res.status(501).json({
+        success: false,
+        code: 'SOURCE_NOT_IMPLEMENTED',
+        message: 'Fonte ainda não implementada para sessão automatizada.',
+      });
+    }
+
+    if (!credentialGate.allowed && (!login || !password)) {
+      return res.status(409).json({
+        success: false,
+        code: credentialGate.code,
+        message: credentialGate.message,
+        credential: credentialGate.credential,
+      });
+    }
+
+    if (!login || !password) {
+      return res.status(400).json({
+        success: false,
+        code: 'CREDENTIAL_REQUIRED',
+        message: 'Informe login e senha ou cadastre a credencial do portal.',
+      });
+    }
+
+    const reusableSession = getLatestConnectedRibeiraoSession(userId);
+    if (reusableSession?.id && String(reusableSession.status || '').toLowerCase() === 'conectado') {
+      return res.json({
+        session: reusableSession,
+        message: 'Sessao Ribeirao conectada.',
+        reused: true,
+      });
+    }
+
     resetRibeiraoSessionCache();
     const session = await startRibeiraoSession({
       userId,
       login,
       password,
+      credentialProfile,
       timeoutSeconds: Number(req.body.timeout_seconds || req.body.timeoutSeconds || 900),
       slowMo: Number(req.body.slow_mo || req.body.slowMo || 0),
       role,
+      credentialId,
     });
 
     const sessionStatus = String(session?.status || '').toLowerCase();
@@ -1283,8 +1403,12 @@ app.post('/api/ribeirao/query', roleMiddleware(operationalRoles), async (req, re
     const userId = getAuthenticatedUserId(req);
     const sessionId = Number(req.body.session_id || req.body.sessionId || 0);
     const cpf = String(req.body.cpf || '').trim();
-    const login = String(req.body.login || req.body.username || '').trim();
-    const password = String(req.body.password || '').trim();
+    const portalId = normalizePortalId(req.body.portal_id || req.body.portalId || 'prefeitura_ribeirao_preto');
+    const credentialSecret = getCredentialSecretByPortal(portalId);
+    const credentialId = Number(credentialSecret?.id || 0) || null;
+    const login = String(req.body.login || req.body.username || credentialSecret?.login || '').trim();
+    const password = String(req.body.password || credentialSecret?.password || '').trim();
+    const credentialProfile = req.body.credential_profile || req.body.credentialProfile || credentialSecret?.credential_profile || null;
     const clientId = req.body.client_id || req.body.clientId ? Number(req.body.client_id || req.body.clientId) : null;
     const baseId = req.body.base_id || req.body.baseId ? Number(req.body.base_id || req.body.baseId) : null;
 
@@ -1318,8 +1442,10 @@ app.post('/api/ribeirao/query', roleMiddleware(operationalRoles), async (req, re
       cpf,
       login,
       password,
+      credentialProfile,
       clientId,
       baseId,
+      credentialId,
     });
 
     if (result?.ok === false) {
@@ -1334,6 +1460,7 @@ app.post('/api/ribeirao/query', roleMiddleware(operationalRoles), async (req, re
         LOGIN_BUTTON_NOT_FOUND: 400,
         LOGIN_TIMEOUT: 408,
         LOGIN_STILL_ON_SAME_PAGE: 400,
+        PROFILE_COMPLETION_REQUIRED: 409,
         PORTAL_CHANGED: 400,
         SELECTOR_ERROR: 400,
         DNS_RESOLUTION_FAILED: 503,
@@ -1362,6 +1489,7 @@ app.post('/api/ribeirao/query', roleMiddleware(operationalRoles), async (req, re
       CAPTCHA_REQUIRED: 409,
       LOGIN_ERROR: 401,
       SELECTOR_ERROR: 400,
+      PROFILE_COMPLETION_REQUIRED: 409,
       DNS_RESOLUTION_FAILED: 503,
       CHROMIUM_DNS_FAILED: 503,
       PORTAL_UNREACHABLE: 503,
@@ -1420,6 +1548,27 @@ function parseBatchCpfs(payload) {
   return [];
 }
 
+function parseBatchSourceRecords(payload) {
+  if (Array.isArray(payload.source_records)) {
+    return payload.source_records;
+  }
+  if (Array.isArray(payload.sourceRecords)) {
+    return payload.sourceRecords;
+  }
+  const raw = payload.source_records ?? payload.sourceRecords;
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
 async function handleBatchStart(req, res) {
   try {
     const userId = getAuthenticatedUserId(req);
@@ -1427,8 +1576,10 @@ async function handleBatchStart(req, res) {
     const portalId = normalizePortalId(req.body.portal_id || req.body.portalId || 'prefeitura_ribeirao_preto');
     const credentialGate = getCredentialGate(portalId);
     const credentialSecret = getCredentialSecretByPortal(portalId);
+    const credentialId = Number(credentialSecret?.id || 0) || null;
     const login = String(req.body.login || req.body.username || credentialSecret?.login || '').trim();
     const password = String(req.body.password || credentialSecret?.password || '').trim();
+    const credentialProfile = req.body.credential_profile || req.body.credentialProfile || credentialSecret?.credential_profile || null;
     const sourceType = String(req.body.source_type || req.body.sourceType || 'upload').trim().toLowerCase();
     const sourceFileName = String(req.body.source_file_name || req.body.sourceFileName || '').trim();
     const baseIdRaw = req.body.base_id ?? req.body.baseId ?? null;
@@ -1436,11 +1587,11 @@ async function handleBatchStart(req, res) {
     const delaySecondsMin = Number(req.body.delay_seconds_min || req.body.delaySecondsMin || 3);
     const delaySecondsMax = Number(req.body.delay_seconds_max || req.body.delaySecondsMax || 8);
 
-    if (portalId !== 'prefeitura_ribeirao_preto') {
+    if (portalId === 'governo_sp') {
       return res.status(501).json({
         success: false,
         code: 'SOURCE_NOT_IMPLEMENTED',
-        message: 'Fonte ainda não implementada para consulta em lote. O portal já pode ser configurado em Credenciais.',
+        message: 'Fonte ainda não implementada para consulta em lote. O portal de SP exige login assistido por CAPTCHA.',
       });
     }
 
@@ -1453,15 +1604,31 @@ async function handleBatchStart(req, res) {
       });
     }
 
-    if (!sessionId) {
+    if (sessionId && portalId === 'prefeitura_ribeirao_preto') {
+      const existingGate = getRibeiraoSessionGate(sessionId);
+      if (!existingGate.success) {
+        sessionId = 0;
+      }
+    }
+
+    if (!sessionId && portalId === 'prefeitura_ribeirao_preto') {
+      const reusableSession = getLatestConnectedRibeiraoSession(userId);
+      if (reusableSession?.id && String(reusableSession.status || '').toLowerCase() === 'conectado') {
+        sessionId = Number(reusableSession.id);
+      }
+    }
+
+    if (!sessionId && portalId === 'prefeitura_ribeirao_preto') {
       const startedSession = await startRibeiraoSession({
         userId,
         login,
         password,
+        credentialProfile,
         timeoutSeconds: Number(req.body.timeout_seconds || req.body.timeoutSeconds || 900),
         slowMo: Number(req.body.slow_mo || req.body.slowMo || 0),
         userName: req.user?.name || '',
         role: req.user?.role || 'gerencial',
+        credentialId,
       });
       if (!startedSession?.id || !String(startedSession.status || '').includes('conect')) {
         return res.status(409).json({
@@ -1474,7 +1641,7 @@ async function handleBatchStart(req, res) {
       sessionId = Number(startedSession.id);
     }
 
-    const gate = getRibeiraoSessionGate(sessionId);
+    const gate = portalId === 'prefeitura_ribeirao_preto' ? getRibeiraoSessionGate(sessionId) : { success: true };
     if (!gate.success) {
       return res.status(400).json({
         success: false,
@@ -1484,8 +1651,10 @@ async function handleBatchStart(req, res) {
     }
 
     let cpfs = parseBatchCpfs(req.body);
+    let sourceRecords = parseBatchSourceRecords(req.body);
     if (sourceType === 'base') {
       cpfs = loadRibeiraoBatchCpfsFromBase(baseId);
+      sourceRecords = [];
     }
 
     const normalizedCpfs = cpfs
@@ -1497,14 +1666,22 @@ async function handleBatchStart(req, res) {
       })
       .filter(Boolean);
 
+    const cpfEntries =
+      sourceType === 'upload' && Array.isArray(sourceRecords) && sourceRecords.length
+        ? sourceRecords
+        : normalizedCpfs.map((cpf) => ({ cpf }));
+
     const batch = await startRibeiraoBatch({
       userId,
       sessionId,
       login,
       password,
+      credentialId,
+      portalId,
       sourceType,
       sourceFileName,
       cpfs: normalizedCpfs,
+      cpfEntries,
       baseId,
       delaySecondsMin,
       delaySecondsMax,
@@ -1632,16 +1809,44 @@ app.get('/api/ribeirao/batch/:id/results', roleMiddleware(operationalRoles), (re
   return res.json({ batch, rows });
 });
 
-app.get('/api/ribeirao/batch/:id/export', roleMiddleware(operationalRoles), (req, res) => {
-  const batch = getRibeiraoBatchStatus(Number(req.params.id));
-  if (!batch) {
+function sendRibeiraoBatchDownload(req, res) {
+  const batchId = Number(req.params.id);
+  const download = getRibeiraoBatchResultDownloadInfo(batchId);
+
+  if (!download?.batch) {
     return res.status(404).json({ message: 'Lote nao encontrado.' });
   }
-  const workbookBuffer = exportRibeiraoBatchResultsXlsx(Number(req.params.id));
-  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  res.setHeader('Content-Disposition', `attachment; filename="lote-ribeirao-${batch.id}.xlsx"`);
-  return res.send(workbookBuffer);
-});
+
+  if (download.reason === 'BATCH_WITHOUT_RESULTS') {
+    return res.status(409).json({ message: 'Lote ainda sem resultados processados.' });
+  }
+
+  if (download.reason === 'BATCH_NOT_COMPLETED') {
+    return res.status(409).json({ message: 'Consulta ainda em processamento.' });
+  }
+
+  if (download.reason === 'RESULT_FILE_NOT_REGISTERED' || download.reason === 'RESULT_FILE_NOT_FOUND') {
+    return res.status(404).json({ message: 'Arquivo de resultado nao encontrado.' });
+  }
+
+  const filename = download.filename || `resultado-consulta-margem-lote-${download.batch.id}.xlsx`;
+  res.setHeader('Content-Type', download.mime || 'application/octet-stream');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+  if (download.buffer) {
+    return res.send(download.buffer);
+  }
+
+  if (!download.absolutePath) {
+    return res.status(500).json({ message: 'Erro interno ao preparar download do resultado.' });
+  }
+
+  return res.download(download.absolutePath, filename);
+}
+
+app.get('/api/ribeirao/batch/:id/export', roleMiddleware(operationalRoles), sendRibeiraoBatchDownload);
+app.get('/api/ribeirao/batch/:id/download', roleMiddleware(operationalRoles), sendRibeiraoBatchDownload);
+app.get('/api/consulta-margem/lotes/:id/download', roleMiddleware(operationalRoles), sendRibeiraoBatchDownload);
 
 app.get('/api/dashboard', (req, res) => {
   res.json(getDashboardData(req.query || {}));
@@ -1674,4 +1879,3 @@ app.listen(port, () => {
   console.log(`Reliance CRM backend running on port ${port}`);
   console.log(`SQLite database: ${dbPath}`);
 });
-

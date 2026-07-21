@@ -166,7 +166,7 @@ function normalizeRibeiraoSessionMessage(status, message, errorCode = null) {
   if (
     normalizedStatus === RIBEIRAO_SESSION_STATUSES.LOGIN_ERROR ||
     normalizedStatus === 'erro_login' ||
-    ['LOGIN_REJECTED', 'LOGIN_FIELDS_NOT_FOUND', 'LOGIN_BUTTON_NOT_FOUND', 'LOGIN_PASSWORD_FIELD_NOT_FOUND', 'LOGIN_TIMEOUT', 'LOGIN_STILL_ON_SAME_PAGE', 'PORTAL_CHANGED', 'SELECTOR_ERROR', 'CONVENIO_ACTION_NOT_FOUND', 'CONVENIO_SELECTION_FAILED', 'CONVENIO_NOT_FOUND', 'UNKNOWN_LOGIN_ERROR', 'LOGIN_OK_NAVIGATION_FAILED', 'DNS_RESOLUTION_FAILED', 'CHROMIUM_DNS_FAILED', 'WORKER_INTERNAL_ERROR', 'USER_ALREADY_LOGGED_CONFIRM_FAILED'].includes(normalizedErrorCode)
+    ['LOGIN_REJECTED', 'LOGIN_FIELDS_NOT_FOUND', 'LOGIN_BUTTON_NOT_FOUND', 'LOGIN_PASSWORD_FIELD_NOT_FOUND', 'LOGIN_TIMEOUT', 'LOGIN_STILL_ON_SAME_PAGE', 'PROFILE_COMPLETION_REQUIRED', 'PORTAL_CHANGED', 'SELECTOR_ERROR', 'CONVENIO_ACTION_NOT_FOUND', 'CONVENIO_SELECTION_FAILED', 'CONVENIO_NOT_FOUND', 'UNKNOWN_LOGIN_ERROR', 'LOGIN_OK_NAVIGATION_FAILED', 'DNS_RESOLUTION_FAILED', 'CHROMIUM_DNS_FAILED', 'WORKER_INTERNAL_ERROR', 'USER_ALREADY_LOGGED_CONFIRM_FAILED'].includes(normalizedErrorCode)
   ) {
     if (normalizedErrorCode === 'LOGIN_FIELDS_NOT_FOUND') {
       return 'O sistema n?o encontrou os campos de login do portal. O layout pode ter mudado.';
@@ -191,6 +191,9 @@ function normalizeRibeiraoSessionMessage(status, message, errorCode = null) {
     }
     if (normalizedErrorCode === 'LOGIN_STILL_ON_SAME_PAGE') {
       return 'O portal não avançou após informar o login. Pode ser validação por JavaScript, certificado digital ou bloqueio do portal.';
+    }
+    if (normalizedErrorCode === 'PROFILE_COMPLETION_REQUIRED') {
+      return 'O portal exigiu o cadastro complementar da conta antes de concluir o login automático.';
     }
     if (normalizedErrorCode === 'PORTAL_CHANGED') {
       return 'O layout do portal mudou e o fluxo de login n?o foi reconhecido.';
@@ -253,7 +256,7 @@ export function getRibeiraoSessionGate(sessionId) {
     };
   }
 
-  if (status === RIBEIRAO_SESSION_STATUSES.LOGIN_ERROR || ['LOGIN_REJECTED', 'LOGIN_FIELDS_NOT_FOUND', 'LOGIN_BUTTON_NOT_FOUND', 'LOGIN_PASSWORD_FIELD_NOT_FOUND', 'LOGIN_TIMEOUT', 'LOGIN_STILL_ON_SAME_PAGE', 'PORTAL_CHANGED', 'SELECTOR_ERROR', 'CONVENIO_ACTION_NOT_FOUND', 'CONVENIO_SELECTION_FAILED', 'CONVENIO_NOT_FOUND', 'UNKNOWN_LOGIN_ERROR', 'LOGIN_OK_NAVIGATION_FAILED', 'WORKER_INTERNAL_ERROR', 'USER_ALREADY_LOGGED_CONFIRM_FAILED'].includes(String(session.error_code || '').toUpperCase())) {
+  if (status === RIBEIRAO_SESSION_STATUSES.LOGIN_ERROR || ['LOGIN_REJECTED', 'LOGIN_FIELDS_NOT_FOUND', 'LOGIN_BUTTON_NOT_FOUND', 'LOGIN_PASSWORD_FIELD_NOT_FOUND', 'LOGIN_TIMEOUT', 'LOGIN_STILL_ON_SAME_PAGE', 'PROFILE_COMPLETION_REQUIRED', 'PORTAL_CHANGED', 'SELECTOR_ERROR', 'CONVENIO_ACTION_NOT_FOUND', 'CONVENIO_SELECTION_FAILED', 'CONVENIO_NOT_FOUND', 'UNKNOWN_LOGIN_ERROR', 'LOGIN_OK_NAVIGATION_FAILED', 'WORKER_INTERNAL_ERROR', 'USER_ALREADY_LOGGED_CONFIRM_FAILED'].includes(String(session.error_code || '').toUpperCase())) {
     if (String(session.error_code || '').toUpperCase() === 'WORKER_INTERNAL_ERROR') {
       return {
         success: false,
@@ -534,7 +537,21 @@ export function getRibeiraoSessionStatus(sessionId) {
   return session;
 }
 
-export async function startRibeiraoSession({ userId, login, password, timeoutSeconds = 900, slowMo = 0, userName = '', role = 'gerencial' }) {
+
+export function getLatestConnectedRibeiraoSession(userId = null) {
+  const database = getDb();
+  const params = [RIBEIRAO_SESSION_STATUSES.CONNECTED];
+  let sql = 'SELECT id FROM ribeirao_query_sessions WHERE status = ?';
+  if (userId !== null && userId !== undefined && userId !== '') {
+    sql += ' AND user_id = ?';
+    params.push(Number(userId));
+  }
+  sql += ' ORDER BY id DESC LIMIT 1';
+  const row = one(database, sql, params);
+  return row?.id ? getRibeiraoSessionStatus(Number(row.id)) : null;
+}
+
+export async function startRibeiraoSession({ userId, login, password, credentialProfile = null, timeoutSeconds = 900, slowMo = 0, userName = '', role = 'gerencial', credentialId = null }) {
   clearRibeiraoSessionCache();
   const database = getDb();
   const sessionAt = nowIso();
@@ -576,8 +593,10 @@ export async function startRibeiraoSession({ userId, login, password, timeoutSec
   const payload = {
     action: 'start_session',
     session_id: sessionId,
+    credential_id: credentialId ? Number(credentialId) : null,
     login,
     password,
+    credential_profile: credentialProfile || null,
     timeout_seconds: timeoutSeconds,
     slow_mo: slowMo,
     headless: resolveRibeiraoHeadless(),
@@ -652,7 +671,7 @@ export async function startRibeiraoSession({ userId, login, password, timeoutSec
   return session;
 }
 
-export async function queryRibeiraoCpf({ userId, sessionId, cpf, login, password, clientId = null, baseId = null }) {
+export async function queryRibeiraoCpf({ userId, sessionId, cpf, login, password, credentialProfile = null, clientId = null, baseId = null, credentialId = null }) {
   const database = getDb();
   const gate = getRibeiraoSessionGate(sessionId);
   if (!gate.success) {
@@ -668,14 +687,16 @@ export async function queryRibeiraoCpf({ userId, sessionId, cpf, login, password
     {
       action: 'query',
       session_id: sessionId,
+      credential_id: credentialId ? Number(credentialId) : null,
       login,
       password,
+      credential_profile: credentialProfile || null,
       cpf,
       client_id: clientId,
       base_id: baseId,
       headless: resolveRibeiraoHeadless(),
     },
-    { timeoutMs: 180000 }
+    { timeoutMs: Number(process.env.RIBEIRAO_QUERY_TIMEOUT_MS || 300000) }
   );
 
   const normalized = normalizeQueryPayload(payload, userId, sessionId, clientMatches);

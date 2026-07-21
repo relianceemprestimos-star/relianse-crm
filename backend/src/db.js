@@ -175,6 +175,11 @@ function execute(database, sql, params = []) {
   }
 }
 
+function lastInsertId(database) {
+  const row = queryOne(database, 'SELECT last_insert_rowid() AS id');
+  return Number(row?.id || row?.lastInsertRowid || row?.lastInsertRowID || row?.lastInsertId || 0);
+}
+
 function createAdapter(database) {
   return {
     __isAdapter: true,
@@ -1117,6 +1122,7 @@ function initSchema(database) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL,
       base_id INTEGER,
+      portal_id TEXT NOT NULL DEFAULT 'prefeitura_ribeirao_preto',
       source_type TEXT NOT NULL DEFAULT 'upload',
       source_file_name TEXT NOT NULL DEFAULT '',
       total_cpfs INTEGER NOT NULL DEFAULT 0,
@@ -1127,6 +1133,9 @@ function initSchema(database) {
       error_count INTEGER NOT NULL DEFAULT 0,
       captcha_count INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'pendente',
+      result_file_path TEXT NOT NULL DEFAULT '',
+      result_file_format TEXT NOT NULL DEFAULT '',
+      error_message TEXT NOT NULL DEFAULT '',
       started_at TEXT,
       finished_at TEXT,
       created_at TEXT NOT NULL,
@@ -1187,6 +1196,31 @@ function initSchema(database) {
       created_by INTEGER,
       FOREIGN KEY (credential_id) REFERENCES averbador_credentials(id) ON DELETE SET NULL,
       FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS captcha_engine_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      portal TEXT NOT NULL DEFAULT '',
+      portal_label TEXT NOT NULL DEFAULT '',
+      batch_id INTEGER,
+      cpf_masked TEXT NOT NULL DEFAULT '',
+      user_id INTEGER,
+      captcha_type TEXT NOT NULL DEFAULT '',
+      engine_mode TEXT NOT NULL DEFAULT '',
+      provider TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT '',
+      confidence REAL,
+      task_id TEXT NOT NULL DEFAULT '',
+      error_code TEXT NOT NULL DEFAULT '',
+      error_message TEXT NOT NULL DEFAULT '',
+      cost_estimated REAL,
+      raw_provider_status TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      started_at TEXT,
+      resolved_at TEXT,
+      duration_ms INTEGER,
+      FOREIGN KEY (batch_id) REFERENCES ribeirao_query_batches(id) ON DELETE SET NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
     );
 
     CREATE TABLE IF NOT EXISTS whatsapp_configs (
@@ -1532,7 +1566,11 @@ function initSchema(database) {
   ]);
 
   ensureColumns(database, 'ribeirao_query_batches', [
+    'portal_id TEXT NOT NULL DEFAULT \'prefeitura_ribeirao_preto\'',
     'not_found_count INTEGER NOT NULL DEFAULT 0',
+    'result_file_path TEXT NOT NULL DEFAULT \'\'',
+    'result_file_format TEXT NOT NULL DEFAULT \'\'',
+    'error_message TEXT NOT NULL DEFAULT \'\'',
   ]);
 
   ensureColumns(database, 'averbador_credentials', [
@@ -1577,6 +1615,28 @@ function initSchema(database) {
     'error_message TEXT NOT NULL DEFAULT \'\'',
     'created_at TEXT NOT NULL DEFAULT \'\'',
     'created_by INTEGER',
+  ]);
+
+  ensureColumns(database, 'captcha_engine_logs', [
+    'portal TEXT NOT NULL DEFAULT \'\'',
+    'portal_label TEXT NOT NULL DEFAULT \'\'',
+    'batch_id INTEGER',
+    'cpf_masked TEXT NOT NULL DEFAULT \'\'',
+    'user_id INTEGER',
+    'captcha_type TEXT NOT NULL DEFAULT \'\'',
+    'engine_mode TEXT NOT NULL DEFAULT \'\'',
+    'provider TEXT NOT NULL DEFAULT \'\'',
+    'status TEXT NOT NULL DEFAULT \'\'',
+    'confidence REAL',
+    'task_id TEXT NOT NULL DEFAULT \'\'',
+    'error_code TEXT NOT NULL DEFAULT \'\'',
+    'error_message TEXT NOT NULL DEFAULT \'\'',
+    'cost_estimated REAL',
+    'raw_provider_status TEXT NOT NULL DEFAULT \'\'',
+    'created_at TEXT NOT NULL DEFAULT \'\'',
+    'started_at TEXT',
+    'resolved_at TEXT',
+    'duration_ms INTEGER',
   ]);
 
   ensureColumns(database, 'whatsapp_configs', [
@@ -1705,6 +1765,10 @@ function initSchema(database) {
   database.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_averbador_credentials_portal_id ON averbador_credentials(portal_id)');
   database.exec('CREATE INDEX IF NOT EXISTS idx_averbador_sessions_credential ON averbador_sessions(credential_id, updated_at)');
   database.exec('CREATE INDEX IF NOT EXISTS idx_credential_connection_logs_created ON credential_connection_logs(created_at)');
+  database.exec('CREATE INDEX IF NOT EXISTS idx_captcha_engine_logs_created ON captcha_engine_logs(created_at)');
+  database.exec('CREATE INDEX IF NOT EXISTS idx_captcha_engine_logs_portal ON captcha_engine_logs(portal, created_at)');
+  database.exec('CREATE INDEX IF NOT EXISTS idx_captcha_engine_logs_batch ON captcha_engine_logs(batch_id, created_at)');
+  database.exec('CREATE INDEX IF NOT EXISTS idx_captcha_engine_logs_status ON captcha_engine_logs(status, created_at)');
   database.exec('CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_client ON whatsapp_messages(client_id, created_at)');
   database.exec('CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_phone ON whatsapp_messages(phone, created_at)');
   database.exec('CREATE INDEX IF NOT EXISTS idx_whatsapp_send_jobs_status ON whatsapp_send_jobs(status, scheduled_at)');
@@ -3931,7 +3995,7 @@ export function saveClientConsultationSnapshot({
   errorMessage = '',
   result = {},
   consultedAt = nowIso(),
-  ttlDays = 60,
+  ttlDays = 120,
 } = {}) {
   const database = getDb();
   const normalizedCpf = cleanDigits(cpf || result.cpf || '');
@@ -5627,7 +5691,7 @@ export function getUserByLogin(login) {
 export function createUserRecord({ name, login, passwordHash, role, isActive = true }) {
   const database = getDb();
   const now = nowIso();
-  database
+  const result = database
     .prepare(
       `
         INSERT INTO users (name, login, email, password_hash, role, is_active, last_login_at, created_at, updated_at)
@@ -5635,7 +5699,8 @@ export function createUserRecord({ name, login, passwordHash, role, isActive = t
       `
     )
     .run(name, login, login, passwordHash, normalizeUserRole(role), isActive ? 1 : 0, null, now, now);
-  return getUserById(lastInsertId(database));
+  const insertedId = Number(result?.lastInsertRowid || result?.lastInsertRowID || result?.lastInsertId || 0);
+  return getUserById(insertedId) || getUserByLogin(login);
 }
 
 export function updateUserRecord(id, { name, login, role, isActive }) {
@@ -5832,7 +5897,13 @@ export function upsertAverbadorCredential(input = {}) {
       now
     );
 
-  return getAverbadorCredentialById(Number(result?.lastInsertRowid || 0));
+  const credentialId = Number(
+    result?.lastInsertRowid ||
+      result?.last_insert_rowid ||
+      queryOne(database, 'SELECT id AS id FROM averbador_credentials ORDER BY id DESC LIMIT 1')?.id ||
+      0
+  );
+  return getAverbadorCredentialById(credentialId);
 }
 
 export function updateAverbadorCredentialById(id, input = {}) {
@@ -5973,9 +6044,185 @@ export function listCredentialConnectionLogs(params = {}) {
   }));
 }
 
+function mapCaptchaEngineLogRow(row = {}) {
+  return {
+    ...row,
+    id: Number(row.id || 0),
+    batch_id: row.batch_id === null || row.batch_id === undefined ? null : Number(row.batch_id),
+    user_id: row.user_id === null || row.user_id === undefined ? null : Number(row.user_id),
+    confidence: row.confidence === null || row.confidence === undefined ? null : Number(row.confidence),
+    cost_estimated: row.cost_estimated === null || row.cost_estimated === undefined ? null : Number(row.cost_estimated),
+    duration_ms: row.duration_ms === null || row.duration_ms === undefined ? null : Number(row.duration_ms),
+  };
+}
+
+export function insertCaptchaEngineLog(input = {}) {
+  const database = getDb();
+  const now = nowIso();
+  const result = database
+    .prepare(
+      `
+        INSERT INTO captcha_engine_logs (
+          portal,
+          portal_label,
+          batch_id,
+          cpf_masked,
+          user_id,
+          captcha_type,
+          engine_mode,
+          provider,
+          status,
+          confidence,
+          task_id,
+          error_code,
+          error_message,
+          cost_estimated,
+          raw_provider_status,
+          created_at,
+          started_at,
+          resolved_at,
+          duration_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `
+    )
+    .run(
+      String(input.portal || ''),
+      String(input.portal_label || input.portalLabel || ''),
+      input.batch_id ?? input.batchId ?? null,
+      String(input.cpf_masked || input.cpfMasked || ''),
+      input.user_id ?? input.userId ?? null,
+      String(input.captcha_type || input.captchaType || ''),
+      String(input.engine_mode || input.engineMode || ''),
+      String(input.provider || ''),
+      String(input.status || ''),
+      input.confidence === null || input.confidence === undefined ? null : Number(input.confidence),
+      String(input.task_id || input.taskId || ''),
+      String(input.error_code || input.errorCode || ''),
+      String(input.error_message || input.errorMessage || ''),
+      input.cost_estimated === null || input.cost_estimated === undefined ? null : Number(input.cost_estimated),
+      String(input.raw_provider_status || input.rawProviderStatus || ''),
+      String(input.created_at || input.createdAt || now),
+      input.started_at ?? input.startedAt ?? null,
+      input.resolved_at ?? input.resolvedAt ?? null,
+      input.duration_ms === null || input.duration_ms === undefined ? null : Number(input.duration_ms)
+    );
+  persistDb();
+  return mapCaptchaEngineLogRow(queryOne(database, 'SELECT * FROM captcha_engine_logs WHERE id = ? LIMIT 1', [Number(result?.lastInsertRowid || 0)]));
+}
+
+function buildCaptchaLogWhere(params = {}) {
+  const values = [];
+  const clauses = [];
+  if (params.portal) {
+    clauses.push('portal = ?');
+    values.push(String(params.portal));
+  }
+  if (params.provider) {
+    clauses.push('provider = ?');
+    values.push(String(params.provider));
+  }
+  if (params.status) {
+    clauses.push('status = ?');
+    values.push(String(params.status));
+  }
+  if (params.batch_id || params.batchId) {
+    clauses.push('batch_id = ?');
+    values.push(Number(params.batch_id || params.batchId));
+  }
+  if (params.from) {
+    clauses.push('date(created_at) >= date(?)');
+    values.push(String(params.from));
+  }
+  if (params.to) {
+    clauses.push('date(created_at) <= date(?)');
+    values.push(String(params.to));
+  }
+  return {
+    where: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '',
+    values,
+  };
+}
+
+export function listCaptchaEngineLogs(params = {}) {
+  const database = getDb();
+  const { where, values } = buildCaptchaLogWhere(params);
+  const limit = Math.min(Math.max(Number(params.limit || 250), 1), 1000);
+  return queryAll(
+    database,
+    `
+      SELECT *
+      FROM captcha_engine_logs
+      ${where}
+      ORDER BY datetime(created_at) DESC, id DESC
+      LIMIT ${limit}
+    `,
+    values
+  ).map(mapCaptchaEngineLogRow);
+}
+
+export function getCaptchaEngineReport(params = {}) {
+  const database = getDb();
+  const today = new Date().toISOString().slice(0, 10);
+  const scopedParams = { ...params };
+  if (!scopedParams.from && !scopedParams.to) {
+    scopedParams.from = today;
+    scopedParams.to = today;
+  }
+  const { where, values } = buildCaptchaLogWhere(scopedParams);
+  const rows = queryAll(database, `SELECT * FROM captcha_engine_logs ${where}`, values).map(mapCaptchaEngineLogRow);
+  const count = (predicate) => rows.filter(predicate).length;
+  const detected = count((row) => row.status === 'CAPTCHA_DETECTED');
+  const ocrSolved = count((row) => row.status === 'INTERNAL_OCR_SOLVED');
+  const externalSolved = count((row) => row.status === 'EXTERNAL_PROVIDER_SOLVED');
+  const manualRequired = count((row) => row.status === 'MANUAL_AUTH_REQUIRED');
+  const failures = count((row) => /FAILED|TIMEOUT|REJECTED|LOW_CONFIDENCE|LIMIT|MISSING|DISABLED|NOT_ENABLED/.test(String(row.status || '')));
+  const byKey = (key) =>
+    Object.values(
+      rows.reduce((acc, row) => {
+        const name = String(row[key] || '');
+        if (!name) return acc;
+        acc[name] = acc[name] || { key: name, total: 0, failures: 0, successes: 0, cost_estimated: 0 };
+        acc[name].total += 1;
+        if (/SOLVED|TOKEN_APPLIED/.test(String(row.status || ''))) acc[name].successes += 1;
+        if (/FAILED|TIMEOUT|REJECTED|LOW_CONFIDENCE|LIMIT|MANUAL/.test(String(row.status || ''))) acc[name].failures += 1;
+        acc[name].cost_estimated += Number(row.cost_estimated || 0);
+        return acc;
+      }, {})
+    );
+  const resolvedRows = rows.filter((row) => Number(row.duration_ms || 0) > 0);
+  const averageMs = resolvedRows.length
+    ? Math.round(resolvedRows.reduce((sum, row) => sum + Number(row.duration_ms || 0), 0) / resolvedRows.length)
+    : 0;
+  const costEstimated = rows.reduce((sum, row) => sum + Number(row.cost_estimated || 0), 0);
+  return {
+    totals: {
+      detected,
+      ocr_solved: ocrSolved,
+      external_solved: externalSolved,
+      manual_required: manualRequired,
+      failures,
+      total_logs: rows.length,
+      ocr_success_rate: detected ? Math.round((ocrSolved / detected) * 100) : 0,
+      external_success_rate: detected ? Math.round((externalSolved / detected) * 100) : 0,
+      cost_estimated: costEstimated,
+      estimated_savings: ocrSolved * 0.002,
+      average_duration_ms: averageMs,
+    },
+    by_portal: byKey('portal'),
+    by_batch: byKey('batch_id'),
+    by_provider: byKey('provider'),
+    latest_errors: rows
+      .filter((row) => row.error_message || /FAILED|TIMEOUT|REJECTED|MANUAL|LIMIT/.test(String(row.status || '')))
+      .slice(0, 20),
+    manual_required: rows.filter((row) => row.status === 'MANUAL_AUTH_REQUIRED').slice(0, 50),
+    rows: rows.slice(0, 250),
+  };
+}
+
 export function createRibeiraoBatchRecord({
   userId,
   baseId = null,
+  portalId = 'prefeitura_ribeirao_preto',
   sourceType = 'upload',
   sourceFileName = '',
   totalCpfs = 0,
@@ -5988,6 +6235,7 @@ export function createRibeiraoBatchRecord({
         INSERT INTO ribeirao_query_batches (
           user_id,
           base_id,
+          portal_id,
           source_type,
           source_file_name,
           total_cpfs,
@@ -5998,11 +6246,14 @@ export function createRibeiraoBatchRecord({
           error_count,
           captcha_count,
           status,
+          result_file_path,
+          result_file_format,
+          error_message,
           started_at,
           finished_at,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, 'pendente', NULL, NULL, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, 'pendente', '', '', '', NULL, NULL, ?, ?)
       `
     )
     .run(
@@ -6010,6 +6261,7 @@ export function createRibeiraoBatchRecord({
       baseId === null || baseId === undefined || baseId === '' || String(baseId).toLowerCase() === 'all' || String(baseId).toLowerCase() === 'all_active'
         ? null
         : Number(baseId),
+      String(portalId || 'prefeitura_ribeirao_preto'),
       String(sourceType || 'upload').toLowerCase(),
       String(sourceFileName || ''),
       Number(totalCpfs || 0),
@@ -6075,6 +6327,7 @@ export function updateRibeiraoBatchRecord(id, updates = {}) {
   const allowed = {
     source_type: 'source_type',
     source_file_name: 'source_file_name',
+    portal_id: 'portal_id',
     total_cpfs: 'total_cpfs',
     processed_count: 'processed_count',
     success_count: 'success_count',
@@ -6083,6 +6336,9 @@ export function updateRibeiraoBatchRecord(id, updates = {}) {
     error_count: 'error_count',
     captcha_count: 'captcha_count',
     status: 'status',
+    result_file_path: 'result_file_path',
+    result_file_format: 'result_file_format',
+    error_message: 'error_message',
     started_at: 'started_at',
     finished_at: 'finished_at',
     base_id: 'base_id',

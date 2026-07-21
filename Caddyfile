@@ -13,3 +13,44 @@
     reverse_proxy frontend:80
   }
 }
+
+relianceconsigzap.com.br, www.relianceconsigzap.com.br {
+  encode gzip zstd
+  reverse_proxy 172.17.0.1:8088
+}
+
+mestreviral.com.br {
+  encode gzip zstd
+  header Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"
+  header Pragma "no-cache"
+  header Expires "0"
+  header Clear-Site-Data "\"cache\""
+
+  handle /api/* {
+    reverse_proxy shop-operator-ai-server:4000
+  }
+
+  handle {
+    reverse_proxy shop-operator-ai-client:80
+  }
+}
+
+www.mestreviral.com.br {
+  redir https://mestreviral.com.br{uri} permanent
+}
+
+mapapublico.com.br, www.mapapublico.com.br {
+  encode gzip zstd
+
+  handle {
+    reverse_proxy mapapublico-nginx:80
+  }
+}
+
+# fallback temporario mapapublico
+http://129.121.47.155 {
+  encode gzip zstd
+  handle {
+    reverse_proxy mapapublico-nginx:80
+  }
+}

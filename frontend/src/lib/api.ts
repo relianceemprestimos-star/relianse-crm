@@ -34,6 +34,7 @@ import type {
   WhatsappFlowExecution,
   WhatsappFlowLog,
   WhatsappTemplate,
+  AutomationRegistrySummary,
 } from '../types';
 import { clearAuthSession, getAccessSession, getAuthToken } from './session';
 
@@ -241,6 +242,12 @@ export const api = {
   getSettings: () => request<{ settings: Settings }>('/api/settings'),
   getRibeiraoConfig: () => request<{ config: RibeiraoConfigStatus }>('/api/ribeirao/config'),
   getRibeiraoDiagnostics: () => request<{ diagnostics: RibeiraoDiagnostics }>('/api/ribeirao/diagnostics'),
+  getAutomationRegistry: () => request<AutomationRegistrySummary>('/api/automation-registry'),
+  revalidateAutomationFlow: (convenioId: string, note = '') =>
+    request<{ ok: boolean; message: string }>('/api/automation-registry/' + encodeURIComponent(convenioId) + '/revalidate', {
+      method: 'POST',
+      body: JSON.stringify({ note }),
+    }),
   getCredentialPortals: () => request<{ portals: CredentialPortalConfig[] }>('/api/credentials/portals'),
   getCredentials: () => request<{ credentials: AverbadorCredential[] }>('/api/credentials'),
   getCredential: (portalId: string) => request<{ credential: AverbadorCredential }>(`/api/credentials/${portalId}`),

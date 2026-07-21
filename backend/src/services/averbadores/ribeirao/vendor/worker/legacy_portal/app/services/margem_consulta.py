@@ -1,4 +1,5 @@
 ﻿import asyncio
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -754,6 +755,124 @@ class MargemConsultaService:
         except Exception:
             return None
 
+    async def _extract_servidor_fields(self) -> dict[str, str]:
+        try:
+            payload = await self.page.evaluate(
+                """() => {
+                    const normalize = (v) =>
+                      String(v || "")
+                        .normalize("NFD")
+                        .replace(/[\\u0300-\\u036f]/g, "")
+                        .toLowerCase()
+                        .trim();
+                    const readValue = (node) => {
+                      if (!node) return "";
+                      if (node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement || node instanceof HTMLSelectElement) {
+                        return String(node.value || "").trim();
+                      }
+                      return String(node.textContent || "").replace(/\\s+/g, " ").trim();
+                    };
+                    const findByField = (terms) => {
+                      const normalizedTerms = terms.map(normalize);
+                      const selectors = [
+                        "input, textarea, select",
+                        "[data-field], [name], [id]"
+                      ];
+                      for (const selector of selectors) {
+                        for (const el of Array.from(document.querySelectorAll(selector))) {
+                          const haystack = normalize(
+                            [
+                              el.getAttribute("name"),
+                              el.getAttribute("id"),
+                              el.getAttribute("placeholder"),
+                              el.getAttribute("aria-label"),
+                              el.getAttribute("data-field")
+                            ].filter(Boolean).join(" ")
+                          );
+                          if (!normalizedTerms.some((term) => haystack.includes(term))) continue;
+                          const value = readValue(el);
+                          if (value) return value;
+                        }
+                      }
+                      return "";
+                    };
+                    const findByLabel = (terms) => {
+                      const normalizedTerms = terms.map(normalize);
+                      const labels = Array.from(document.querySelectorAll("label, strong, span, div, th, p"));
+                      for (const label of labels) {
+                        const text = normalize(label.textContent || "");
+                        if (!text || text.length > 80) continue;
+                        if (!normalizedTerms.some((term) => text === term || text === `${term}:` || text.includes(term))) continue;
+                        const scope = label.closest("div, section, article, fieldset, tr, td, .form-group, .row") || label.parentElement;
+                        const candidates = [];
+                        if (scope) candidates.push(...Array.from(scope.querySelectorAll("input, textarea, select, [data-value], .value, .valor")));
+                        let sibling = scope ? scope.nextElementSibling : label.nextElementSibling;
+                        let hops = 0;
+                        while (sibling && hops < 2) {
+                          candidates.push(...Array.from(sibling.querySelectorAll("input, textarea, select, [data-value], .value, .valor")));
+                          candidates.push(sibling);
+                          sibling = sibling.nextElementSibling;
+                          hops += 1;
+                        }
+                        for (const candidate of candidates) {
+                          const value = readValue(candidate);
+                          if (value && normalize(value) !== text) return value;
+                        }
+                      }
+                      return "";
+                    };
+                    const findByGeometry = (terms) => {
+                      const normalizedTerms = terms.map(normalize);
+                      const labels = Array.from(document.querySelectorAll("label, strong, span, div, th, p"))
+                        .filter((label) => {
+                          const text = normalize(label.textContent || "");
+                          if (!text || text.length > 80) return false;
+                          return normalizedTerms.some((term) => text === term || text === `${term}:`);
+                        });
+                      const inputs = Array.from(document.querySelectorAll("input, textarea, select"));
+                      for (const label of labels) {
+                        const labelRect = label.getBoundingClientRect();
+                        const candidates = inputs
+                          .map((input) => ({ input, rect: input.getBoundingClientRect(), value: readValue(input) }))
+                          .filter((item) => {
+                            if (!item.value) return false;
+                            const verticalDistance = Math.abs(item.rect.top - labelRect.bottom);
+                            const sameColumn = item.rect.left >= labelRect.left - 40;
+                            const belowOrSame = item.rect.top >= labelRect.top - 4;
+                            return verticalDistance <= 90 && sameColumn && belowOrSame;
+                          })
+                          .sort((a, b) => {
+                            const da = Math.abs(a.rect.top - labelRect.bottom) + Math.abs(a.rect.left - labelRect.left) / 10;
+                            const db = Math.abs(b.rect.top - labelRect.bottom) + Math.abs(b.rect.left - labelRect.left) / 10;
+                            return da - db;
+                          });
+                        for (const item of candidates) {
+                          const value = String(item.value || "").trim();
+                          if (!value) continue;
+                          if (/^\\d{1,2}\\/\\d{4}$/.test(value)) continue;
+                          return value;
+                        }
+                      }
+                      return "";
+                    };
+                    const firstNonEmpty = (...values) => values.find((v) => String(v || "").trim()) || "";
+                    return {
+                      nome: firstNonEmpty(findByGeometry(["nome"]), findByField(["nome"]), findByLabel(["nome"])),
+                      matricula: firstNonEmpty(findByGeometry(["matricula", "matrícula"]), findByField(["matricula", "matrícula"]), findByLabel(["matricula", "matrícula"])),
+                      vinculo: firstNonEmpty(findByGeometry(["vinculo", "vínculo"]), findByField(["vinculo", "vínculo"]), findByLabel(["vinculo", "vínculo"])),
+                      status_servidor: firstNonEmpty(findByGeometry(["status"]), findByField(["status"]), findByLabel(["status"])),
+                      entidade: firstNonEmpty(findByGeometry(["entidade", "orgao", "órgão"]), findByField(["entidade", "orgao", "órgão"]), findByLabel(["entidade", "orgao", "órgão"])),
+                      email: firstNonEmpty(findByGeometry(["email", "e-mail"]), findByField(["email", "e-mail"]), findByLabel(["email", "e-mail"]))
+                    };
+                }"""
+            )
+            cleaned = {k: (v or "").strip() for k, v in (payload or {}).items()}
+            if "@" in cleaned.get("nome", ""):
+                cleaned["nome"] = ""
+            return cleaned
+        except Exception:
+            return {}
+
     async def _go_to_servidores_margem(self) -> None:
         await self._recover_session_if_logged_out()
 
@@ -875,6 +994,7 @@ class MargemConsultaService:
         if not clicked_details:
             raise RuntimeError("Nao encontrei botao Detalhes apos pesquisar CPF")
         await self.page.wait_for_timeout(500)
+        servidor_fields = await self._extract_servidor_fields()
         clicked_tab = await self._click_any(self.settings.selector_aba_margem, 6000)
         if not clicked_tab:
             raise RuntimeError("Nao encontrei a aba Margem na tela de detalhes")
@@ -943,7 +1063,12 @@ class MargemConsultaService:
         payload_extra = payload_extra or {}
         payload_extra.update(
             {
-                "nome_portal": nome_servidor or "",
+                "nome_portal": servidor_fields.get("nome") or nome_servidor or "",
+                "matricula": servidor_fields.get("matricula", ""),
+                "vinculo": servidor_fields.get("vinculo", ""),
+                "status_servidor": servidor_fields.get("status_servidor", ""),
+                "orgao": servidor_fields.get("entidade", ""),
+                "email": servidor_fields.get("email", ""),
                 "facultativa_margem_consignavel": facultativa.get("Margem Consignavel", ""),
                 "facultativa_disponivel": facultativa.get("Disponivel", ""),
                 "cartao_margem_consignavel": cartao.get("Margem", ""),

@@ -232,17 +232,17 @@ export default function DashboardPage() {
                     </span>
                     <ArrowRight size={16} />
                   </Button>
-                  <Button variant="secondary" className="w-full justify-between py-4" onClick={() => navigate('/upload')}>
+                  <Button variant="secondary" className="w-full justify-between py-4" onClick={() => navigate('/clientes')}>
                     <span className="flex items-center gap-2">
                       <Upload size={18} />
-                      Importar nova lista
+                      Central de clientes
                     </span>
                     <ArrowRight size={16} />
                   </Button>
-                  <Button variant="secondary" className="w-full justify-between py-4" onClick={() => navigate('/fila')}>
+                  <Button variant="secondary" className="w-full justify-between py-4" onClick={() => navigate('/atendimento')}>
                     <span className="flex items-center gap-2">
                       <Users size={18} />
-                      Ver agenda / fila
+                      Atendimentos
                     </span>
                     <ArrowRight size={16} />
                   </Button>

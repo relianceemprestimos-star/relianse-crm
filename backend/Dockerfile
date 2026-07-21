@@ -14,6 +14,8 @@ RUN apt-get update \
     python3 \
     python3-venv \
     python3-pip \
+    tesseract-ocr \
+    tesseract-ocr-eng \
   && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json ./

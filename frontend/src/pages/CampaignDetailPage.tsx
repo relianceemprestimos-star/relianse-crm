@@ -62,7 +62,7 @@ export default function CampaignDetailPage() {
               <ClipboardList size={16} />
               Iniciar atendimento da campanha
             </Button>
-            <Button variant="secondary" onClick={() => navigate(`/fila?campaign_id=${campaign.id}`)}>
+            <Button variant="secondary" onClick={() => navigate(`/clientes?campaign_id=${campaign.id}`)}>
               Ver clientes
             </Button>
             <Button variant="secondary" onClick={() => navigate(`/relatorios?campaign_id=${campaign.id}`)}>

@@ -60,19 +60,21 @@ export function parseMoney(value) {
     return null;
   }
 
+  const isNegative = /-\s*(?:R\$)?\s*\d|\d[\d.,]*\s*-|\([^)]*\d[\d.,]*[^)]*\)/i.test(text);
   const normalized = text
+    .replace(/[()]/g, '')
     .replace(/[R$\s]/g, '')
     .replace(/\./g, '')
     .replace(',', '.')
-    .replace(/(?!^)-/g, '');
+    .replace(/-/g, '');
 
   const number = Number(normalized);
   if (Number.isFinite(number)) {
-    return number;
+    return isNegative ? -Math.abs(number) : number;
   }
 
   const cleaned = text.replace(/[^\d,-]/g, '');
-  const sign = cleaned.includes('-') ? -1 : 1;
+  const sign = isNegative || cleaned.includes('-') ? -1 : 1;
   const digits = cleaned.replace(/-/g, '').replace(/\./g, '').replace(',', '.');
   const fallback = Number(digits);
   return Number.isFinite(fallback) ? sign * fallback : null;

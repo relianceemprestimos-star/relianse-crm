@@ -17,9 +17,11 @@ import toast from 'react-hot-toast';
 
 import { ApiError, api } from '../lib/api';
 import { formatCurrencyDisplay } from '../lib/margins';
+import { maskCpfForList } from '../lib/privacy';
 import { getAccessSession } from '../lib/session';
 import type {
   AverbadorCredential,
+  AutomationRegistrySummary,
   Base,
   RibeiraoBatchPreview,
   RibeiraoBatchRecord,
@@ -50,6 +52,7 @@ const MARGIN_CONNECTIONS = [
 ] as const;
 
 const RETURN_CHANNEL = 'Portal';
+const SP_BATCH_CPF_LIMIT = 450;
 
 const HISTORY_FILTER_DEFAULTS = {
   from: '',
@@ -61,6 +64,38 @@ const HISTORY_FILTER_DEFAULTS = {
 
 const ROLE_SESSION_KEY = 'relianse.ribeirao.sessionId';
 const BATCH_SESSION_KEY = 'relianse.ribeirao.batchId';
+const CONNECTION_REGISTRY_IDS: Record<string, string> = {
+  'prefeitura-ribeirao-preto': 'prefeitura_ribeirao_preto',
+  'governo-amapa': 'governo_amapa',
+  'governo-sp-tjsp': 'governo_sp',
+};
+
+function pickPreferredBatch(
+  rows: RibeiraoBatchRecord[],
+  currentBatchId?: number | null
+) {
+  if (!rows.length) {
+    return null;
+  }
+
+  const activeBatch = rows.find((row) => isBatchActive(row.status));
+  if (activeBatch) {
+    return activeBatch;
+  }
+
+  if (currentBatchId) {
+    const currentMatch = rows.find((row) => row.id === currentBatchId);
+    if (currentMatch) {
+      return currentMatch;
+    }
+  }
+
+  return rows[0];
+}
+
+function hasBatchCpfLimit(connection: string) {
+  return normalizeMarginConnectionValue(connection) === 'governo_sp_tjsp';
+}
 
 export default function RibeiraoPage() {
   const sessionSession = getAccessSession();
@@ -71,6 +106,8 @@ export default function RibeiraoPage() {
   const [password, setPassword] = useState('');
   const [session, setSession] = useState<RibeiraoSession | null>(null);
   const [ribeiraoDiagnostics, setRibeiraoDiagnostics] = useState<RibeiraoDiagnostics | null>(null);
+  const [automationRegistry, setAutomationRegistry] = useState<AutomationRegistrySummary | null>(null);
+  const [registryLoading, setRegistryLoading] = useState(false);
   const [sessionLoading, setSessionLoading] = useState(false);
   const [sessionRefreshing, setSessionRefreshing] = useState(false);
   const [cpf, setCpf] = useState('');
@@ -104,6 +141,7 @@ export default function RibeiraoPage() {
       void refreshBatchStatus(savedBatch);
     }
     void loadRibeiraoDiagnostics();
+    void loadAutomationRegistry();
     void loadHistory(historyFilters);
     void loadBatchHistory();
     void loadBases();
@@ -162,6 +200,11 @@ export default function RibeiraoPage() {
 
   const visibleHistory = useMemo(() => history, [history]);
   const ribeiraoUrlReady = Boolean(ribeiraoDiagnostics?.ribeiraoConfigured);
+  const selectedRegistryId = CONNECTION_REGISTRY_IDS[selectedConnection] || normalizeMarginConnectionValue(selectedConnection || 'prefeitura-ribeirao-preto');
+  const selectedRegistryFlow = useMemo(
+    () => (automationRegistry?.flows || []).find((flow) => flow.convenio_id === selectedRegistryId) || null,
+    [automationRegistry?.flows, selectedRegistryId]
+  );
   const stats = useMemo(() => {
     const total = history.length;
     const withMargin = history.filter((item) => item.consulta_status === 'com_marg').length;
@@ -214,6 +257,32 @@ export default function RibeiraoPage() {
     }
   }
 
+  async function loadAutomationRegistry() {
+    try {
+      setRegistryLoading(true);
+      const response = await api.getAutomationRegistry();
+      setAutomationRegistry(response);
+    } catch (error) {
+      setAutomationRegistry(null);
+      toast.error(error instanceof Error ? error.message : 'Falha ao carregar registry de automações.');
+    } finally {
+      setRegistryLoading(false);
+    }
+  }
+
+  async function handleRevalidateRegistryFlow() {
+    if (!selectedRegistryId) {
+      return;
+    }
+    try {
+      const response = await api.revalidateAutomationFlow(selectedRegistryId, 'Revalidacao solicitada no painel tecnico da Consulta de Margem.');
+      toast.success(response.message || 'Revalidacao registrada.');
+      await loadAutomationRegistry();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Falha ao registrar revalidacao.');
+    }
+  }
+
   async function loadHistory(filters = historyFilters) {
     try {
       setHistoryLoading(true);
@@ -230,7 +299,9 @@ export default function RibeiraoPage() {
     try {
       setBatchHistoryLoading(true);
       const response = await api.getRibeiraoBatchHistory();
-      setBatchHistory((response.rows || []).filter(Boolean));
+      const rows = (response.rows || []).filter(Boolean);
+      setBatchHistory(rows);
+      setCurrentBatch((previous) => pickPreferredBatch(rows, previous?.id) || previous || null);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Falha ao carregar o histórico de lotes.');
     } finally {
@@ -296,14 +367,24 @@ export default function RibeiraoPage() {
       return;
     }
 
-    if (!login.trim() || !password.trim()) {
-      toast.error('Informe login e senha.');
+    const portalId = normalizeMarginConnectionValue(selectedConnection || 'prefeitura_ribeirao_preto');
+    const hasTypedCredential = Boolean(login.trim() && password.trim());
+    const hasSavedCredential = Boolean(selectedCredential?.has_password);
+
+    if (portalId !== 'prefeitura_ribeirao_preto') {
+      toast.error('Fonte ainda nÃ£o implementada para conexÃ£o automatizada.');
+      return;
+    }
+
+    if (!hasTypedCredential && !hasSavedCredential) {
+      toast.error('Cadastre a credencial do portal ou informe login e senha para conectar.');
       return;
     }
 
     try {
       setSessionLoading(true);
       const response = await api.startRibeiraoSession({
+        portal_id: portalId,
         login: login.trim(),
         password,
         timeout_seconds: 900,
@@ -440,18 +521,12 @@ export default function RibeiraoPage() {
       return;
     }
     if (!selectedCredential?.has_password) {
-      toast.error('Credencial não configurada. Acesse a aba Credenciais para conectar este portal.');
-      return;
+      toast('Credencial não configurada. O sistema tentará usar a sessão ativa e reconectar automaticamente.');
     }
-    if (selectedCredential.session_status === 'sessao_expirada') {
-      toast.error('Sessão expirada. Reconecte ou execute login assistido na aba Credenciais.');
-      return;
+    if (selectedCredential?.session_status === 'sessao_expirada') {
+      toast('Sessão marcada como expirada. O sistema tentará reconectar automaticamente.');
     }
-    if (false && (!sessionReady || !session?.id)) {
-      toast.error('Para consultar em lote, primeiro conecte a sessão com o averbador.');
-      return;
-    }
-    const sessionId = session.id;
+    const sessionId = Number(session?.id || 0);
     if (false && (!login.trim() || !password.trim())) {
       toast.error('Informe login e senha da sessão.');
       return;
@@ -468,8 +543,8 @@ export default function RibeiraoPage() {
       toast.error('Envie uma planilha com CPFs válidos antes de iniciar o lote.');
       return;
     }
-    if (batchSourceMode === 'upload' && (batchPreview?.valid_rows || 0) > 450) {
-      toast.error('O arquivo deve ter no máximo 450 CPFs válidos.');
+    if (batchSourceMode === 'upload' && hasBatchCpfLimit(selectedConnection) && (batchPreview?.valid_rows || 0) > SP_BATCH_CPF_LIMIT) {
+      toast.error(`O Portal do Consignado aceita no máximo ${SP_BATCH_CPF_LIMIT} CPFs válidos por lote.`);
       return;
     }
 
@@ -487,6 +562,7 @@ export default function RibeiraoPage() {
               source_type: 'upload' as const,
               source_file_name: batchPreviewFileName || 'planilha_upload',
               cpfs: batchPreview?.cpfs || [],
+              source_records: batchPreview?.source_rows || [],
             }
           : {
               source_type: 'base' as const,
@@ -572,6 +648,14 @@ export default function RibeiraoPage() {
       ? Math.min(100, Math.round((currentBatch.processed_count / currentBatch.total_cpfs) * 100))
       : 0
     : 0;
+  const batchProcessedCount = Number(currentBatch?.processed_count || 0);
+  const batchPositiveCount = Number(currentBatch?.success_count || 0);
+  const batchNegativeCount = Number(currentBatch?.no_margin_count || 0) + Number(currentBatch?.not_found_count || 0);
+  const batchErrorCount = Number(currentBatch?.error_count || 0) + Number(currentBatch?.captcha_count || 0);
+  const batchPositivePercent = batchProcessedCount ? Math.round((batchPositiveCount / batchProcessedCount) * 100) : 0;
+  const batchNegativePercent = batchProcessedCount ? Math.round((batchNegativeCount / batchProcessedCount) * 100) : 0;
+  const batchErrorPercent = batchProcessedCount ? Math.round((batchErrorCount / batchProcessedCount) * 100) : 0;
+  const batchHasHighErrorRate = isBatchActive(currentBatch?.status) && batchProcessedCount >= 5 && batchErrorPercent >= 20;
 
   const selectedBase = bases.find((base) => String(base.id) === String(batchBaseId));
   const batchSourceSummary =
@@ -585,6 +669,10 @@ export default function RibeiraoPage() {
           ? `${selectedBase.total_clientes} clientes na base`
           : 'Selecione uma base importada';
   const selectedConnectionLabel = getMarginConnectionLabel(selectedConnection);
+  const batchCpfLimitApplies = hasBatchCpfLimit(selectedConnection);
+  const batchUploadLimitText = batchCpfLimitApplies
+    ? `.xlsx, .xls, .csv ou .txt • máx. ${SP_BATCH_CPF_LIMIT} CPFs`
+    : '.xlsx, .xls, .csv ou .txt • sem limite fixo de CPFs para este convênio';
   const batchCpfCount = batchSourceMode === 'upload' ? batchPreview?.valid_rows || 0 : selectedBase?.total_clientes || 0;
   const canStartMarginBatch = Boolean(selectedConnection && batchSourceMode === 'upload' && batchPreview?.cpfs?.length);
 
@@ -596,6 +684,42 @@ export default function RibeiraoPage() {
         action={<Badge tone="accent">Perfil: {sessionSession.role}</Badge>}
       />
 
+      <Card className="p-5">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+          <div>
+            <p className="text-sm text-slate-400">Painel técnico</p>
+            <h3 className="mt-1 text-xl font-bold text-white">Automation Registry</h3>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Badge tone={flowTone(selectedRegistryFlow?.status)}>{selectedRegistryFlow?.status || (registryLoading ? 'Carregando' : 'Nao encontrado')}</Badge>
+            <Badge tone="neutral">{automationRegistry?.validated || 0} validados</Badge>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          <InfoLine label="Convênio" value={selectedRegistryFlow?.convenio_nome || selectedConnectionLabel || 'Prefeitura de Ribeirão Preto'} />
+          <InfoLine label="Portal" value={selectedRegistryFlow?.portal || '-'} />
+          <InfoLine label="Última validação" value={selectedRegistryFlow?.ultima_validacao || '-'} />
+          <InfoLine label="Última falha" value={selectedRegistryFlow?.ultima_falha || '-'} />
+          <InfoLine label="Versão" value={selectedRegistryFlow?.fluxo_versao || '-'} />
+        </div>
+
+        <div className="mt-4 flex flex-wrap gap-3">
+          <Button variant="secondary" onClick={() => void loadAutomationRegistry()} disabled={registryLoading}>
+            <RefreshCcw size={16} />
+            {registryLoading ? 'Atualizando...' : 'Usar caminho salvo'}
+          </Button>
+          <Button variant="secondary" onClick={() => void handleRevalidateRegistryFlow()} disabled={!selectedRegistryFlow}>
+            <ShieldAlert size={16} />
+            Revalidar caminho
+          </Button>
+          {selectedRegistryFlow?.registry_file ? (
+            <span className="flex items-center rounded-xl border border-border bg-bg/60 px-3 py-2 text-xs text-slate-400">
+              {selectedRegistryFlow.registry_file}
+            </span>
+          ) : null}
+        </div>
+      </Card>
 
       {activeTab === 'individual' ? (
         <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
@@ -727,6 +851,11 @@ export default function RibeiraoPage() {
 
             {currentResult ? (
               <div className="mt-5 space-y-5">
+                <div className="rounded-2xl border border-amber-300/25 bg-amber-300/10 p-4 text-sm text-amber-50">
+                  <p className="font-semibold text-white">Dados sensíveis — uso interno autorizado.</p>
+                  <p className="mt-1 text-amber-50/80">CPF completo aparece apenas neste resultado individual para conferência operacional.</p>
+                </div>
+
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                   <InfoLine label="CPF" value={currentResult.cpf || '-'} />
                   <InfoLine label="Nome" value={currentResult.nome || '-'} />
@@ -918,11 +1047,11 @@ export default function RibeiraoPage() {
                 <label className="mt-5 flex min-h-[170px] cursor-pointer flex-col items-center justify-center rounded-[28px] border border-dashed border-cyan-300/35 bg-[#061018]/80 px-6 py-8 text-center transition hover:border-lime-300/70 hover:bg-lime-300/5">
                   <Upload size={28} className="text-cyan-300" />
                   <span className="mt-3 text-lg font-bold text-white">Clique ou arraste o CSV para esta área</span>
-                  <span className="mt-1 text-sm text-slate-400">.csv ou .txt • máx. 450 CPFs</span>
+                  <span className="mt-1 text-sm text-slate-400">{batchUploadLimitText}</span>
                   <input
                     className="hidden"
                     type="file"
-                    accept=".csv,.txt"
+                    accept=".xlsx,.xls,.csv,.txt"
                     onChange={(event) => void handleBatchFileSelect(event.target.files?.[0] || null)}
                   />
                 </label>
@@ -978,6 +1107,18 @@ export default function RibeiraoPage() {
                 </div>
               ) : null}
 
+              {selectedConnection ? (
+                <Button
+                  variant="secondary"
+                  className="mt-4 w-full rounded-2xl px-5 py-4"
+                  onClick={() => void handleStartSession()}
+                  disabled={sessionLoading || !ribeiraoUrlReady}
+                >
+                  <RefreshCcw size={17} />
+                  {sessionLoading ? 'Conectando...' : sessionReady ? 'Reconectar Prefeitura' : 'Conectar Prefeitura'}
+                </Button>
+              ) : null}
+
               <Button
                 className="mt-7 w-full rounded-2xl border border-lime-200/30 bg-lime-300 px-5 py-5 text-base font-black text-slate-950 shadow-[0_18px_50px_rgba(190,242,100,0.2)] transition hover:bg-lime-200 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/10 disabled:text-slate-500 disabled:shadow-none"
                 onClick={() => void handleStartBatch()}
@@ -995,19 +1136,75 @@ export default function RibeiraoPage() {
               </p>
 
               {currentBatch ? (
-                <div className="mt-6 rounded-3xl border border-white/10 bg-black/20 p-4">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-300">Lote #{currentBatch.id}</span>
-                    <span className="text-slate-500">{currentBatch.processed_count}/{currentBatch.total_cpfs}</span>
+                <div className={`mt-6 rounded-3xl border p-4 ${
+                  currentBatch.status === 'erro'
+                    ? 'border-red-400/30 bg-red-950/15'
+                    : batchHasHighErrorRate
+                      ? 'border-amber-300/40 bg-amber-950/15'
+                      : 'border-white/10 bg-black/20'
+                }`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-200/70">Status do lote</p>
+                      <h4 className="mt-1 text-lg font-black text-white">Lote #{currentBatch.id}</h4>
+                    </div>
+                    <Badge tone={batchStatusTone(currentBatch.status)}>{batchStatusLabel(currentBatch.status)}</Badge>
+                  </div>
+
+                  <div className="mt-4 flex items-center justify-between text-sm">
+                    <span className="text-slate-300">Progresso geral</span>
+                    <span className="font-bold text-white">{currentBatch.processed_count}/{currentBatch.total_cpfs} CPFs · {batchProgress}%</span>
                   </div>
                   <div className="mt-3 h-2 rounded-full bg-white/10">
                     <div className="h-2 rounded-full bg-lime-300 transition-all" style={{ width: `${batchProgress}%` }} />
                   </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <Button variant="secondary" className="px-3 py-2" onClick={() => void handlePauseBatch()} disabled={!isBatchActive(currentBatch?.status)}>
-                      Pausar
+
+                  <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
+                    <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 px-2 py-3">
+                      <p className="text-slate-400">Positivos</p>
+                      <p className="mt-1 text-lg font-black text-emerald-200">{batchPositivePercent}%</p>
+                      <p className="text-[11px] text-slate-500">{batchPositiveCount} CPFs</p>
+                    </div>
+                    <div className="rounded-2xl border border-slate-400/15 bg-white/5 px-2 py-3">
+                      <p className="text-slate-400">Negativos</p>
+                      <p className="mt-1 text-lg font-black text-slate-200">{batchNegativePercent}%</p>
+                      <p className="text-[11px] text-slate-500">{batchNegativeCount} CPFs</p>
+                    </div>
+                    <div className={`rounded-2xl border px-2 py-3 ${
+                      batchErrorPercent >= 20 ? 'border-red-400/30 bg-red-500/10' : 'border-amber-300/20 bg-amber-300/10'
+                    }`}>
+                      <p className="text-slate-400">Erros</p>
+                      <p className="mt-1 text-lg font-black text-amber-100">{batchErrorPercent}%</p>
+                      <p className="text-[11px] text-slate-500">{batchErrorCount} CPFs</p>
+                    </div>
+                  </div>
+
+                  {isBatchActive(currentBatch.status) ? (
+                    <p className="mt-3 text-xs text-slate-400">Atualizando automaticamente a cada poucos segundos.</p>
+                  ) : null}
+                  {batchHasHighErrorRate ? (
+                    <p className="mt-3 rounded-2xl border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">
+                      Atenção: taxa de erro alta. Pause o lote para evitar continuar consumindo consultas com falha.
+                    </p>
+                  ) : null}
+                  {currentBatch.status === 'erro' && currentBatch.error_message ? (
+                    <p className="mt-3 rounded-2xl border border-red-400/20 bg-red-500/10 px-3 py-2 text-xs text-red-100">
+                      {currentBatch.error_message}
+                    </p>
+                  ) : null}
+
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <Button
+                      variant={batchHasHighErrorRate ? 'danger' : 'secondary'}
+                      className="px-3 py-2"
+                      onClick={() => void handlePauseBatch()}
+                      disabled={!isBatchActive(currentBatch?.status)}
+                    >
+                      <PauseCircle size={16} />
+                      {batchHasHighErrorRate ? 'Pausar agora' : 'Pausar lote'}
                     </Button>
                     <Button variant="secondary" className="px-3 py-2" onClick={() => void handleResumeBatch()} disabled={currentBatch?.status !== 'pausado' && currentBatch?.status !== 'aguardando_captcha' && currentBatch?.status !== 'pausado_sessao_expirada'}>
+                      <PlayCircle size={16} />
                       Continuar
                     </Button>
                     <Button variant="ghost" className="px-3 py-2" onClick={() => void handleExportBatch(currentBatch.id)}>
@@ -1029,10 +1226,10 @@ export default function RibeiraoPage() {
             </div>
 
             <div className="overflow-x-auto">
-              <table className="min-w-[900px] text-left text-sm">
+              <table className="min-w-[980px] text-left text-sm">
                 <thead className="bg-[#050d14] text-slate-400">
                   <tr>
-                    {['ID', 'Conexão', 'CPFs', 'Data / Hora', 'Retorno', 'Status'].map((column) => (
+                    {['ID', 'Conexão', 'CPFs', 'Data / Hora', 'Retorno', 'Status', 'Resultado'].map((column) => (
                       <th key={column} className="px-6 py-4 font-medium">
                         {column}
                       </th>
@@ -1051,11 +1248,29 @@ export default function RibeiraoPage() {
                         <td className="px-6 py-4">
                           <Badge tone={batchStatusTone(batch.status)}>{batchStatusLabel(batch.status)}</Badge>
                         </td>
+                        <td className="px-6 py-4">
+                          {canDownloadBatchResult(batch) ? (
+                            <Button variant="secondary" className="px-3 py-2" onClick={() => void handleExportBatch(batch.id)}>
+                              <FileDown size={14} />
+                              Baixar resultado
+                            </Button>
+                          ) : isBatchProcessing(batch.status) ? (
+                            <span className="text-slate-400">Aguardando</span>
+                          ) : batch.status === 'erro' ? (
+                            <Button variant="ghost" className="px-3 py-2" onClick={() => void openBatchDetails(batch)}>
+                              Ver detalhes
+                            </Button>
+                          ) : batch.status === 'concluido' ? (
+                            <span className="text-amber-200">Resultado indisponível</span>
+                          ) : (
+                            <span className="text-slate-500">-</span>
+                          )}
+                        </td>
                       </tr>
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={6} className="px-6 py-8 text-center text-slate-500">
+                      <td colSpan={7} className="px-6 py-8 text-center text-slate-500">
                         Nenhuma consulta recente encontrada.
                       </td>
                     </tr>
@@ -1131,7 +1346,7 @@ export default function RibeiraoPage() {
                           {batchPreview.preview_rows.slice(0, 8).map((row) => (
                             <tr key={row.rowNumber} className="border-t border-border/80">
                               <td className="px-4 py-3 text-slate-300">{row.rowNumber}</td>
-                              <td className="px-4 py-3 text-slate-300">{row.cpf_display}</td>
+                              <td className="px-4 py-3 text-slate-300">{maskCpfForList(row.cpf_display)}</td>
                               <td className="px-4 py-3">
                                 <Badge tone={row.isValid ? 'success' : 'danger'}>{row.isValid ? 'Válido' : 'Inválido'}</Badge>
                               </td>
@@ -1183,15 +1398,13 @@ export default function RibeiraoPage() {
                 </label>
               </div>
 
-              <Button className="mt-5 w-full py-4 text-base" onClick={() => void handleStartBatch()} disabled={batchStartLoading || !sessionReady || !ribeiraoUrlReady}>
+              <Button className="mt-5 w-full py-4 text-base" onClick={() => void handleStartBatch()} disabled={batchStartLoading || !ribeiraoUrlReady}>
                 <Search size={16} />
                 {batchStartLoading
                   ? 'Iniciando lote...'
                   : !ribeiraoUrlReady
                     ? 'Configure a URL do averbador'
-                    : sessionReady
-                      ? 'Iniciar consulta em lote'
-                      : 'Conecte a sessão para consultar em lote'}
+                    : 'Iniciar consulta em lote'}
               </Button>
             </Card>
 
@@ -1337,7 +1550,7 @@ export default function RibeiraoPage() {
                     <tbody>
                       {batchResults.map((item) => (
                         <tr key={item.id} className="border-t border-border/80">
-                          <td className="px-5 py-4 text-slate-300">{item.cpf || '-'}</td>
+                          <td className="px-5 py-4 text-slate-300">{maskCpfForList(item.cpf)}</td>
                           <td className="px-5 py-4">
                             <p className="font-semibold text-white">{item.nome || '-'}</p>
                             <p className="mt-1 text-xs text-slate-500">{item.orgao || item.matricula || '-'}</p>
@@ -1512,7 +1725,7 @@ export default function RibeiraoPage() {
                     {history.map((item) => (
                       <tr key={item.id} className="border-t border-border/80">
                         <td className="px-5 py-4 text-slate-300">{item.created_at_formatted || item.created_at || '-'}</td>
-                        <td className="px-5 py-4 text-slate-300">{item.cpf || '-'}</td>
+                        <td className="px-5 py-4 text-slate-300">{maskCpfForList(item.cpf)}</td>
                         <td className="px-5 py-4">
                           <p className="font-semibold text-white">{item.nome || '-'}</p>
                           <p className="mt-1 text-xs text-slate-500">{item.orgao || item.matricula || '-'}</p>
@@ -1967,6 +2180,14 @@ function batchStatusTone(status?: string) {
   return 'neutral';
 }
 
+function flowTone(status?: string) {
+  const normalized = String(status || '').toLowerCase();
+  if (normalized === 'validado') return 'success';
+  if (normalized === 'candidato') return 'info';
+  if (normalized === 'falhou' || normalized === 'erro') return 'danger';
+  return 'neutral';
+}
+
 function batchStatusLabel(status?: string) {
   if (status === 'em_andamento') return 'Em andamento';
   if (status === 'pausado') return 'Pausado';
@@ -1980,6 +2201,16 @@ function batchStatusLabel(status?: string) {
 
 function isBatchActive(status?: string) {
   return status === 'em_andamento';
+}
+
+function isBatchProcessing(status?: string) {
+  return status === 'pendente' || status === 'em_andamento' || status === 'pausado' || status === 'aguardando_captcha' || status === 'pausado_sessao_expirada';
+}
+
+function canDownloadBatchResult(batch?: RibeiraoBatchRecord | null) {
+  if (!batch) return false;
+  const hasResultFile = Boolean(String(batch.result_file_path || '').trim());
+  return hasResultFile && (batch.status === 'concluido' || batch.status === 'erro' || batch.status === 'pausado');
 }
 
 function getBatchNetMargin(item: RibeiraoBatchResultItem, productType: string) {

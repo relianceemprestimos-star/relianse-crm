@@ -370,9 +370,20 @@ export interface CredentialPortalConfig {
   id: string;
   name: string;
   url: string;
+  apiBaseUrl?: string;
   requiresCaptcha: boolean;
   requiresAssistedLogin: boolean;
   providerStatus?: string;
+}
+
+export interface CredentialProfileData {
+  department?: string;
+  email?: string;
+  cellphone?: string;
+  question_1?: string;
+  answer_1?: string;
+  question_2?: string;
+  answer_2?: string;
 }
 
 export interface AverbadorCredential {
@@ -381,8 +392,11 @@ export interface AverbadorCredential {
   portal_name: string;
   portal_url: string;
   portal_host?: string;
+  api_url?: string;
   login: string;
   has_password: boolean;
+  credential_profile?: CredentialProfileData | null;
+  has_profile_completion?: boolean;
   requires_captcha: boolean;
   requires_assisted_login: boolean;
   session_status: string;
@@ -455,6 +469,85 @@ export interface RibeiraoConfigStatus {
   value_masked: string;
   message: string;
   hint: string;
+}
+
+export interface CaptchaPortalRule {
+  ocrEnabled: boolean;
+  externalEnabled: boolean;
+  fallbackManual: boolean;
+  batchLimit: number;
+  dailyLimit: number;
+  pauseAfterFailures: number;
+}
+
+export interface CaptchaEngineConfig {
+  enabled: boolean;
+  defaultMode: 'manual' | 'internal_ocr' | 'external' | 'hybrid' | string;
+  internalOcrEnabled: boolean;
+  internalOcrMinConfidence: number;
+  externalProvider: 'none' | 'capsolver' | string;
+  externalProviderEnabled: boolean;
+  capsolverEnabled: boolean;
+  capsolverApiKeyMasked: string;
+  capsolverApiKeyConfigured: boolean;
+  dailyLimit: number;
+  batchLimit: number;
+  timeoutMs: number;
+  pollIntervalMs: number;
+  lastTestAt?: string;
+  lastError?: string;
+  portals: Array<{
+    id: string;
+    label: string;
+    url?: string;
+    rules: CaptchaPortalRule;
+  }>;
+  portalRules: Record<string, CaptchaPortalRule>;
+}
+
+export interface CaptchaEngineLog {
+  id: number;
+  portal: string;
+  portal_label: string;
+  batch_id: number | null;
+  cpf_masked: string;
+  user_id: number | null;
+  captcha_type: string;
+  engine_mode: string;
+  provider: string;
+  status: string;
+  confidence: number | null;
+  task_id: string;
+  error_code: string;
+  error_message: string;
+  cost_estimated: number | null;
+  raw_provider_status: string;
+  created_at: string;
+  started_at?: string | null;
+  resolved_at?: string | null;
+  duration_ms?: number | null;
+}
+
+export interface CaptchaEngineReport {
+  totals: {
+    detected: number;
+    ocr_solved: number;
+    external_solved: number;
+    manual_required: number;
+    failures: number;
+    total_logs: number;
+    ocr_success_rate: number;
+    external_success_rate: number;
+    cost_estimated: number;
+    estimated_savings: number;
+    average_duration_ms: number;
+  };
+  by_portal: Array<{ key: string; total: number; failures: number; successes: number; cost_estimated: number }>;
+  by_batch: Array<{ key: string; total: number; failures: number; successes: number; cost_estimated: number }>;
+  by_provider: Array<{ key: string; total: number; failures: number; successes: number; cost_estimated: number }>;
+  latest_errors: CaptchaEngineLog[];
+  manual_required: CaptchaEngineLog[];
+  rows: CaptchaEngineLog[];
 }
 
 export interface RibeiraoDiagnostics {
@@ -780,6 +873,20 @@ export interface RibeiraoBatchPreviewRow {
   raw_value: string;
   isValid: boolean;
   alerts: string[];
+  nome?: string;
+  matricula?: string;
+  orgao?: string;
+  cargo?: string;
+  vinculo?: string;
+}
+
+export interface RibeiraoBatchSourceRow {
+  cpf: string;
+  nome?: string;
+  matricula?: string;
+  orgao?: string;
+  cargo?: string;
+  vinculo?: string;
 }
 
 export interface RibeiraoBatchPreview {
@@ -790,12 +897,14 @@ export interface RibeiraoBatchPreview {
   invalid_rows: number;
   preview_rows: RibeiraoBatchPreviewRow[];
   cpfs: string[];
+  source_rows?: RibeiraoBatchSourceRow[];
 }
 
 export interface RibeiraoBatchRecord {
   id: number;
   user_id: number;
   base_id?: number | null;
+  portal_id?: string;
   source_type: RibeiraoBatchSourceType | string;
   source_file_name: string;
   total_cpfs: number;
@@ -806,6 +915,9 @@ export interface RibeiraoBatchRecord {
   error_count: number;
   captcha_count: number;
   status: RibeiraoBatchStatus | string;
+  result_file_path?: string;
+  result_file_format?: string;
+  error_message?: string;
   started_at?: string | null;
   finished_at?: string | null;
   created_at?: string;

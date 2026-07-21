@@ -1,0 +1,7 @@
+services:
+  caddy:
+    ports:
+      - "8089:80"
+  backend:
+    ports:
+      - "4000:4000"
