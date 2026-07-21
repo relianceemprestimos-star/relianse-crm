@@ -28,6 +28,11 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function phoneLookupCacheTtlDays() {
+  const configured = Number(process.env.PHONE_LOOKUP_CACHE_TTL_DAYS || 90);
+  return Number.isFinite(configured) && configured > 0 ? Math.floor(configured) : 90;
+}
+
 function maskCpf(cpf) {
   const digits = cleanDigits(cpf);
   if (digits.length !== 11) return '***';
@@ -135,11 +140,37 @@ function consultationToSearchResult(consultation, { cacheHit = false } = {}) {
   };
 }
 
+function saveCachedConsultationToClient({ client, cached, userId, source }) {
+  const cachedResult = consultationToSearchResult(cached, { cacheHit: true });
+  if (!client?.id || !cachedResult) {
+    return { cachedResult, saved: null, enrichment: null };
+  }
+  const phones = (cachedResult.phones || []).map((phone) => ({ ...phone, source }));
+  const saved = phones.length
+    ? saveClientLookupPhones({
+        clientId: client.id,
+        userId,
+        source,
+        phones,
+        searchedAt: nowIso(),
+      })
+    : null;
+  const enrichment = saveClientEnrichmentData({
+    clientId: client.id,
+    userId,
+    source,
+    data: { ...cachedResult, status: 'success' },
+    searchedAt: nowIso(),
+  });
+  return { cachedResult, saved, enrichment };
+}
+
 export function getPhoneLookupDiagnostics() {
   return {
     enabled: String(process.env.PHONE_LOOKUP_ENABLED ?? 'true').toLowerCase() !== 'false',
     source: activeProviderKey(),
     sourceLabel: activeProviderLabel(),
+    cacheTtlDays: phoneLookupCacheTtlDays(),
     maxPerRun: Number(process.env.PHONE_LOOKUP_MAX_PER_RUN || 50),
     delaySeconds: Number(process.env.PHONE_LOOKUP_DELAY_SECONDS || 5),
     datafour: getDatafourDiagnostics(),
@@ -190,6 +221,7 @@ export function queuePhoneLookupForMarginClients({ userId, filters = {}, force =
 
 export async function searchPhones({ cpf = '', name = '', phone = '', clientId = null, userId = null } = {}) {
   markExpiredClientConsultations();
+  const cacheTtlDays = phoneLookupCacheTtlDays();
   const clientDetails = clientId ? getClientById(Number(clientId)) : null;
   const client = clientDetails?.client || null;
   const searchPhone = String(phone || client?.phone || '').trim();
@@ -200,12 +232,13 @@ export async function searchPhones({ cpf = '', name = '', phone = '', clientId =
   }
 
   if (searchCpf.length === 11) {
-    const cached = getValidClientConsultationByCpf(searchCpf);
+    const cached = getValidClientConsultationByCpf(searchCpf, { ttlDays: cacheTtlDays });
     if (cached) {
       logLookup('manual_search_cache_hit', {
         clientId: client?.id ?? null,
         cpf: maskCpf(searchCpf),
         consultationId: cached.id,
+        cacheTtlDays,
       });
       return consultationToSearchResult(cached, { cacheHit: true });
     }
@@ -225,6 +258,7 @@ export async function searchPhones({ cpf = '', name = '', phone = '', clientId =
     source,
     errorMessage: finalStatus === 'success' ? '' : result.message || result.code || 'Consulta nao concluida.',
     result: { ...result, status: finalStatus },
+    ttlDays: cacheTtlDays,
   });
 
   logPhoneLookupRecord({
@@ -385,8 +419,51 @@ export async function processPhoneLookupJob(jobId, { userId } = {}) {
   const start = Date.now();
   try {
     const source = activeProviderLabel();
+    markExpiredClientConsultations();
+    const cacheTtlDays = phoneLookupCacheTtlDays();
+    const clientCpf = cleanDigits(details.client.cpf);
+    if (clientCpf.length === 11) {
+      const cached = getValidClientConsultationByCpf(clientCpf, { ttlDays: cacheTtlDays });
+      if (cached) {
+        const { cachedResult, saved } = saveCachedConsultationToClient({
+          client: details.client,
+          cached,
+          userId,
+          source,
+        });
+        const updatedJob = updatePhoneLookupJob(job.id, {
+          status: 'success',
+          error_message: '',
+          finished_at: nowIso(),
+        });
+        logLookup('job_cache_hit', {
+          jobId: job.id,
+          clientId: details.client.id,
+          cpf: maskCpf(details.client.cpf),
+          consultationId: cached.id,
+          phonesFound: cachedResult?.phones?.length || 0,
+          cacheTtlDays,
+          durationMs: Date.now() - start,
+        });
+        return { job: updatedJob, result: cachedResult, client: saved?.client || getClientById(details.client.id)?.client };
+      }
+    }
+
     const result = await lookupActiveProvider(details.client);
     const finalStatus = statusFromProvider(result.status);
+    const resultCpf = cleanDigits(result.cpf || details.client.cpf || '');
+    saveClientConsultationSnapshot({
+      clientId: details.client.id,
+      createdBy: userId,
+      cpf: resultCpf,
+      nome: result.full_name || result.name || details.client.name || '',
+      telefonePesquisado: details.client.phone || '',
+      status: finalStatus,
+      source,
+      errorMessage: finalStatus === 'success' ? '' : result.message || result.code || 'Busca sem sucesso.',
+      result: { ...result, status: finalStatus },
+      ttlDays: cacheTtlDays,
+    });
     let saved = null;
     if (finalStatus === 'success') {
       saved = saveClientLookupPhones({

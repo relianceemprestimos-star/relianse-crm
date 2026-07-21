@@ -3957,9 +3957,16 @@ export function getClientConsultationById(id) {
   return consultationDto(row, children.phones, children.addresses, children.emails);
 }
 
-export function getValidClientConsultationByCpf(cpf, { now = nowIso() } = {}) {
+function phoneLookupCacheTtlDays() {
+  const configured = Number(process.env.PHONE_LOOKUP_CACHE_TTL_DAYS || 90);
+  return Number.isFinite(configured) && configured > 0 ? Math.floor(configured) : 90;
+}
+
+export function getValidClientConsultationByCpf(cpf, { now = nowIso(), ttlDays = phoneLookupCacheTtlDays() } = {}) {
   const digits = cleanDigits(cpf);
   if (digits.length !== 11) return null;
+  const normalizedTtlDays = Number.isFinite(Number(ttlDays)) && Number(ttlDays) > 0 ? Math.floor(Number(ttlDays)) : phoneLookupCacheTtlDays();
+  const minConsultedAt = addDaysIso(now, -normalizedTtlDays);
   const row = queryOne(
     getDb(),
     `
@@ -3967,11 +3974,12 @@ export function getValidClientConsultationByCpf(cpf, { now = nowIso() } = {}) {
       FROM client_consultations
       WHERE cpf = ?
         AND status = 'success'
+        AND datetime(consulted_at) >= datetime(?)
         AND datetime(expires_at) > datetime(?)
       ORDER BY datetime(consulted_at) DESC, id DESC
       LIMIT 1
     `,
-    [digits, now]
+    [digits, minConsultedAt, now]
   );
   return row ? getClientConsultationById(Number(row.id)) : null;
 }
@@ -3995,7 +4003,7 @@ export function saveClientConsultationSnapshot({
   errorMessage = '',
   result = {},
   consultedAt = nowIso(),
-  ttlDays = 120,
+  ttlDays = phoneLookupCacheTtlDays(),
 } = {}) {
   const database = getDb();
   const normalizedCpf = cleanDigits(cpf || result.cpf || '');
