@@ -21,6 +21,7 @@ import {
   updatePhoneLookupJob,
 } from '../../db.js';
 import { cleanDigits } from '../../utils.js';
+import { getDatafourDiagnostics, lookupPhoneDatafour, mapDatafourFlow, searchPhoneDatafour } from './datafourProvider.js';
 import { getNovaVidaDiagnostics, lookupPhoneNovaVida, mapNovaVidaFlow, searchPhoneNovaVida } from './novaVidaProvider.js';
 
 function nowIso() {
@@ -73,6 +74,30 @@ function statusFromProvider(providerStatus) {
   return 'failed';
 }
 
+function activeProviderKey() {
+  return String(process.env.PHONE_LOOKUP_SOURCE || 'datafour').trim().toLowerCase();
+}
+
+function activeProviderLabel() {
+  return activeProviderKey() === 'nova_vida' || activeProviderKey() === 'novavida' ? 'Nova Vida' : 'Datafour';
+}
+
+function activeProviderPublicSource() {
+  return activeProviderLabel();
+}
+
+async function mapActiveProviderFlow() {
+  return activeProviderLabel() === 'Nova Vida' ? mapNovaVidaFlow() : mapDatafourFlow();
+}
+
+async function lookupActiveProvider(client) {
+  return activeProviderLabel() === 'Nova Vida' ? lookupPhoneNovaVida(client) : lookupPhoneDatafour(client);
+}
+
+async function searchActiveProvider(params) {
+  return activeProviderLabel() === 'Nova Vida' ? searchPhoneNovaVida(params) : searchPhoneDatafour(params);
+}
+
 function consultationToSearchResult(consultation, { cacheHit = false } = {}) {
   if (!consultation) return null;
   return {
@@ -113,17 +138,20 @@ function consultationToSearchResult(consultation, { cacheHit = false } = {}) {
 export function getPhoneLookupDiagnostics() {
   return {
     enabled: String(process.env.PHONE_LOOKUP_ENABLED ?? 'true').toLowerCase() !== 'false',
-    source: process.env.PHONE_LOOKUP_SOURCE || 'nova_vida',
+    source: activeProviderKey(),
+    sourceLabel: activeProviderLabel(),
     maxPerRun: Number(process.env.PHONE_LOOKUP_MAX_PER_RUN || 50),
     delaySeconds: Number(process.env.PHONE_LOOKUP_DELAY_SECONDS || 5),
+    datafour: getDatafourDiagnostics(),
     novaVida: getNovaVidaDiagnostics(),
   };
 }
 
 export async function mapPhoneLookupProvider() {
-  const result = await mapNovaVidaFlow();
+  const source = activeProviderLabel();
+  const result = await mapActiveProviderFlow();
   logLookup('provider_map_finished', {
-    source: 'Nova Vida',
+    source,
     status: result.status,
     code: result.code || '',
     stage: result.stage || '',
@@ -141,20 +169,22 @@ export function queuePhoneLookupForClient({ clientId, userId, force = false }) {
   if (!force && !eligibility.ok) {
     return { error: eligibility.reason, status: 400 };
   }
-  const job = createPhoneLookupJob({ clientId: Number(clientId), userId, source: 'Nova Vida' });
-  logLookup('job_created', { clientId: Number(clientId), cpf: maskCpf(details.client.cpf), source: 'Nova Vida' });
+  const source = activeProviderLabel();
+  const job = createPhoneLookupJob({ clientId: Number(clientId), userId, source });
+  logLookup('job_created', { clientId: Number(clientId), cpf: maskCpf(details.client.cpf), source });
   return { job };
 }
 
 export function queuePhoneLookupForMarginClients({ userId, filters = {}, force = false } = {}) {
+  const source = activeProviderLabel();
   const result = enqueuePhoneLookupForMarginClients({
     ...filters,
     userId,
-    source: 'Nova Vida',
+    source,
     force,
     limit: Number(process.env.PHONE_LOOKUP_MAX_PER_RUN || 50),
   });
-  logLookup('bulk_jobs_created', { created: result.created, source: 'Nova Vida' });
+  logLookup('bulk_jobs_created', { created: result.created, source });
   return result;
 }
 
@@ -181,7 +211,8 @@ export async function searchPhones({ cpf = '', name = '', phone = '', clientId =
     }
   }
 
-  const result = await searchPhoneNovaVida({ cpf: searchCpf, name: searchName, phone: searchPhone });
+  const source = activeProviderPublicSource();
+  const result = await searchActiveProvider({ cpf: searchCpf, name: searchName, phone: searchPhone });
   const finalStatus = statusFromProvider(result.status);
   const resultCpf = cleanDigits(result.cpf || searchCpf);
   const savedConsultation = saveClientConsultationSnapshot({
@@ -191,7 +222,7 @@ export async function searchPhones({ cpf = '', name = '', phone = '', clientId =
     nome: result.full_name || result.name || searchName,
     telefonePesquisado: searchPhone,
     status: finalStatus,
-    source: 'Fonte externa',
+    source,
     errorMessage: finalStatus === 'success' ? '' : result.message || result.code || 'Consulta nao concluida.',
     result: { ...result, status: finalStatus },
   });
@@ -201,7 +232,7 @@ export async function searchPhones({ cpf = '', name = '', phone = '', clientId =
     cpf: resultCpf,
     cpfMasked: resultCpf ? maskCpf(resultCpf) : '',
     name: result.name || searchName,
-    source: 'Fonte externa',
+    source,
     status: finalStatus,
     phonesFoundCount: result.phones?.length || 0,
     hasAddress: Boolean(result.addresses?.length),
@@ -224,7 +255,7 @@ export async function searchPhones({ cpf = '', name = '', phone = '', clientId =
       saveClientLookupPhones({
         clientId: client.id,
         userId,
-        source: 'Nova Vida',
+        source,
         phones: result.phones || [],
         searchedAt: nowIso(),
       });
@@ -232,7 +263,7 @@ export async function searchPhones({ cpf = '', name = '', phone = '', clientId =
     saveClientEnrichmentData({
       clientId: client.id,
       userId,
-      source: 'Nova Vida',
+      source,
       data: { ...result, status: finalStatus },
       searchedAt: nowIso(),
     });
@@ -240,8 +271,8 @@ export async function searchPhones({ cpf = '', name = '', phone = '', clientId =
 
   return {
     status: finalStatus,
-    source: 'Fonte externa',
-    origin: 'Fonte externa',
+    source,
+    origin: source,
     cache_hit: false,
     consultation_id: savedConsultation?.id ?? null,
     client_id: client?.id ?? null,
@@ -294,11 +325,12 @@ export function cleanupPhoneLookupConsultations() {
 }
 
 export function savePhonesToClient({ clientId, phones = [], enrichment = null, userId }) {
+  const source = activeProviderLabel();
   const saved = saveClientLookupPhones({
     clientId: Number(clientId),
     userId,
     phones,
-    source: 'Nova Vida',
+    source,
     searchedAt: nowIso(),
   });
   if (!saved) {
@@ -309,7 +341,7 @@ export function savePhonesToClient({ clientId, phones = [], enrichment = null, u
         clientId: Number(clientId),
         userId,
         data: enrichment,
-        source: 'Nova Vida',
+        source,
         searchedAt: nowIso(),
       })
     : null;
@@ -318,7 +350,7 @@ export function savePhonesToClient({ clientId, phones = [], enrichment = null, u
     cpf: saved.client?.cpf || '',
     cpfMasked: '',
     name: saved.client?.name || '',
-    source: 'Nova Vida',
+    source,
     status: 'saved',
     phonesFoundCount: saved.saved || 0,
   });
@@ -352,21 +384,22 @@ export async function processPhoneLookupJob(jobId, { userId } = {}) {
 
   const start = Date.now();
   try {
-    const result = await lookupPhoneNovaVida(details.client);
+    const source = activeProviderLabel();
+    const result = await lookupActiveProvider(details.client);
     const finalStatus = statusFromProvider(result.status);
     let saved = null;
     if (finalStatus === 'success') {
       saved = saveClientLookupPhones({
         clientId: details.client.id,
         userId,
-        source: 'Nova Vida',
+        source,
         phones: result.phones || [],
         searchedAt: nowIso(),
       });
       saveClientEnrichmentData({
         clientId: details.client.id,
         userId,
-        source: 'Nova Vida',
+        source,
         data: { ...result, status: finalStatus },
         searchedAt: nowIso(),
       });
@@ -374,7 +407,7 @@ export async function processPhoneLookupJob(jobId, { userId } = {}) {
       saveClientEnrichmentData({
         clientId: details.client.id,
         userId,
-        source: 'Nova Vida',
+        source,
         data: { cpf: details.client.cpf, full_name: details.client.name, status: finalStatus, raw_data: result.raw_data || result.raw || {} },
         searchedAt: nowIso(),
       });

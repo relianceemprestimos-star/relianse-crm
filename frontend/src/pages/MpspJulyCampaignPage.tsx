@@ -179,7 +179,7 @@ export default function MpspJulyCampaignPage() {
     <div className="space-y-8">
       <SectionHeader
         title="MPSP Julho"
-        description="Clientes da gratificação natalina de julho já confirmados no Portal do Consignado e enriquecidos com Nova Vida."
+        description="Clientes da gratificação natalina de julho já confirmados no Portal do Consignado e enriquecidos com Datafour."
         action={
           <div className="flex flex-wrap gap-3">
             <Button variant="secondary" onClick={() => navigate(campaign ? `/fila?campaign_id=${campaign.id}` : '/fila')}>

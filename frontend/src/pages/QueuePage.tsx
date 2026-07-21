@@ -208,7 +208,7 @@ export default function QueuePage() {
 
       <Card className="flex flex-wrap items-center justify-between gap-3 p-5">
         <div>
-          <p className="font-semibold text-white">Busca de Telefones Nova Vida</p>
+          <p className="font-semibold text-white">Busca de Telefones Datafour</p>
           <p className="mt-1 text-sm text-slate-400">Cria fila apenas para clientes com margem, sem telefone e fora de status de recusa.</p>
         </div>
         <Button variant="secondary" onClick={() => void handleQueuePhoneLookup()} disabled={phoneBulkLoading}>

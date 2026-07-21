@@ -1,5 +1,13 @@
 export const PORTAL_CONFIGS = [
   {
+    id: 'datafour',
+    name: 'Datafour',
+    url: 'https://datafile.com.br/login/',
+    requiresCaptcha: false,
+    requiresAssistedLogin: false,
+    providerStatus: 'implemented',
+  },
+  {
     id: 'prefeitura_ribeirao_preto',
     name: 'Prefeitura de Ribeirão Preto',
     url: 'https://saec.consiglog.com.br/Login.aspx',
@@ -61,6 +69,9 @@ export function normalizePortalId(portalId) {
   }
   if (value === 'prefeitura-ananindeua' || value === 'ananindeua') {
     return 'prefeitura_ananindeua';
+  }
+  if (value === 'datafour' || value === 'datafoour' || value === 'datafile') {
+    return 'datafour';
   }
   return value;
 }

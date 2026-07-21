@@ -295,9 +295,9 @@ export default function AttendancePage() {
       if (status === 'success') {
         toast.success('Telefone encontrado e salvo no cliente.');
       } else if (status === 'requires_manual_login') {
-        toast.error('Nova Vida precisa de login manual ou mapeamento antes da consulta.');
+        toast.error('Datafour precisa de credencial válida antes da consulta.');
       } else if (status === 'not_found') {
-        toast('Nenhum telefone encontrado no Nova Vida.');
+        toast('Nenhum telefone encontrado no Datafour.');
       } else {
         toast.error(response.job?.error_message || response.result?.message || 'Busca de telefone não concluída.');
       }
@@ -551,7 +551,7 @@ export default function AttendancePage() {
                 </Button>
                 <Button variant="secondary" className="py-4" onClick={() => void handleLookupPhone(true)} disabled={lookupLoading}>
                   <PhoneCall size={16} />
-                  {lookupLoading ? 'Buscando...' : 'Buscar telefone no Nova Vida'}
+                  {lookupLoading ? 'Buscando...' : 'Buscar telefone no Datafour'}
                 </Button>
                 <Button variant="secondary" className="py-4" onClick={() => setRawOpen(true)}>
                   <Eye size={16} />
@@ -596,7 +596,7 @@ export default function AttendancePage() {
                     ))
                   ) : (
                     <div className="rounded-2xl border border-dashed border-border bg-white/3 p-4 text-sm text-slate-500">
-                      Nenhum telefone encontrado ainda. Use a busca Nova Vida somente para clientes com oportunidade real.
+                      Nenhum telefone encontrado ainda. Use a busca Datafour somente para clientes com oportunidade real.
                     </div>
                   )}
                 </div>
@@ -731,7 +731,7 @@ export default function AttendancePage() {
               <div className="mt-4 rounded-2xl border border-border bg-bg/60 p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Dados Nova Vida</p>
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Dados Datafour</p>
                     <p className="mt-1 text-sm text-slate-300">Dados cadastrais enriquecidos pela última consulta autorizada.</p>
                   </div>
                   <Badge tone={client.nova_vida_data ? 'success' : 'neutral'}>{client.nova_vida_lookup_status || 'never_searched'}</Badge>
@@ -740,7 +740,7 @@ export default function AttendancePage() {
                   <div className="mt-4 space-y-4">
                     <div className="grid gap-3 md:grid-cols-2">
                       <InfoLine label="Última consulta" value={client.nova_vida_data.searched_at_formatted || client.nova_vida_last_lookup_at_formatted || '-'} />
-                      <InfoLine label="Nome Nova Vida" value={client.nova_vida_data.full_name || '-'} />
+                      <InfoLine label="Nome Datafour" value={client.nova_vida_data.full_name || '-'} />
                       <InfoLine label="Nascimento" value={client.nova_vida_data.birth_date || '-'} />
                       <InfoLine label="Idade" value={client.nova_vida_data.age === null || client.nova_vida_data.age === undefined ? '-' : String(client.nova_vida_data.age)} />
                       <InfoLine label="Sexo" value={client.nova_vida_data.gender || '-'} />
@@ -768,7 +768,7 @@ export default function AttendancePage() {
                   </div>
                 ) : (
                   <div className="mt-4 rounded-2xl border border-dashed border-border bg-white/3 p-4 text-sm text-slate-500">
-                    Nenhuma consulta cadastral Nova Vida salva ainda.
+                    Nenhuma consulta cadastral Datafour salva ainda.
                   </div>
                 )}
               </div>
