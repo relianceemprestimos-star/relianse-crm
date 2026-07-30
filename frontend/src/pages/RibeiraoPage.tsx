@@ -47,6 +47,8 @@ type BatchSourceMode = 'upload' | 'base';
 
 const MARGIN_CONNECTIONS = [
   { value: 'prefeitura-ribeirao-preto', label: 'Prefeitura de Ribeirão Preto', enabled: true },
+  { value: 'prefeitura-guarulhos-proconsig', label: 'Prefeitura de Guarulhos', enabled: true },
+  { value: 'prefeitura-sorriso-mt', label: 'Prefeitura de Sorriso MT', enabled: true },
   { value: 'governo-amapa', label: 'Governo do Amapá', enabled: false },
   { value: 'governo-sp-tjsp', label: 'Governo de SP / Tribunal de Justiça de SP', enabled: false },
 ] as const;
@@ -66,12 +68,23 @@ const ROLE_SESSION_KEY = 'relianse.ribeirao.sessionId';
 const BATCH_SESSION_KEY = 'relianse.ribeirao.batchId';
 const CONNECTION_REGISTRY_IDS: Record<string, string> = {
   'prefeitura-ribeirao-preto': 'prefeitura_ribeirao_preto',
+  'prefeitura-guarulhos-proconsig': 'prefeitura_guarulhos_proconsig',
+  'prefeitura-sorriso-mt': 'prefeitura_sorriso_mt',
   'governo-amapa': 'governo_amapa',
   'governo-sp-tjsp': 'governo_sp',
 };
 
 function hasBatchCpfLimit(connection: string) {
-  return normalizeMarginConnectionValue(connection) === 'governo_sp_tjsp';
+  return normalizeMarginConnectionValue(connection) === 'governo_sp';
+}
+
+function isMatriculaMarginConnection(connection: string) {
+  const normalized = normalizeMarginConnectionValue(connection);
+  return normalized === 'prefeitura_guarulhos_proconsig' || normalized === 'prefeitura_sorriso_mt';
+}
+
+function isIntegratedBatchConnection(connection: string) {
+  return normalizeMarginConnectionValue(connection) === 'prefeitura_ribeirao_preto';
 }
 
 export default function RibeiraoPage() {
@@ -487,6 +500,12 @@ export default function RibeiraoPage() {
       setBatchPreview(null);
       return;
     }
+    if (!isIntegratedBatchConnection(selectedConnection)) {
+      setBatchPreview(null);
+      setBatchPreviewFileName(file.name);
+      toast('Automação preservada no GitHub. Para esta fonte, o executor usa matrícula e ainda precisa ser plugado ao botão do CRM.');
+      return;
+    }
 
     try {
       const response = await api.uploadRibeiraoBatchPreview(file);
@@ -506,7 +525,7 @@ export default function RibeiraoPage() {
     }
     const normalizedConnection = normalizeMarginConnectionValue(selectedConnection);
     if (normalizedConnection !== 'prefeitura_ribeirao_preto') {
-      toast.error('Fonte ainda não implementada. Configure a credencial para deixar o portal pronto.');
+      toast.error('Automação preservada no GitHub. O botão do CRM ainda precisa do executor por matrícula para esta fonte.');
       return;
     }
     if (!selectedCredential?.has_password) {
@@ -622,6 +641,7 @@ export default function RibeiraoPage() {
 
   async function openBatchDetails(batch: RibeiraoBatchRecord) {
     setActiveTab('batch');
+    setCurrentBatch(batch);
     await loadBatchResults(batch.id, batch);
   }
 
@@ -647,11 +667,16 @@ export default function RibeiraoPage() {
   const batchHasHighErrorRate = isBatchActive(currentBatch?.status) && batchProcessedCount >= 5 && batchErrorPercent >= 20;
 
   const selectedBase = bases.find((base) => String(base.id) === String(batchBaseId));
+  const selectedConnectionUsesMatricula = isMatriculaMarginConnection(selectedConnection);
+  const selectedConnectionIntegrated = isIntegratedBatchConnection(selectedConnection);
+  const batchLookupLabel = selectedConnectionUsesMatricula ? 'matrículas' : 'CPFs';
   const batchSourceSummary =
     batchSourceMode === 'upload'
       ? batchPreview
-        ? `${batchPreview.valid_rows} CPFs válidos de ${batchPreview.total_rows} linhas`
-        : 'Envie uma planilha para iniciar o lote'
+        ? `${batchPreview.valid_rows} ${batchLookupLabel} válidos de ${batchPreview.total_rows} linhas`
+        : selectedConnectionUsesMatricula
+          ? 'Robô salvo para planilha por matrícula'
+          : 'Envie uma planilha para iniciar o lote'
       : batchBaseId === 'all'
         ? `${bases.length} bases ativas`
         : selectedBase
@@ -661,9 +686,11 @@ export default function RibeiraoPage() {
   const batchCpfLimitApplies = hasBatchCpfLimit(selectedConnection);
   const batchUploadLimitText = batchCpfLimitApplies
     ? `.xlsx, .xls, .csv ou .txt • máx. ${SP_BATCH_CPF_LIMIT} CPFs`
-    : '.xlsx, .xls, .csv ou .txt • sem limite fixo de CPFs para este convênio';
+    : selectedConnectionUsesMatricula
+      ? '.xlsx, .xls ou .csv • fonte preservada por matrícula'
+      : '.xlsx, .xls, .csv ou .txt • sem limite fixo de CPFs para este convênio';
   const batchCpfCount = batchSourceMode === 'upload' ? batchPreview?.valid_rows || 0 : selectedBase?.total_clientes || 0;
-  const canStartMarginBatch = Boolean(selectedConnection && batchSourceMode === 'upload' && batchPreview?.cpfs?.length);
+  const canStartMarginBatch = Boolean(selectedConnectionIntegrated && batchSourceMode === 'upload' && batchPreview?.cpfs?.length);
 
   return (
     <div className="space-y-8">
@@ -1015,7 +1042,11 @@ export default function RibeiraoPage() {
                     onChange={(event) => setSelectedConnection(event.target.value)}
                   >
                     <option value="">— selecione a conexão —</option>
-                    <option value="prefeitura-ribeirao-preto">Prefeitura de Ribeirão Preto</option>
+                    <optgroup label="Prefeituras">
+                      <option value="prefeitura-ribeirao-preto">Prefeitura de Ribeirão Preto</option>
+                      <option value="prefeitura-guarulhos-proconsig">Prefeitura de Guarulhos</option>
+                      <option value="prefeitura-sorriso-mt">Prefeitura de Sorriso MT</option>
+                    </optgroup>
                     <option value="governo-amapa">Governo do Amapá</option>
                     <optgroup label="Governo de SP">
                       <option value="governo-sp-tjsp">Tribunal de Justiça de SP</option>
@@ -1028,12 +1059,16 @@ export default function RibeiraoPage() {
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-300/80">2. Arquivo CSV</p>
-                    <h3 className="mt-2 text-xl font-bold text-white">Uma coluna de CPFs, com ou sem formatação</h3>
+                    <h3 className="mt-2 text-xl font-bold text-white">
+                      {selectedConnectionUsesMatricula ? 'Planilha por matrícula do portal' : 'Uma coluna de CPFs, com ou sem formatação'}
+                    </h3>
                   </div>
-                  <Badge tone={batchPreview?.valid_rows ? 'success' : 'neutral'}>{batchPreview?.valid_rows || 0} CPFs</Badge>
+                  <Badge tone={batchPreview?.valid_rows ? 'success' : 'neutral'}>{batchPreview?.valid_rows || 0} {batchLookupLabel}</Badge>
                 </div>
 
-                <label className="mt-5 flex min-h-[170px] cursor-pointer flex-col items-center justify-center rounded-[28px] border border-dashed border-cyan-300/35 bg-[#061018]/80 px-6 py-8 text-center transition hover:border-lime-300/70 hover:bg-lime-300/5">
+                <label className={`mt-5 flex min-h-[170px] flex-col items-center justify-center rounded-[28px] border border-dashed border-cyan-300/35 bg-[#061018]/80 px-6 py-8 text-center transition ${
+                  selectedConnectionIntegrated ? 'cursor-pointer hover:border-lime-300/70 hover:bg-lime-300/5' : 'cursor-not-allowed opacity-75'
+                }`}>
                   <Upload size={28} className="text-cyan-300" />
                   <span className="mt-3 text-lg font-bold text-white">Clique ou arraste o CSV para esta área</span>
                   <span className="mt-1 text-sm text-slate-400">{batchUploadLimitText}</span>
@@ -1041,15 +1076,29 @@ export default function RibeiraoPage() {
                     className="hidden"
                     type="file"
                     accept=".xlsx,.xls,.csv,.txt"
+                    disabled={!selectedConnectionIntegrated}
                     onChange={(event) => void handleBatchFileSelect(event.target.files?.[0] || null)}
                   />
                 </label>
+
+                {!selectedConnectionIntegrated && selectedConnection ? (
+                  <div className="mt-4 rounded-2xl border border-amber-300/30 bg-amber-300/10 px-4 py-3 text-sm text-amber-50">
+                    <p className="font-semibold text-white">Automação preservada, mas ainda não conectada ao botão.</p>
+                    <p className="mt-1 text-amber-50/80">
+                      {selectedConnectionUsesMatricula
+                        ? 'Guarulhos e Sorriso usam matrícula como caminho operacional do portal. O CPF pode vir no resultado, mas o executor online ainda precisa ser acoplado ao CRM.'
+                        : 'Esta fonte ainda não possui executor de lote integrado nesta tela.'}
+                    </p>
+                  </div>
+                ) : null}
 
                 <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-slate-400">
                   {batchPreviewFileName ? (
                     <span className="text-slate-200">{batchPreviewFileName} • {batchSourceSummary}</span>
                   ) : (
-                    'Apenas uma coluna será considerada para leitura dos CPFs.'
+                    selectedConnectionUsesMatricula
+                      ? 'O caminho salvo no GitHub consulta pelo campo de matrícula retornado pelo portal.'
+                      : 'Apenas uma coluna será considerada para leitura dos CPFs.'
                   )}
                 </div>
               </Card>
@@ -1077,7 +1126,7 @@ export default function RibeiraoPage() {
 
               <div className="mt-6 space-y-3">
                 <SummaryRow label="Conexão" value={selectedConnectionLabel || '—'} />
-                <SummaryRow label="CPFs" value={batchCpfCount} />
+                <SummaryRow label={selectedConnectionUsesMatricula ? 'Matrículas' : 'CPFs'} value={batchCpfCount} />
                 <SummaryRow label="Saldo restante" value={0} />
                 <SummaryRow label="Retorno" value={RETURN_CHANNEL} />
               </div>
@@ -1118,7 +1167,11 @@ export default function RibeiraoPage() {
               </Button>
 
               {!canStartMarginBatch ? (
-                <p className="mt-3 text-center text-sm text-amber-100/80">Selecione uma conexão e envie um arquivo com CPFs.</p>
+                <p className="mt-3 text-center text-sm text-amber-100/80">
+                  {selectedConnectionIntegrated
+                    ? 'Selecione uma conexão e envie um arquivo com CPFs.'
+                    : 'Fonte visível na consulta. Para rodar por aqui, falta acoplar o executor por matrícula ao backend.'}
+                </p>
               ) : null}
               <p className="mt-4 text-center text-xs font-semibold uppercase tracking-[0.22em] text-cyan-200/80">
                 Conexão segura e criptografada
@@ -1761,12 +1814,20 @@ function getMarginConnectionLabel(value: string) {
 
 function normalizeMarginConnectionValue(value: string) {
   if (value === 'prefeitura-ribeirao-preto') return 'prefeitura_ribeirao_preto';
+  if (value === 'prefeitura-guarulhos-proconsig' || value === 'prefeitura-guarulhos') return 'prefeitura_guarulhos_proconsig';
+  if (value === 'prefeitura-sorriso-mt') return 'prefeitura_sorriso_mt';
   if (value === 'governo-amapa') return 'governo_amapa';
   if (value === 'governo-sp-tjsp') return 'governo_sp';
   return value;
 }
 
 function batchConnectionLabel(batch: RibeiraoBatchRecord) {
+  if (String(batch.base_name || batch.source_file_name || '').toLowerCase().includes('guarulhos')) {
+    return 'Prefeitura de Guarulhos';
+  }
+  if (String(batch.base_name || batch.source_file_name || '').toLowerCase().includes('sorriso')) {
+    return 'Prefeitura de Sorriso MT';
+  }
   if (String(batch.base_name || batch.source_file_name || '').toLowerCase().includes('amap')) {
     return 'Governo do Amapá';
   }
