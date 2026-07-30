@@ -1,0 +1,28 @@
+{
+  "sources": [
+    {
+      "id": "prefeitura_guarulhos_proconsig",
+      "label": "Prefeitura de Guarulhos",
+      "portal": "ProConsig",
+      "url": "https://proconsig.com.br/consulta_margem",
+      "lookup_keys": ["matricula", "cpf"],
+      "operational_lookup_key": "matricula",
+      "folder": "automacoes/consulta-margem/guarulhos",
+      "entrypoint": "guarulhos_proconsig_lote.py",
+      "status": "script_preservado",
+      "sensitive_outputs_committed": false
+    },
+    {
+      "id": "prefeitura_sorriso_mt",
+      "label": "Prefeitura de Sorriso MT",
+      "portal": "DigitalConsig",
+      "url": "https://sistema.digitalconsig.com.br/Login.aspx",
+      "lookup_keys": ["matricula", "cpf"],
+      "operational_lookup_key": "matricula",
+      "folder": "automacoes/consulta-margem/sorriso-mt",
+      "entrypoint": "sorriso_digitalconsig_lote.py",
+      "status": "script_preservado",
+      "sensitive_outputs_committed": false
+    }
+  ]
+}

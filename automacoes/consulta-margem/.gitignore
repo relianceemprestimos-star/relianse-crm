@@ -1,0 +1,14 @@
+**/.env
+**/__pycache__/
+**/outputs/
+**/checkpoints/
+**/*.xlsx
+**/*.xls
+**/*.csv
+**/*.html
+**/*.sqlite
+**/*.db
+
+# JSON de resultado/checkpoint pode conter dados pessoais. O registry abaixo e seguro.
+**/*.json
+!registry.json
