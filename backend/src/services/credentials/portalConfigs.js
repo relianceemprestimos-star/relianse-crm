@@ -2,7 +2,7 @@ export const PORTAL_CONFIGS = [
   {
     id: 'prefeitura_ribeirao_preto',
     name: 'Prefeitura de Ribeirão Preto',
-    url: 'https://saec.consiglog.com.br/Login.aspx',
+    url: 'https://saec.consigx.com.br/Login.aspx',
     requiresCaptcha: false,
     requiresAssistedLogin: false,
     providerStatus: 'implemented',

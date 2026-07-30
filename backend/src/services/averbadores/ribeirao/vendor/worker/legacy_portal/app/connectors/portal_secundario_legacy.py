@@ -59,7 +59,7 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
             return portal.replace("/Inicial/Inicial.aspx", "/Margem/ConsultaMargem.aspx")
         if "ConsultaMargem.aspx" in portal:
             return portal
-        return "https://saec.consiglog.com.br/Margem/ConsultaMargem.aspx"
+        return "https://saec.consigx.com.br/Margem/ConsultaMargem.aspx"
 
     @staticmethod
     def _browser_launch_args() -> list[str]:
@@ -1578,4 +1578,3 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
             consultado_em=datetime.utcnow(),
             tentativas=tentativas,
         )
-
