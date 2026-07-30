@@ -17,8 +17,8 @@ const validatedFlow = {
   portal: 'SAEC Consiglog',
   status: 'validado',
   ultima_validacao: '2026-06-01',
-  login_url: 'https://saec.consiglog.com.br/',
-  consulta_url: 'https://saec.consiglog.com.br/Margem/ConsultaMargem.aspx',
+  login_url: 'https://saec.consigx.com.br/Login.aspx',
+  consulta_url: 'https://saec.consigx.com.br/Margem/ConsultaMargem.aspx',
   fluxo_versao: '1.0.0',
   aliases: ['ribeirao-preto'],
   etapas_fluxo: [],
@@ -36,7 +36,7 @@ test('carrega caminho salvo validado do registry', () => {
   const flow = registry.getValidatedAutomationFlow('ribeirao-preto');
   assert.equal(flow.convenio_id, 'prefeitura_ribeirao_preto');
   assert.equal(flow.status, 'validado');
-  assert.equal(flow.consulta_url, 'https://saec.consiglog.com.br/Margem/ConsultaMargem.aspx');
+  assert.equal(flow.consulta_url, 'https://saec.consigx.com.br/Margem/ConsultaMargem.aspx');
 });
 
 test('aplica caminho salvo no payload antes do robo executar', () => {

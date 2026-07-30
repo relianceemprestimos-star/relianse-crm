@@ -5,8 +5,8 @@
   "portal": "SAEC Consiglog",
   "status": "validado",
   "ultima_validacao": "2026-05-26",
-  "login_url": "https://saec.consiglog.com.br/",
-  "consulta_url": "https://saec.consiglog.com.br/Margem/ConsultaMargem.aspx",
+  "login_url": "https://saec.consigx.com.br/Login.aspx",
+  "consulta_url": "https://saec.consigx.com.br/Margem/ConsultaMargem.aspx",
   "fluxo_versao": "1.0.0",
   "fluxo_ativo": "v1",
   "aliases": [

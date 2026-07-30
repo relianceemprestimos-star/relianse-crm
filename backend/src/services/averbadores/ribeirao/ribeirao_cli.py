@@ -3188,7 +3188,7 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
         elif "Inicial/Inicial.aspx" in consulta_url:
             consulta_url = consulta_url.replace("/Inicial/Inicial.aspx", "/Margem/ConsultaMargem.aspx")
         elif "ConsultaMargem.aspx" not in consulta_url:
-            consulta_url = "https://saec.consiglog.com.br/Margem/ConsultaMargem.aspx"
+            consulta_url = "https://saec.consigx.com.br/Margem/ConsultaMargem.aspx"
         print("[LOGIN_FLOW] consulta_margem goto iniciando", file=sys.stderr, flush=True)
         try:
             await connector.page.goto(
@@ -3450,7 +3450,7 @@ async def query_cpf(payload: dict) -> dict:
             elif "Inicial/Inicial.aspx" in consulta_url:
                 consulta_url = consulta_url.replace("/Inicial/Inicial.aspx", "/Margem/ConsultaMargem.aspx")
             elif "ConsultaMargem.aspx" not in consulta_url:
-                consulta_url = "https://saec.consiglog.com.br/Margem/ConsultaMargem.aspx"
+                consulta_url = "https://saec.consigx.com.br/Margem/ConsultaMargem.aspx"
             try:
                 print("[RIBEIRAO_QUERY] tentativa de reutilizar sessao existente", file=sys.stderr, flush=True)
                 await connector.page.goto(
