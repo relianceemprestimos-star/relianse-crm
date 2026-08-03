@@ -103,7 +103,7 @@ async def startup_event():
                     usuario=settings.pdc_username,
                     senha=settings.pdc_password,
                     nome_credencial="Padrao (.env)",
-                    limite_consultas=450,
+                    limite_consultas=400,
                 )
 
         # Evita lotes "travados" como em_execucao apos reinicio do servidor.
@@ -150,5 +150,4 @@ app.include_router(credenciais_router)
 app.include_router(averbadoras_router)
 app.include_router(mailings_router)
 app.include_router(manual_auth_router)
-
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Archive, Edit3, Plus, Send, Upload, Users } from 'lucide-react';
+import { Archive, Calculator, Edit3, Megaphone, Plus, ShieldCheck, Upload, Users } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 import { api } from '../lib/api';
@@ -28,62 +28,7 @@ const initialForm: CampaignFormState = {
   user_ids: [],
 };
 
-type CampaignGroup = {
-  id: string;
-  label: string;
-  matcher: (campaign: Campaign) => boolean;
-};
-
-function searchableCampaignText(campaign: Campaign) {
-  return `${campaign.name || ''} ${campaign.convenio || ''} ${campaign.description || ''} ${campaign.product_focus || ''}`.toLowerCase();
-}
-
-const campaignGroups: CampaignGroup[] = [
-  {
-    id: 'prefeitura-ribeirao-preto',
-    label: 'Prefeitura de Ribeirão Preto',
-    matcher: (campaign) => searchableCampaignText(campaign).includes('ribeir'),
-  },
-  {
-    id: 'governo-sp',
-    label: 'Governo de SP',
-    matcher: (campaign) => {
-      const text = searchableCampaignText(campaign);
-      return text.includes('governo de sp') || text.includes('gov sp') || text.includes('estado de sp') || text.includes('sao paulo') || text.includes('são paulo');
-    },
-  },
-  {
-    id: 'ministerio-publico',
-    label: 'MP / MPSP',
-    matcher: (campaign) => {
-      const text = searchableCampaignText(campaign);
-      return text.includes('mpsp') || text.includes('ministerio publico') || text.includes('ministério público') || text.includes('mp ');
-    },
-  },
-  {
-    id: 'tjsp',
-    label: 'TJSP',
-    matcher: (campaign) => searchableCampaignText(campaign).includes('tjsp') || searchableCampaignText(campaign).includes('tribunal de justiça'),
-  },
-  {
-    id: 'prefeitura-ananindeua',
-    label: 'Prefeitura de Ananindeua',
-    matcher: (campaign) => searchableCampaignText(campaign).includes('ananindeua'),
-  },
-  {
-    id: 'governo-amapa',
-    label: 'Governo do Amapá',
-    matcher: (campaign) => {
-      const text = searchableCampaignText(campaign);
-      return text.includes('amapa') || text.includes('amapá');
-    },
-  },
-  {
-    id: 'outros',
-    label: 'Outros convênios',
-    matcher: () => true,
-  },
-];
+const ALL_GROUPS = '__all__';
 
 function statusTone(status: Campaign['status']) {
   if (status === 'active') return 'success';
@@ -91,10 +36,26 @@ function statusTone(status: Campaign['status']) {
   return 'neutral';
 }
 
+function groupLabel(campaign: Campaign) {
+  const source = `${campaign.convenio || ''} ${campaign.name || ''}`
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+
+  if (source.includes('mpsp') || source.includes('ministerio publico') || /\bmp\b/.test(source)) return 'MP';
+  if (source.includes('ribeirao')) return 'Prefeitura de Ribeirão Preto';
+  if (source.includes('pederneiras')) return 'Prefeitura de Pederneiras';
+  if (source.includes('paranavai')) return 'Prefeitura de Paranavaí';
+  if (source.includes('votuporanga')) return 'Prefeitura de Votuporanga';
+  if (source.includes('tce') && source.includes('to')) return 'TCE TO';
+
+  return campaign.convenio || 'Outras campanhas';
+}
+
 export default function CampaignsPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const canAssignUsers = user.role === 'gerencial' || user.role === 'admin';
+  const canManage = user.role === 'gerencial' || user.role === 'admin';
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -102,7 +63,7 @@ export default function CampaignsPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Campaign | null>(null);
   const [form, setForm] = useState<CampaignFormState>(initialForm);
-  const [selectedGroup, setSelectedGroup] = useState(campaignGroups[0].id);
+  const [selectedGroup, setSelectedGroup] = useState(ALL_GROUPS);
 
   useEffect(() => {
     let active = true;
@@ -110,8 +71,8 @@ export default function CampaignsPage() {
       try {
         setLoading(true);
         const [campaignResponse, usersResponse] = await Promise.all([
-          api.getCampaigns({ include_archived: '1' }),
-          canAssignUsers ? api.getUsers() : Promise.resolve({ users: [] as UserRecord[] }),
+          api.getCampaigns({ include_archived: canManage ? '1' : '0' }),
+          canManage ? api.getUsers() : Promise.resolve({ users: [] as UserRecord[] }),
         ]);
         if (!active) return;
         setCampaigns(campaignResponse.campaigns || []);
@@ -127,30 +88,23 @@ export default function CampaignsPage() {
     return () => {
       active = false;
     };
-  }, [canAssignUsers]);
+  }, [canManage]);
 
-  const visibleCampaigns = useMemo(() => {
-    const group = campaignGroups.find((item) => item.id === selectedGroup) || campaignGroups[0];
-    if (group.id === 'outros') {
-      const specificGroups = campaignGroups.filter((item) => item.id !== 'outros');
-      return campaigns.filter((campaign) => !specificGroups.some((item) => item.matcher(campaign)));
-    }
-    return campaigns.filter((campaign) => group.matcher(campaign));
-  }, [campaigns, selectedGroup]);
+  const campaignGroups = useMemo(() => {
+    const labels = new Set(campaigns.map((campaign) => groupLabel(campaign)));
+    return Array.from(labels).sort((first, second) => first.localeCompare(second, 'pt-BR'));
+  }, [campaigns]);
 
-  const groupCounts = useMemo(
-    () =>
-      campaignGroups.reduce<Record<string, number>>((acc, group) => {
-        if (group.id === 'outros') {
-          const specificGroups = campaignGroups.filter((item) => item.id !== 'outros');
-          acc[group.id] = campaigns.filter((campaign) => !specificGroups.some((item) => item.matcher(campaign))).length;
-          return acc;
-        }
-        acc[group.id] = campaigns.filter((campaign) => group.matcher(campaign)).length;
-        return acc;
-      }, {}),
-    [campaigns]
+  const visibleCampaigns = useMemo(
+    () => campaigns.filter((campaign) => selectedGroup === ALL_GROUPS || groupLabel(campaign) === selectedGroup),
+    [campaigns, selectedGroup]
   );
+
+  useEffect(() => {
+    if (selectedGroup !== ALL_GROUPS && !campaignGroups.includes(selectedGroup)) {
+      setSelectedGroup(ALL_GROUPS);
+    }
+  }, [campaignGroups, selectedGroup]);
 
   const totals = useMemo(
     () => ({
@@ -161,8 +115,6 @@ export default function CampaignsPage() {
     }),
     [visibleCampaigns]
   );
-
-  const selectedGroupLabel = campaignGroups.find((item) => item.id === selectedGroup)?.label || 'Campanhas';
 
   function openCreate() {
     setEditing(null);
@@ -199,7 +151,7 @@ export default function CampaignsPage() {
         product_focus: form.product_focus,
         status: form.status,
         internal_notes: form.internal_notes.trim(),
-        user_ids: canAssignUsers ? form.user_ids : undefined,
+        user_ids: form.user_ids,
         role: 'vendedor',
       };
 
@@ -211,7 +163,7 @@ export default function CampaignsPage() {
         toast.success('Campanha criada com sucesso.');
       }
 
-      const response = await api.getCampaigns({ include_archived: '1' });
+      const response = await api.getCampaigns({ include_archived: canManage ? '1' : '0' });
       setCampaigns(response.campaigns || []);
       setEditing(null);
       setForm(initialForm);
@@ -229,7 +181,7 @@ export default function CampaignsPage() {
     try {
       await api.archiveCampaign(campaign.id, true);
       toast.success('Campanha arquivada.');
-      const response = await api.getCampaigns({ include_archived: '1' });
+      const response = await api.getCampaigns({ include_archived: canManage ? '1' : '0' });
       setCampaigns(response.campaigns || []);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Falha ao arquivar campanha.');
@@ -240,53 +192,56 @@ export default function CampaignsPage() {
     <div className="space-y-8">
       <SectionHeader
         title="Campanhas"
-        description="Escolha o convênio ou órgão, abra a campanha e siga para atendimento, base ou relatório no mesmo lugar."
+        description="Organize suas bases por convênio, órgão ou estratégia de atendimento."
         action={
-          <div className="flex flex-wrap gap-3">
-            <Button variant="secondary" onClick={() => navigate('/campanhas/oportunidades')}>
-              <Send size={16} />
-              Criar disparo controlado
-            </Button>
-            <Button onClick={openCreate}>
-              <Plus size={16} />
-              Nova campanha
-            </Button>
-          </div>
+          canManage ? (
+            <div className="flex flex-wrap gap-3">
+              <Button variant="secondary" onClick={() => navigate('/campanhas/mpsp-julho')}>
+                <ShieldCheck size={16} />
+                MPSP Julho
+              </Button>
+              <Button variant="secondary" onClick={() => navigate('/campanhas/disparos')}>
+                <Megaphone size={16} />
+                Disparos
+              </Button>
+              <Button variant="secondary" onClick={() => navigate('/campanhas/coeficiente')}>
+                <Calculator size={16} />
+                Coeficiente
+              </Button>
+              <Button onClick={() => navigate('/campanhas/oportunidades')}>
+                <Plus size={16} />
+                Nova campanha ReWhats
+              </Button>
+              <Button variant="secondary" onClick={openCreate}>
+                <Plus size={16} />
+                Campanha manual
+              </Button>
+            </div>
+          ) : null
         }
       />
 
-      <Card className="p-5">
-        <div className="grid gap-4 lg:grid-cols-[1fr_360px] lg:items-end">
+      <Card className="border-info/20 bg-info/5 p-5">
+        <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
           <div>
-            <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Consulta de campanhas</p>
-            <h3 className="mt-2 text-2xl font-bold text-white">{selectedGroupLabel}</h3>
-            <p className="mt-2 text-sm text-slate-400">
-              Campanhas ficam agrupadas por prefeitura, governo ou órgão. Atendimento e bases devem partir daqui.
+            <p className="text-xs uppercase tracking-[0.22em] text-slate-500">Consulta de campanhas</p>
+            <p className="mt-2 max-w-3xl text-sm text-slate-400">
+              Escolha um grupo para consultar as campanhas sem criar abas separadas no menu lateral.
             </p>
-            <div className="mt-4 flex flex-wrap gap-2">
-              {campaignGroups.map((group) => (
-                <button
-                  key={group.id}
-                  type="button"
-                  onClick={() => setSelectedGroup(group.id)}
-                  className={[
-                    'rounded-full border px-3 py-1 text-xs font-semibold transition',
-                    selectedGroup === group.id
-                      ? 'border-accent/40 bg-accent/15 text-accent'
-                      : 'border-border bg-panelAlt text-slate-400 hover:border-accent/30 hover:text-slate-100',
-                  ].join(' ')}
-                >
-                  {group.label} · {groupCounts[group.id] || 0}
-                </button>
-              ))}
+            <div className="mt-5 flex flex-wrap items-center gap-3">
+              <Badge tone="accent">{selectedGroup === ALL_GROUPS ? 'Todas as campanhas' : selectedGroup}</Badge>
+              <span className="text-sm text-slate-400">
+                {visibleCampaigns.length} campanha(s) encontrada(s) neste grupo.
+              </span>
             </div>
           </div>
-          <label className="block text-sm text-slate-300">
+          <label className="block min-w-full text-xs uppercase tracking-[0.2em] text-slate-500 sm:min-w-[320px]">
             Grupo
             <Select className="mt-2" value={selectedGroup} onChange={(event) => setSelectedGroup(event.target.value)}>
+              <option value={ALL_GROUPS}>Todas as campanhas</option>
               {campaignGroups.map((group) => (
-                <option key={group.id} value={group.id}>
-                  {group.label}
+                <option key={group} value={group}>
+                  {group}
                 </option>
               ))}
             </Select>
@@ -305,11 +260,6 @@ export default function CampaignsPage() {
         <Card className="p-8 text-center text-slate-400">Carregando campanhas...</Card>
       ) : (
         <div className="grid gap-4 xl:grid-cols-2">
-          {visibleCampaigns.length === 0 ? (
-            <Card className="p-8 text-center text-slate-400">
-              Nenhuma campanha encontrada neste grupo. Crie a campanha ou importe uma base vinculada ao convênio.
-            </Card>
-          ) : null}
           {visibleCampaigns.map((campaign) => (
             <Card key={campaign.id} className="p-5">
               <div className="flex items-start justify-between gap-4">
@@ -346,26 +296,30 @@ export default function CampaignsPage() {
 
               <div className="mt-5 flex flex-wrap gap-3">
                 <Button onClick={() => navigate(`/campanhas/${campaign.id}`)}>
-                  Abrir atendimento
+                  Abrir campanha
                 </Button>
                 <Button variant="secondary" onClick={() => navigate(`/fila?campaign_id=${campaign.id}`)}>
-                  Ver clientes
+                  Ver fila
                 </Button>
                 <Button variant="secondary" onClick={() => navigate(`/relatorios?campaign_id=${campaign.id}`)}>
                   Relatório
                 </Button>
-                <Button variant="secondary" onClick={() => navigate(`/upload?campaign_id=${campaign.id}`)}>
-                  <Upload size={16} />
-                  Subir base
-                </Button>
-                <Button variant="secondary" onClick={() => openEdit(campaign)}>
-                  <Edit3 size={16} />
-                  Editar
-                </Button>
-                <Button variant="ghost" onClick={() => archiveCampaign(campaign)}>
-                  <Archive size={16} />
-                  Arquivar
-                </Button>
+                {canManage ? (
+                  <>
+                    <Button variant="secondary" onClick={() => navigate(`/upload?campaign_id=${campaign.id}`)}>
+                      <Upload size={16} />
+                      Subir base
+                    </Button>
+                    <Button variant="secondary" onClick={() => openEdit(campaign)}>
+                      <Edit3 size={16} />
+                      Editar
+                    </Button>
+                    <Button variant="ghost" onClick={() => archiveCampaign(campaign)}>
+                      <Archive size={16} />
+                      Arquivar
+                    </Button>
+                  </>
+                ) : null}
               </div>
             </Card>
           ))}
@@ -385,7 +339,7 @@ export default function CampaignsPage() {
         <div className="space-y-4">
           <label className="block text-sm text-slate-300">
             Nome da campanha
-            <Input className="mt-2" value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} placeholder="Ex: GOV SP - Maio 2026" />
+            <Input className="mt-2" value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} placeholder="Ex: Governo de SP - Maio 2026" />
           </label>
           <label className="block text-sm text-slate-300">
             Convênio/órgão
@@ -418,7 +372,7 @@ export default function CampaignsPage() {
               </Select>
             </label>
           </div>
-          {canAssignUsers ? (
+          {canManage ? (
             <label className="block text-sm text-slate-300">
               Vendedores autorizados
               <Select

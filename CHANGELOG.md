@@ -1,28 +1,15 @@
 # Changelog
 
-## 2026-07-07
-
-- Fase 1 Yntelli: reorganizado menu operacional para centralizar trabalho em Campanhas.
-- Adicionada alternancia visual entre tema claro e tema escuro.
-- Campanhas agora podem ser filtradas por grupos de convenio/orgao, como Prefeitura de Ribeirao Preto, Governo de SP, MP/MPSP e outros.
-- Clientes, Atendimentos, Upload, Bases e WhatsApp deixam de aparecer como atalhos principais; rotas antigas seguem preservadas para compatibilidade.
-- Credenciais segue como menu gerencial para cadastro de logins dos averbadores.
-- Envio WhatsApp para cliente com ID passa a exigir opt-in ativo.
-- Registrado plano de migracao operacional sem alterar dados de producao.
-
-## 2026-06-01
-
-- Criado `automation-registry` persistente para caminhos validados de consulta de margem.
-- Configurado `AUTOMATION_REGISTRY_PATH=/app/automation-registry` e volume Docker `./automation-registry:/app/automation-registry`.
-- Integrado helper de registry ao backend antes da execucao dos robos de margem.
-- Adicionado registro tecnico de falhas com log, screenshot, HTML e versao candidata sem sobrescrever fluxo validado.
-
 ## 2026-05-26
 
-- Backend: adicionada base de protecao de dados sensiveis, rate limit e bloqueio basico de comunicacao sem consentimento.
-- Iniciada correcao critica LGPD/seguranca em PRs menores.
-- Documentada classificacao USO INTERNO.
-- Registradas pendencias: opt-in, rate limit, protecao de dados, testes e vulnerabilidades herdadas qs/xlsx.
-- Dependencias: corrigida vulnerabilidade transitiva de `qs` via `npm audit fix`.
-- Dependencias: documentada vulnerabilidade remanescente de `xlsx`, sem correcao segura disponivel no pacote npm oficial nesta data.
-- Dependencias: registrada mitigacao operacional para uso de planilhas somente em area autenticada e com limite de upload.
+- Adicionado modulo inicial de campanhas ReWhats no CRM com coeficiente do dia, oportunidades, criacao de disparo e acompanhamento.
+- Adicionado modo pre-disparo com dry-run, status PRONTA_PARA_DISPARO e trava backend contra disparo real.
+- Adicionado modulo inicial de documentos com checklist por banco, webhook ReWhats e telas de acompanhamento.
+- Adicionada base minima de consentimento para comunicacao por canal.
+- Bloqueada abertura/envio de WhatsApp pelo CRM quando nao ha opt-in ativo.
+- Adicionado opt-out interno por canal.
+- Adicionado audit log para login, mudancas de status, comunicacao e consentimento.
+- Adicionados utilitarios centrais de mascaramento, hash e criptografia AES-256-GCM.
+- Adicionados Helmet e rate limits para rotas globais, login, comunicacao e consultas sensiveis.
+- Adicionados testes minimos de seguranca/LGPD.
+- Documentado que o CRM permanece apenas para uso interno controlado.

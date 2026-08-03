@@ -1,10 +1,10 @@
-﻿# Status do Projeto CRM Reliance
+# Status do Projeto CRM Relianse
 
 Atualizado para transferencia entre ambientes/Codex.
 
 ## Resumo tecnico
 
-O CRM Reliance e uma aplicacao full stack com frontend React/Vite, backend Node/Express, persistencia SQLite via `sql.js`, automacoes Python/Playwright e deploy Docker Compose.
+O CRM Relianse e uma aplicacao full stack com frontend React/Vite, backend Node/Express, persistencia SQLite via `sql.js`, automacoes Python/Playwright e deploy Docker Compose.
 
 Repositorio:
 
@@ -151,4 +151,3 @@ ls -lah data uploads logs
 ```
 
 Se houver dados reais, fazer backup antes de qualquer rebuild, migracao ou limpeza.
-

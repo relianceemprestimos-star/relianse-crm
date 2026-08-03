@@ -1,27 +1,20 @@
-# ADR: uso interno e LGPD minima
+# ADR 2026-05-26 — Uso Interno e Correcoes LGPD Minimas
 
 ## Status
 
-Aceito em 2026-05-26.
-
-## Contexto
-
-O CRM Reliance atende operacao interna de correspondente bancario e pode lidar com telefone, CPF, dados cadastrais, margem, convenios e informacoes de credito. A investigacao apontou que o sistema pode seguir como uso interno controlado, mas nao deve ser tratado como SaaS nesta fase.
+Aceito.
 
 ## Decisao
 
-- Manter o CRM Reliance como **USO_PROPRIO / USO INTERNO CONTROLADO**.
-- Nao recomendar SaaS sem nova investigacao especifica.
-- Aplicar correcoes criticas de LGPD e seguranca em PRs menores.
-- Priorizar opt-in, rate limit, mascaramento, protecao de dados, audit log e testes minimos.
-- Exigir novo ADR para multi-tenancy, isolamento de dados e operacao SaaS.
-- Manter Nova Vida como busca interna autorizada, sem bloqueio por opt-in de comunicacao.
-- Manter CPF completo disponivel em atendimento individual quando necessario para operacao, com mascaramento em listas e dashboards.
-- Preservar variaveis Santana/CapSolver e Nova Vida nos exemplos de ambiente, sem valores reais.
+Manter o CRM Reliance como USO_PROPRIO / USO INTERNO CONTROLADO.
+
+## Contexto
+
+A investigacao Yntelli indicou que o projeto funciona para operacao interna, mas nao esta pronto para SaaS. Os riscos principais estavam em consentimento, logs, rate limit, auditoria e protecao de dados.
 
 ## Consequencias
 
-- Novas features devem respeitar uso interno e minimo necessario de dados.
-- Comunicacao ativa deve depender de consentimento; busca interna autorizada nao deve ser confundida com envio ativo ao cliente.
-- Dados sensiveis precisam de mascaramento e protecao progressiva.
-- Vulnerabilidades herdadas devem ser tratadas sem misturar com PRs de documentacao.
+- Nao transformar em SaaS sem nova investigacao.
+- Corrigir opt-in, opt-out, audit log, rate limits e protecoes basicas antes de novas features.
+- Manter refatoracoes grandes fora deste bloco.
+

@@ -110,7 +110,7 @@ export function setAccessSession(session: Partial<AccessSession>) {
 }
 
 export function canAccessRibeirao(role?: string) {
-  return role === 'gerencial' || role === 'admin' || role === 'vendedor';
+  return role === 'gerencial' || role === 'admin';
 }
 
 export function roleLabel(role?: string) {

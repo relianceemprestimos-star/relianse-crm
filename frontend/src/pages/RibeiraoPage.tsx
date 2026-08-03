@@ -17,11 +17,9 @@ import toast from 'react-hot-toast';
 
 import { ApiError, api } from '../lib/api';
 import { formatCurrencyDisplay } from '../lib/margins';
-import { maskCpfForList } from '../lib/privacy';
+import { maskCpf } from '../lib/privacy';
 import { getAccessSession } from '../lib/session';
 import type {
-  AverbadorCredential,
-  AutomationRegistrySummary,
   Base,
   RibeiraoBatchPreview,
   RibeiraoBatchRecord,
@@ -30,6 +28,7 @@ import type {
   RibeiraoHistoryItem,
   RibeiraoSession,
   RibeiraoSessionStatus,
+  MarginPortalConfig,
 } from '../types';
 import { Badge, Button, Card, Input, SectionHeader, Select } from '../components/ui';
 
@@ -45,17 +44,6 @@ type ProductView = {
 type TabKey = 'individual' | 'batch' | 'history';
 type BatchSourceMode = 'upload' | 'base';
 
-const MARGIN_CONNECTIONS = [
-  { value: 'prefeitura-ribeirao-preto', label: 'Prefeitura de Ribeirão Preto', enabled: true },
-  { value: 'prefeitura-guarulhos-proconsig', label: 'Prefeitura de Guarulhos', enabled: true },
-  { value: 'prefeitura-sorriso-mt', label: 'Prefeitura de Sorriso MT', enabled: true },
-  { value: 'governo-amapa', label: 'Governo do Amapá', enabled: false },
-  { value: 'governo-sp-tjsp', label: 'Governo de SP / Tribunal de Justiça de SP', enabled: false },
-] as const;
-
-const RETURN_CHANNEL = 'Portal';
-const SP_BATCH_CPF_LIMIT = 450;
-
 const HISTORY_FILTER_DEFAULTS = {
   from: '',
   to: '',
@@ -66,38 +54,72 @@ const HISTORY_FILTER_DEFAULTS = {
 
 const ROLE_SESSION_KEY = 'relianse.ribeirao.sessionId';
 const BATCH_SESSION_KEY = 'relianse.ribeirao.batchId';
-const CONNECTION_REGISTRY_IDS: Record<string, string> = {
-  'prefeitura-ribeirao-preto': 'prefeitura_ribeirao_preto',
-  'prefeitura-guarulhos-proconsig': 'prefeitura_guarulhos_proconsig',
-  'prefeitura-sorriso-mt': 'prefeitura_sorriso_mt',
-  'governo-amapa': 'governo_amapa',
-  'governo-sp-tjsp': 'governo_sp',
-};
+const MARGIN_CONNECTION_KEY = 'relianse.margin.selectedConnection';
+const SP_BATCH_CPF_LIMIT = 450;
+const RETURN_CHANNEL = 'Portal';
 
-function hasBatchCpfLimit(connection: string) {
-  return normalizeMarginConnectionValue(connection) === 'governo_sp';
-}
-
-function isMatriculaMarginConnection(connection: string) {
-  const normalized = normalizeMarginConnectionValue(connection);
-  return normalized === 'prefeitura_guarulhos_proconsig' || normalized === 'prefeitura_sorriso_mt';
-}
-
-function isIntegratedBatchConnection(connection: string) {
-  return normalizeMarginConnectionValue(connection) === 'prefeitura_ribeirao_preto';
-}
+const MARGIN_CONNECTIONS = [
+  {
+    value: 'prefeitura-ribeirao-preto',
+    label: 'Prefeitura de Ribeirão Preto',
+    group: 'Prefeituras',
+    status: 'Ativo',
+    enabled: true,
+    note: 'Conector operacional para consulta em lote.',
+    captcha: 'CapSolver disponível no robô do portal.',
+  },
+  {
+    value: 'prefeitura-santana-parnaiba',
+    label: 'Prefeitura de Santana de Parnaíba',
+    group: 'Prefeituras',
+    status: 'Preparado',
+    enabled: true,
+    note: 'Robô exclusivo RF1 para consulta individual e em lote.',
+    captcha: 'CapSolver ativo no login deste portal.',
+  },
+  {
+    value: 'prefeitura-ananindeua',
+    label: 'Prefeitura de Ananindeua',
+    group: 'Prefeituras',
+    status: 'Preparado',
+    enabled: true,
+    note: 'API RF1 para consulta individual e em lote.',
+    captcha: 'CapSolver/credencial do averbador RF1 conforme portal.',
+  },
+  {
+    value: 'governo-amapa',
+    label: 'Governo do Amapá',
+    group: 'Governos',
+    status: 'Preparado',
+    enabled: false,
+    note: 'Conexão preparada para receber o conector do Amapá.',
+    captcha: 'Aguardando regra do portal.',
+  },
+  {
+    value: 'governo-sp',
+    label: 'Governo de SP',
+    group: 'Governos',
+    status: 'Ativo',
+    enabled: true,
+    note: 'Consulta no Portal do Consignado. Não fixa órgão: o vínculo do cliente vem no retorno da consulta.',
+    captcha: 'CapSolver ativo para o portal do consignado.',
+  },
+] as const;
 
 export default function RibeiraoPage() {
   const sessionSession = getAccessSession();
   const [activeTab, setActiveTab] = useState<TabKey>('batch');
-  const [selectedConnection, setSelectedConnection] = useState('');
-  const [selectedCredential, setSelectedCredential] = useState<AverbadorCredential | null>(null);
+  const [selectedConnection, setSelectedConnection] = useState<(typeof MARGIN_CONNECTIONS)[number]['value']>(() => {
+    const saved = window.localStorage.getItem(MARGIN_CONNECTION_KEY);
+    return MARGIN_CONNECTIONS.some((connection) => connection.value === saved)
+      ? (saved as (typeof MARGIN_CONNECTIONS)[number]['value'])
+      : 'prefeitura-ribeirao-preto';
+  });
+  const [marginPortals, setMarginPortals] = useState<MarginPortalConfig[]>([]);
   const [login, setLogin] = useState('');
   const [password, setPassword] = useState('');
   const [session, setSession] = useState<RibeiraoSession | null>(null);
   const [ribeiraoDiagnostics, setRibeiraoDiagnostics] = useState<RibeiraoDiagnostics | null>(null);
-  const [automationRegistry, setAutomationRegistry] = useState<AutomationRegistrySummary | null>(null);
-  const [registryLoading, setRegistryLoading] = useState(false);
   const [sessionLoading, setSessionLoading] = useState(false);
   const [sessionRefreshing, setSessionRefreshing] = useState(false);
   const [cpf, setCpf] = useState('');
@@ -126,17 +148,26 @@ export default function RibeiraoPage() {
     if (sessionId) {
       void refreshSessionStatus(sessionId);
     }
-    const savedBatch = Number(window.localStorage.getItem(BATCH_SESSION_KEY) || 0);
+    const savedBatch = Number(window.localStorage.getItem(getBatchStorageKey(selectedConnection)) || 0);
     if (savedBatch) {
       void refreshBatchStatus(savedBatch);
     }
     void loadRibeiraoDiagnostics();
-    void loadAutomationRegistry();
     void loadHistory(historyFilters);
     void loadBatchHistory();
     void loadBases();
+    void api.getMarginPortals().then((response) => setMarginPortals(response.portals || [])).catch(() => setMarginPortals([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(MARGIN_CONNECTION_KEY, selectedConnection);
+    setCurrentBatch(null);
+    setSelectedBatch(null);
+    setBatchResults([]);
+    void loadBatchHistory(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedConnection]);
 
   useEffect(() => {
     const sessionId = session?.id;
@@ -146,21 +177,14 @@ export default function RibeiraoPage() {
   }, [session?.id]);
 
   useEffect(() => {
-    if (!selectedConnection) {
-      setSelectedCredential(null);
-      return;
-    }
-    void loadSelectedCredential(selectedConnection);
-  }, [selectedConnection]);
-
-  useEffect(() => {
     const batchId = currentBatch?.id;
+    const storageKey = getBatchStorageKey(selectedConnection);
     if (batchId) {
-      window.localStorage.setItem(BATCH_SESSION_KEY, String(batchId));
+      window.localStorage.setItem(storageKey, String(batchId));
     } else {
-      window.localStorage.removeItem(BATCH_SESSION_KEY);
+      window.localStorage.removeItem(storageKey);
     }
-  }, [currentBatch?.id]);
+  }, [currentBatch?.id, selectedConnection]);
 
   useEffect(() => {
     const handleStorage = () => {
@@ -168,14 +192,14 @@ export default function RibeiraoPage() {
       if (saved && (!session || session.id !== saved)) {
         void refreshSessionStatus(saved);
       }
-      const savedBatch = Number(window.localStorage.getItem(BATCH_SESSION_KEY) || 0);
+      const savedBatch = Number(window.localStorage.getItem(getBatchStorageKey(selectedConnection)) || 0);
       if (savedBatch && (!currentBatch || currentBatch.id !== savedBatch)) {
         void refreshBatchStatus(savedBatch);
       }
     };
     window.addEventListener('storage', handleStorage);
     return () => window.removeEventListener('storage', handleStorage);
-  }, [session, currentBatch]);
+  }, [session, currentBatch, selectedConnection]);
 
   useEffect(() => {
     if (!currentBatch?.id || !isBatchActive(currentBatch.status)) {
@@ -190,11 +214,6 @@ export default function RibeiraoPage() {
 
   const visibleHistory = useMemo(() => history, [history]);
   const ribeiraoUrlReady = Boolean(ribeiraoDiagnostics?.ribeiraoConfigured);
-  const selectedRegistryId = CONNECTION_REGISTRY_IDS[selectedConnection] || normalizeMarginConnectionValue(selectedConnection || 'prefeitura-ribeirao-preto');
-  const selectedRegistryFlow = useMemo(
-    () => (automationRegistry?.flows || []).find((flow) => flow.convenio_id === selectedRegistryId) || null,
-    [automationRegistry?.flows, selectedRegistryId]
-  );
   const stats = useMemo(() => {
     const total = history.length;
     const withMargin = history.filter((item) => item.consulta_status === 'com_marg').length;
@@ -234,45 +253,6 @@ export default function RibeiraoPage() {
     }
   }
 
-  async function loadSelectedCredential(connection: string) {
-    try {
-      const response = await api.getCredential(normalizeMarginConnectionValue(connection));
-      setSelectedCredential(response.credential);
-    } catch (error) {
-      setSelectedCredential(null);
-      if (error instanceof ApiError && error.status === 404) {
-        return;
-      }
-      toast.error(error instanceof Error ? error.message : 'Falha ao verificar credencial do portal.');
-    }
-  }
-
-  async function loadAutomationRegistry() {
-    try {
-      setRegistryLoading(true);
-      const response = await api.getAutomationRegistry();
-      setAutomationRegistry(response);
-    } catch (error) {
-      setAutomationRegistry(null);
-      toast.error(error instanceof Error ? error.message : 'Falha ao carregar registry de automações.');
-    } finally {
-      setRegistryLoading(false);
-    }
-  }
-
-  async function handleRevalidateRegistryFlow() {
-    if (!selectedRegistryId) {
-      return;
-    }
-    try {
-      const response = await api.revalidateAutomationFlow(selectedRegistryId, 'Revalidacao solicitada no painel tecnico da Consulta de Margem.');
-      toast.success(response.message || 'Revalidacao registrada.');
-      await loadAutomationRegistry();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Falha ao registrar revalidacao.');
-    }
-  }
-
   async function loadHistory(filters = historyFilters) {
     try {
       setHistoryLoading(true);
@@ -285,25 +265,22 @@ export default function RibeiraoPage() {
     }
   }
 
-  async function loadBatchHistory() {
+  async function loadBatchHistory(syncCurrentBatch = false) {
     try {
       setBatchHistoryLoading(true);
-      const response = await api.getRibeiraoBatchHistory();
-      const rows = (response.rows || []).filter(Boolean);
+      let rows: RibeiraoBatchRecord[] = [];
+      if (isRf1MarginPortal(selectedConnection)) {
+        const response = await api.getSantanaBatchHistory(normalizeMarginConnectionValue(selectedConnection));
+        rows = (response.batches || []).filter(Boolean);
+      } else {
+        const response = await api.getRibeiraoBatchHistory();
+        rows = (response.rows || []).filter(Boolean);
+      }
       setBatchHistory(rows);
-      setCurrentBatch((previous) => {
-        if (previous?.id) {
-          const updatedCurrent = rows.find((batch) => batch.id === previous.id);
-          if (updatedCurrent) {
-            return updatedCurrent;
-          }
-        }
-        const activeBatch = rows.find((batch) => isBatchActive(batch.status));
-        if (activeBatch) {
-          return activeBatch;
-        }
-        return previous;
-      });
+      if (syncCurrentBatch) {
+        const savedId = Number(window.localStorage.getItem(getBatchStorageKey(selectedConnection)) || 0);
+        setCurrentBatch(rows.find((batch) => batch.id === savedId) || rows[0] || null);
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Falha ao carregar o histórico de lotes.');
     } finally {
@@ -339,10 +316,17 @@ export default function RibeiraoPage() {
       return;
     }
     try {
-      const response = await api.getRibeiraoBatchStatus(batchId);
+      const response = isRf1MarginPortal(selectedConnection)
+        ? await api.getSantanaBatchStatus(batchId)
+        : await api.getRibeiraoBatchStatus(batchId);
       setCurrentBatch(response.batch);
       if (selectedBatch && selectedBatch.id === batchId) {
-        await loadBatchResults(batchId, response.batch);
+        if (isRf1MarginPortal(selectedConnection)) {
+          setBatchResults(((response.batch as any).results || []).filter(Boolean));
+          setSelectedBatch(response.batch);
+        } else {
+          await loadBatchResults(batchId, response.batch);
+        }
       }
       await loadBatchHistory();
     } catch (error) {
@@ -353,6 +337,12 @@ export default function RibeiraoPage() {
   async function loadBatchResults(batchId: number, batchOverride?: RibeiraoBatchRecord) {
     try {
       setBatchResultsLoading(true);
+      if (isRf1MarginPortal(selectedConnection)) {
+        const response = await api.getSantanaBatchStatus(batchId);
+        setBatchResults((((response.batch as any).results || []) as Record<string, unknown>[]).map(mapSantanaBatchResult));
+        setSelectedBatch(batchOverride || response.batch || null);
+        return;
+      }
       const response = await api.getRibeiraoBatchResults(batchId);
       setBatchResults((response.rows || []).filter(Boolean));
       setSelectedBatch(batchOverride || response.batch || null);
@@ -364,31 +354,27 @@ export default function RibeiraoPage() {
   }
 
   async function handleStartSession() {
-    if (!ribeiraoDiagnostics?.ribeiraoConfigured) {
+    const portalId = normalizeMarginConnectionValue(selectedConnection);
+    if (isRf1MarginPortal(portalId)) {
+      window.location.assign(`/credenciais?portal=${encodeURIComponent(portalId)}`);
+      return;
+    }
+    if (portalId !== 'governo_sp' && !ribeiraoDiagnostics?.ribeiraoConfigured) {
       toast.error(ribeiraoDiagnostics?.hint || 'Configure a URL do averbador no servidor antes de iniciar a sessão.');
       return;
     }
 
-    const portalId = normalizeMarginConnectionValue(selectedConnection || 'prefeitura_ribeirao_preto');
-    const hasTypedCredential = Boolean(login.trim() && password.trim());
-    const hasSavedCredential = Boolean(selectedCredential?.has_password);
-
-    if (portalId !== 'prefeitura_ribeirao_preto') {
-      toast.error('Fonte ainda nÃ£o implementada para conexÃ£o automatizada.');
-      return;
-    }
-
-    if (!hasTypedCredential && !hasSavedCredential) {
-      toast.error('Cadastre a credencial do portal ou informe login e senha para conectar.');
+    if (!isImplementedMarginConnection(selectedConnection)) {
+      toast.error(`${getMarginConnectionLabel(selectedConnection)} está preparado na tela, mas ainda precisa do conector do portal para consultar.`);
       return;
     }
 
     try {
       setSessionLoading(true);
       const response = await api.startRibeiraoSession({
+        login: login.trim() || undefined,
+        password: password || undefined,
         portal_id: portalId,
-        login: login.trim(),
-        password,
         timeout_seconds: 900,
         slow_mo: 0,
       });
@@ -443,13 +429,10 @@ export default function RibeiraoPage() {
   }
 
   async function handleQueryCpf() {
-    if (!sessionReady || !session?.id) {
-      toast.error(getSessionBlockingMessage(session));
-      return;
-    }
-    const sessionId = Number(session?.id || 0);
+    const sessionId = sessionReady && session?.id ? session.id : undefined;
 
-    const digits = cpf.replace(/\D/g, '');
+    const rawDigits = cpf.replace(/\D/g, '');
+    const digits = rawDigits.length > 0 && rawDigits.length < 11 ? rawDigits.padStart(11, '0') : rawDigits;
     if (digits.length !== 11) {
       toast.error('Informe um CPF válido.');
       return;
@@ -457,11 +440,41 @@ export default function RibeiraoPage() {
 
     try {
       setQueryLoading(true);
+      if (isRf1MarginPortal(selectedConnection)) {
+        const response = await api.querySantanaCpf(digits, portalId);
+        const result = response.result;
+        setCurrentResult({
+          id: Date.now(),
+          user_id: sessionSession.id,
+          session_id: 0,
+          cpf: result.cpf,
+          cpf_masked: `***.***.***-${result.cpf.slice(-2)}`,
+          nome: String((result as any).nome || ''),
+          matricula: String((result as any).matricula || ''),
+          orgao: String((result as any).secretaria || ''),
+          cargo: '',
+          vinculo: String((result as any).vinculo || ''),
+          consulta_status: result.status === 'sucesso' ? 'com_marg' : 'sem_marg',
+          consulta_status_label: result.status === 'sucesso' ? 'Consulta concluída' : 'Não encontrado',
+          mensagem: String((result as any).message || ''),
+          best_product_type: 'consignacao',
+          best_net_margin: Number((result as any).margem_consignado || 0),
+          created_at: new Date().toISOString(),
+          margins: [
+            { product_type: 'consignacao', gross_margin: Number((result as any).margem_consignado || 0), net_margin: Number((result as any).margem_consignado || 0) },
+            { product_type: 'cartao', gross_margin: Number((result as any).margem_cartao || 0), net_margin: Number((result as any).margem_cartao || 0) },
+            { product_type: 'cartao_beneficio', gross_margin: Number((result as any).margem_cartao_beneficio || 0), net_margin: Number((result as any).margem_cartao_beneficio || 0) },
+          ],
+        } as RibeiraoHistoryItem);
+        toast.success(`Consulta ${selectedConnectionLabel} executada com sucesso.`);
+        return;
+      }
       const response = await api.queryRibeiraoCpf({
         session_id: sessionId,
         cpf: digits,
         login: login.trim(),
         password,
+        portal_id: normalizeMarginConnectionValue(selectedConnection),
       });
       if (response.query) {
         setCurrentResult({
@@ -470,7 +483,9 @@ export default function RibeiraoPage() {
         });
         toast.success('Consulta executada com sucesso.');
         await loadHistory();
-        await refreshSessionStatus(sessionId);
+        if (sessionId) {
+          await refreshSessionStatus(sessionId);
+        }
       }
     } catch (error) {
       toast.error(getFriendlyRibeiraoError(error, 'Falha ao consultar CPF.'));
@@ -500,12 +515,6 @@ export default function RibeiraoPage() {
       setBatchPreview(null);
       return;
     }
-    if (!isIntegratedBatchConnection(selectedConnection)) {
-      setBatchPreview(null);
-      setBatchPreviewFileName(file.name);
-      toast('Automação preservada no GitHub. Para esta fonte, o executor usa matrícula e ainda precisa ser plugado ao botão do CRM.');
-      return;
-    }
 
     try {
       const response = await api.uploadRibeiraoBatchPreview(file);
@@ -519,26 +528,13 @@ export default function RibeiraoPage() {
   }
 
   async function handleStartBatch() {
-    if (!selectedConnection) {
-      toast.error('Selecione uma conexão antes de iniciar a consulta.');
+    const portalId = normalizeMarginConnectionValue(selectedConnection);
+    if (!isImplementedMarginConnection(selectedConnection)) {
+      toast.error(`${getMarginConnectionLabel(selectedConnection)} está preparado, mas ainda não tem conector ativo para rodar lote.`);
       return;
     }
-    const normalizedConnection = normalizeMarginConnectionValue(selectedConnection);
-    if (normalizedConnection !== 'prefeitura_ribeirao_preto') {
-      toast.error('Automação preservada no GitHub. O botão do CRM ainda precisa do executor por matrícula para esta fonte.');
-      return;
-    }
-    if (!selectedCredential?.has_password) {
-      toast('Credencial não configurada. O sistema tentará usar a sessão ativa e reconectar automaticamente.');
-    }
-    if (selectedCredential?.session_status === 'sessao_expirada') {
-      toast('Sessão marcada como expirada. O sistema tentará reconectar automaticamente.');
-    }
-    const sessionId = Number(session?.id || 0);
-    if (false && (!login.trim() || !password.trim())) {
-      toast.error('Informe login e senha da sessão.');
-      return;
-    }
+
+    const sessionId = sessionReady && session?.id ? session.id : undefined;
 
     const delayMin = Number(batchDelayMin || 0);
     const delayMax = Number(batchDelayMax || 0);
@@ -551,18 +547,35 @@ export default function RibeiraoPage() {
       toast.error('Envie uma planilha com CPFs válidos antes de iniciar o lote.');
       return;
     }
+
     if (batchSourceMode === 'upload' && hasBatchCpfLimit(selectedConnection) && (batchPreview?.valid_rows || 0) > SP_BATCH_CPF_LIMIT) {
-      toast.error(`O Portal do Consignado aceita no máximo ${SP_BATCH_CPF_LIMIT} CPFs válidos por lote.`);
+      toast.error(`Este convênio aceita até ${SP_BATCH_CPF_LIMIT} CPFs por lote. Divida a base antes de iniciar.`);
       return;
     }
 
     try {
       setBatchStartLoading(true);
+      if (isRf1MarginPortal(portalId)) {
+        if (batchSourceMode !== 'upload') {
+          toast.error(`Para ${selectedConnectionLabel}, use uma planilha de CPF no modo upload.`);
+          return;
+        }
+        const response = await api.startSantanaBatch({
+          portal_id: portalId,
+          source_file_name: batchPreviewFileName || `planilha_${portalId}`,
+          cpfs: batchPreview?.cpfs || [],
+        });
+        setCurrentBatch(response.batch);
+        setActiveTab('batch');
+        toast.success(response.message || `Lote ${selectedConnectionLabel} iniciado.`);
+        await loadBatchHistory();
+        return;
+      }
       const response = await api.startRibeiraoBatch({
         session_id: sessionId,
-        portal_id: normalizedConnection,
         login: login.trim(),
         password,
+        portal_id: portalId,
         delay_seconds_min: delayMin,
         delay_seconds_max: delayMax,
         ...(batchSourceMode === 'upload'
@@ -570,7 +583,9 @@ export default function RibeiraoPage() {
               source_type: 'upload' as const,
               source_file_name: batchPreviewFileName || 'planilha_upload',
               cpfs: batchPreview?.cpfs || [],
-              source_records: batchPreview?.source_rows || [],
+              clients: batchPreview?.clients || [],
+              create_pipeline_base: true,
+              auto_pipeline: true,
             }
           : {
               source_type: 'base' as const,
@@ -627,11 +642,15 @@ export default function RibeiraoPage() {
 
   async function handleExportBatch(batchId: number) {
     try {
-      const blob = await api.exportRibeiraoBatch(batchId);
+      const blob = isRf1MarginPortal(selectedConnection)
+        ? await api.exportSantanaBatch(batchId)
+        : await api.exportRibeiraoBatch(batchId);
       const url = window.URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = url;
-      anchor.download = `lote-ribeirao-${batchId}.xlsx`;
+      anchor.download = isRf1MarginPortal(selectedConnection)
+        ? `lote-${normalizeMarginConnectionValue(selectedConnection).replace(/^prefeitura_/, '').replaceAll('_', '-')}-${batchId}.xlsx`
+        : `lote-ribeirao-${batchId}.xlsx`;
       anchor.click();
       window.URL.revokeObjectURL(url);
     } catch (error) {
@@ -641,7 +660,6 @@ export default function RibeiraoPage() {
 
   async function openBatchDetails(batch: RibeiraoBatchRecord) {
     setActiveTab('batch');
-    setCurrentBatch(batch);
     await loadBatchResults(batch.id, batch);
   }
 
@@ -657,85 +675,82 @@ export default function RibeiraoPage() {
       ? Math.min(100, Math.round((currentBatch.processed_count / currentBatch.total_cpfs) * 100))
       : 0
     : 0;
-  const batchProcessedCount = Number(currentBatch?.processed_count || 0);
-  const batchPositiveCount = Number(currentBatch?.success_count || 0);
-  const batchNegativeCount = Number(currentBatch?.no_margin_count || 0) + Number(currentBatch?.not_found_count || 0);
-  const batchErrorCount = Number(currentBatch?.error_count || 0) + Number(currentBatch?.captcha_count || 0);
-  const batchPositivePercent = batchProcessedCount ? Math.round((batchPositiveCount / batchProcessedCount) * 100) : 0;
-  const batchNegativePercent = batchProcessedCount ? Math.round((batchNegativeCount / batchProcessedCount) * 100) : 0;
-  const batchErrorPercent = batchProcessedCount ? Math.round((batchErrorCount / batchProcessedCount) * 100) : 0;
-  const batchHasHighErrorRate = isBatchActive(currentBatch?.status) && batchProcessedCount >= 5 && batchErrorPercent >= 20;
 
   const selectedBase = bases.find((base) => String(base.id) === String(batchBaseId));
-  const selectedConnectionUsesMatricula = isMatriculaMarginConnection(selectedConnection);
-  const selectedConnectionIntegrated = isIntegratedBatchConnection(selectedConnection);
-  const batchLookupLabel = selectedConnectionUsesMatricula ? 'matrículas' : 'CPFs';
+  const dynamicConnections = marginPortals.map((portal) => ({
+    value: portal.value,
+    label: portal.name,
+    group: portal.category,
+    status: portal.supports_batch ? 'Ativo' : 'Preparado',
+    enabled: portal.supports_batch || portal.supports_individual,
+    note: portal.supports_batch
+      ? 'Conector disponível para consulta individual e em lote.'
+      : 'Convênio cadastrado, aguardando implementação do conector.',
+    captcha: portal.requires_captcha ? 'CapSolver necessário neste portal.' : 'Este portal não exige CapSolver.',
+  }));
+  const availableConnections = dynamicConnections.length ? dynamicConnections : [...MARGIN_CONNECTIONS];
+  const selectedConnectionConfig = availableConnections.find((connection) => connection.value === selectedConnection) || availableConnections[0];
+  const selectedConnectionLabel = getMarginConnectionLabel(selectedConnection);
+  const selectedPortalId = normalizeMarginConnectionValue(selectedConnection);
+  const marginPortalReady =
+    selectedPortalId === 'governo_sp' ||
+    isRf1MarginPortal(selectedPortalId) ||
+    Boolean(ribeiraoDiagnostics?.ribeiraoConfigured);
+  const marginPortalConfigMessage = selectedPortalId === 'governo_sp'
+    ? 'Configure GOV_SP_AVERBADOR_URL no .env da VPS e reinicie os containers.'
+    : ribeiraoDiagnostics?.hint || 'Configure RIBEIRAO_AVERBADOR_URL no .env da VPS e reinicie os containers.';
+  const startSessionButtonLabel = selectedPortalId === 'governo_sp'
+    ? 'Conectar Governo de SP / TJSP'
+    : isRf1MarginPortal(selectedPortalId)
+      ? `Abrir credenciais ${selectedConnectionLabel}`
+    : `Conectar ${selectedConnectionLabel}`;
+  const selectedConnectionImplemented = isImplementedMarginConnection(selectedConnection);
+  const batchCpfLimitApplies = hasBatchCpfLimit(selectedConnection);
+  const batchUploadLimitText = batchCpfLimitApplies
+    ? `.xlsx, .xls, .csv ou .txt - máx. ${SP_BATCH_CPF_LIMIT} CPFs neste convênio`
+    : '.xlsx, .xls, .csv ou .txt - sem limite fixo de CPFs para este convênio';
+  const batchCpfCount = batchSourceMode === 'upload'
+    ? batchPreview?.valid_rows || 0
+    : batchBaseId === 'all'
+      ? bases.reduce((total, base) => total + Number(base.total_clientes || 0), 0)
+      : Number(selectedBase?.total_clientes || 0);
   const batchSourceSummary =
     batchSourceMode === 'upload'
       ? batchPreview
-        ? `${batchPreview.valid_rows} ${batchLookupLabel} válidos de ${batchPreview.total_rows} linhas`
-        : selectedConnectionUsesMatricula
-          ? 'Robô salvo para planilha por matrícula'
-          : 'Envie uma planilha para iniciar o lote'
+        ? `${batchPreview.valid_rows} CPFs válidos de ${batchPreview.total_rows} linhas`
+        : 'Envie uma planilha para iniciar o lote'
       : batchBaseId === 'all'
         ? `${bases.length} bases ativas`
         : selectedBase
           ? `${selectedBase.total_clientes} clientes na base`
           : 'Selecione uma base importada';
-  const selectedConnectionLabel = getMarginConnectionLabel(selectedConnection);
-  const batchCpfLimitApplies = hasBatchCpfLimit(selectedConnection);
-  const batchUploadLimitText = batchCpfLimitApplies
-    ? `.xlsx, .xls, .csv ou .txt • máx. ${SP_BATCH_CPF_LIMIT} CPFs`
-    : selectedConnectionUsesMatricula
-      ? '.xlsx, .xls ou .csv • fonte preservada por matrícula'
-      : '.xlsx, .xls, .csv ou .txt • sem limite fixo de CPFs para este convênio';
-  const batchCpfCount = batchSourceMode === 'upload' ? batchPreview?.valid_rows || 0 : selectedBase?.total_clientes || 0;
-  const canStartMarginBatch = Boolean(selectedConnectionIntegrated && batchSourceMode === 'upload' && batchPreview?.cpfs?.length);
 
   return (
     <div className="space-y-8">
       <SectionHeader
         title="Consulta de Margem"
-        description="Consulte margens em lote por convênio, prefeitura ou governo."
+        description="Escolha prefeitura ou governo, conecte o portal autorizado e rode a consulta em lote sem misturar com a Esteira Inteligente."
         action={<Badge tone="accent">Perfil: {sessionSession.role}</Badge>}
       />
 
-      <Card className="p-5">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-          <div>
-            <p className="text-sm text-slate-400">Painel técnico</p>
-            <h3 className="mt-1 text-xl font-bold text-white">Automation Registry</h3>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Badge tone={flowTone(selectedRegistryFlow?.status)}>{selectedRegistryFlow?.status || (registryLoading ? 'Carregando' : 'Nao encontrado')}</Badge>
-            <Badge tone="neutral">{automationRegistry?.validated || 0} validados</Badge>
-          </div>
-        </div>
+      <div className="flex flex-wrap gap-3">
+        <TabButton active={activeTab === 'individual'} onClick={() => setActiveTab('individual')}>
+          Consulta individual
+        </TabButton>
+        <TabButton active={activeTab === 'batch'} onClick={() => setActiveTab('batch')}>
+          Consulta em lote
+        </TabButton>
+        <TabButton active={activeTab === 'history'} onClick={() => setActiveTab('history')}>
+          Histórico
+        </TabButton>
+      </div>
 
-        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-          <InfoLine label="Convênio" value={selectedRegistryFlow?.convenio_nome || selectedConnectionLabel || 'Prefeitura de Ribeirão Preto'} />
-          <InfoLine label="Portal" value={selectedRegistryFlow?.portal || '-'} />
-          <InfoLine label="Última validação" value={selectedRegistryFlow?.ultima_validacao || '-'} />
-          <InfoLine label="Última falha" value={selectedRegistryFlow?.ultima_falha || '-'} />
-          <InfoLine label="Versão" value={selectedRegistryFlow?.fluxo_versao || '-'} />
-        </div>
-
-        <div className="mt-4 flex flex-wrap gap-3">
-          <Button variant="secondary" onClick={() => void loadAutomationRegistry()} disabled={registryLoading}>
-            <RefreshCcw size={16} />
-            {registryLoading ? 'Atualizando...' : 'Usar caminho salvo'}
-          </Button>
-          <Button variant="secondary" onClick={() => void handleRevalidateRegistryFlow()} disabled={!selectedRegistryFlow}>
-            <ShieldAlert size={16} />
-            Revalidar caminho
-          </Button>
-          {selectedRegistryFlow?.registry_file ? (
-            <span className="flex items-center rounded-xl border border-border bg-bg/60 px-3 py-2 text-xs text-slate-400">
-              {selectedRegistryFlow.registry_file}
-            </span>
-          ) : null}
-        </div>
-      </Card>
+      <div className="grid gap-4 xl:grid-cols-4">
+        <MetricCard label="Consultas" value={stats.total} icon={<Search size={18} />} />
+        <MetricCard label="Com margem" value={stats.withMargin} icon={<CheckCircle2 size={18} />} />
+        <MetricCard label="Sem margem" value={stats.withoutMargin} icon={<Sparkles size={18} />} />
+        <MetricCard label="Erros / CAPTCHA" value={stats.errors + stats.captcha} icon={<ShieldAlert size={18} />} />
+      </div>
 
       {activeTab === 'individual' ? (
         <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
@@ -774,11 +789,11 @@ export default function RibeiraoPage() {
                 {session?.id ? <p className="mt-2 text-xs text-slate-500">Sessão #{session.id}</p> : null}
               </div>
 
-              {!ribeiraoUrlReady ? (
+              {!marginPortalReady ? (
                 <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">
                   <p className="font-semibold text-white">URL do averbador não configurada no servidor.</p>
                   <p className="mt-1 text-amber-100/90">
-                    {ribeiraoDiagnostics?.hint || 'Configure RIBEIRAO_AVERBADOR_URL no .env da VPS e reinicie os containers.'}
+                    {marginPortalConfigMessage}
                   </p>
                   {ribeiraoDiagnostics?.ribeiraoHost ? (
                     <p className="mt-2 text-xs text-amber-50/80">
@@ -789,9 +804,9 @@ export default function RibeiraoPage() {
               ) : null}
 
               <div className="flex flex-wrap gap-3">
-                <Button className="py-4" onClick={() => void handleStartSession()} disabled={sessionLoading || !ribeiraoUrlReady}>
+                <Button className="py-4" onClick={() => void handleStartSession()} disabled={sessionLoading || !marginPortalReady}>
                   <UserRoundSearch size={16} />
-                  {sessionLoading ? 'Iniciando...' : ribeiraoUrlReady ? 'Iniciar sessão' : 'Configure a URL do averbador'}
+                  {sessionLoading ? 'Iniciando...' : marginPortalReady ? startSessionButtonLabel : 'Configure a URL do averbador'}
                 </Button>
                 <Button variant="secondary" className="py-4" onClick={() => void refreshSessionStatus()} disabled={sessionRefreshing || !session?.id}>
                   <RefreshCcw size={16} />
@@ -828,15 +843,13 @@ export default function RibeiraoPage() {
                 />
               </label>
 
-              <Button className="w-full py-4 text-base" onClick={() => void handleQueryCpf()} disabled={queryLoading || !sessionReady || !ribeiraoUrlReady}>
+              <Button className="w-full py-4 text-base" onClick={() => void handleQueryCpf()} disabled={queryLoading || !marginPortalReady}>
                 <Search size={16} />
                 {queryLoading
                   ? 'Consultando margem no averbador...'
-                  : !ribeiraoUrlReady
+                  : !marginPortalReady
                     ? 'Configure a URL do averbador'
-                    : sessionReady
-                      ? 'Consultar margem'
-                      : 'Conecte a sessão para consultar'}
+                    : 'Consultar margem'}
               </Button>
 
               <div className="rounded-2xl border border-border bg-bg/60 p-4 text-sm text-slate-300">
@@ -867,11 +880,6 @@ export default function RibeiraoPage() {
 
             {currentResult ? (
               <div className="mt-5 space-y-5">
-                <div className="rounded-2xl border border-amber-300/25 bg-amber-300/10 p-4 text-sm text-amber-50">
-                  <p className="font-semibold text-white">Dados sensíveis — uso interno autorizado.</p>
-                  <p className="mt-1 text-amber-50/80">CPF completo aparece apenas neste resultado individual para conferência operacional.</p>
-                </div>
-
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                   <InfoLine label="CPF" value={currentResult.cpf || '-'} />
                   <InfoLine label="Nome" value={currentResult.nome || '-'} />
@@ -997,21 +1005,25 @@ export default function RibeiraoPage() {
               </Button>
               {currentBatch?.id ? (
                 <>
-                  <Button variant="secondary" className="py-4" onClick={() => void handlePauseBatch()} disabled={!isBatchActive(currentBatch?.status)}>
-                    <PauseCircle size={16} />
-                    Pausar
-                  </Button>
-                  <Button variant="secondary" className="py-4" onClick={() => void handleResumeBatch()} disabled={currentBatch?.status !== 'pausado' && currentBatch?.status !== 'aguardando_captcha' && currentBatch?.status !== 'pausado_sessao_expirada'}>
-                    <PlayCircle size={16} />
-                    Continuar
-                  </Button>
-                  <Button variant="ghost" className="py-4" onClick={() => void handleCancelBatch()} disabled={currentBatch?.status === 'cancelado' || currentBatch?.status === 'concluido'}>
-                    <StopCircle size={16} />
-                    Cancelar
-                  </Button>
+                  {!isRf1MarginPortal(selectedPortalId) ? (
+                    <>
+                      <Button variant="secondary" className="py-4" onClick={() => void handlePauseBatch()} disabled={!isBatchActive(currentBatch?.status)}>
+                        <PauseCircle size={16} />
+                        Pausar
+                      </Button>
+                      <Button variant="secondary" className="py-4" onClick={() => void handleResumeBatch()} disabled={currentBatch?.status !== 'pausado' && currentBatch?.status !== 'aguardando_captcha' && currentBatch?.status !== 'pausado_sessao_expirada'}>
+                        <PlayCircle size={16} />
+                        Continuar
+                      </Button>
+                      <Button variant="ghost" className="py-4" onClick={() => void handleCancelBatch()} disabled={currentBatch?.status === 'cancelado' || currentBatch?.status === 'concluido'}>
+                        <StopCircle size={16} />
+                        Cancelar
+                      </Button>
+                    </>
+                  ) : null}
                   <Button variant="ghost" className="py-4" onClick={() => void handleExportBatch(currentBatch.id)}>
                     <FileDown size={16} />
-                    Exportar resultado
+                    {isRf1MarginPortal(selectedPortalId) ? `Baixar Excel ${selectedConnectionLabel}` : 'Exportar resultado'}
                   </Button>
                 </>
               ) : null}
@@ -1022,316 +1034,67 @@ export default function RibeiraoPage() {
 
       {activeTab === 'batch' ? (
         <div className="space-y-6">
-          <div className="grid gap-6 xl:grid-cols-[1fr_380px]">
-            <div className="space-y-5">
-              <Card className="border-cyan-400/15 bg-gradient-to-br from-[#07131d] via-panel to-[#07131d] p-6 shadow-[0_24px_80px_rgba(0,0,0,0.28)]">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-300/80">1. Conexão</p>
-                    <h3 className="mt-2 text-xl font-bold text-white">Credenciais do portal</h3>
-                    <p className="mt-1 text-sm text-slate-400">Selecione a conexão autorizada para consulta de margem.</p>
-                  </div>
-                  <Badge tone={selectedConnection ? 'success' : 'neutral'}>{selectedConnection ? 'Selecionada' : 'Pendente'}</Badge>
-                </div>
-
-                <label className="mt-5 block text-sm font-medium text-slate-300">
-                  Credenciais do portal
-                  <Select
-                    className="mt-2 h-14 rounded-2xl border-cyan-400/20 bg-[#071018] px-4 text-base text-white shadow-inner shadow-black/30"
-                    value={selectedConnection}
-                    onChange={(event) => setSelectedConnection(event.target.value)}
-                  >
-                    <option value="">— selecione a conexão —</option>
-                    <optgroup label="Prefeituras">
-                      <option value="prefeitura-ribeirao-preto">Prefeitura de Ribeirão Preto</option>
-                      <option value="prefeitura-guarulhos-proconsig">Prefeitura de Guarulhos</option>
-                      <option value="prefeitura-sorriso-mt">Prefeitura de Sorriso MT</option>
-                    </optgroup>
-                    <option value="governo-amapa">Governo do Amapá</option>
-                    <optgroup label="Governo de SP">
-                      <option value="governo-sp-tjsp">Tribunal de Justiça de SP</option>
-                    </optgroup>
-                  </Select>
-                </label>
-              </Card>
-
-              <Card className="border-cyan-400/15 bg-gradient-to-br from-[#07131d] via-panel to-[#07131d] p-6 shadow-[0_24px_80px_rgba(0,0,0,0.28)]">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-300/80">2. Arquivo CSV</p>
-                    <h3 className="mt-2 text-xl font-bold text-white">
-                      {selectedConnectionUsesMatricula ? 'Planilha por matrícula do portal' : 'Uma coluna de CPFs, com ou sem formatação'}
-                    </h3>
-                  </div>
-                  <Badge tone={batchPreview?.valid_rows ? 'success' : 'neutral'}>{batchPreview?.valid_rows || 0} {batchLookupLabel}</Badge>
-                </div>
-
-                <label className={`mt-5 flex min-h-[170px] flex-col items-center justify-center rounded-[28px] border border-dashed border-cyan-300/35 bg-[#061018]/80 px-6 py-8 text-center transition ${
-                  selectedConnectionIntegrated ? 'cursor-pointer hover:border-lime-300/70 hover:bg-lime-300/5' : 'cursor-not-allowed opacity-75'
-                }`}>
-                  <Upload size={28} className="text-cyan-300" />
-                  <span className="mt-3 text-lg font-bold text-white">Clique ou arraste o CSV para esta área</span>
-                  <span className="mt-1 text-sm text-slate-400">{batchUploadLimitText}</span>
-                  <input
-                    className="hidden"
-                    type="file"
-                    accept=".xlsx,.xls,.csv,.txt"
-                    disabled={!selectedConnectionIntegrated}
-                    onChange={(event) => void handleBatchFileSelect(event.target.files?.[0] || null)}
-                  />
-                </label>
-
-                {!selectedConnectionIntegrated && selectedConnection ? (
-                  <div className="mt-4 rounded-2xl border border-amber-300/30 bg-amber-300/10 px-4 py-3 text-sm text-amber-50">
-                    <p className="font-semibold text-white">Automação preservada, mas ainda não conectada ao botão.</p>
-                    <p className="mt-1 text-amber-50/80">
-                      {selectedConnectionUsesMatricula
-                        ? 'Guarulhos e Sorriso usam matrícula como caminho operacional do portal. O CPF pode vir no resultado, mas o executor online ainda precisa ser acoplado ao CRM.'
-                        : 'Esta fonte ainda não possui executor de lote integrado nesta tela.'}
-                    </p>
-                  </div>
-                ) : null}
-
-                <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-slate-400">
-                  {batchPreviewFileName ? (
-                    <span className="text-slate-200">{batchPreviewFileName} • {batchSourceSummary}</span>
-                  ) : (
-                    selectedConnectionUsesMatricula
-                      ? 'O caminho salvo no GitHub consulta pelo campo de matrícula retornado pelo portal.'
-                      : 'Apenas uma coluna será considerada para leitura dos CPFs.'
-                  )}
-                </div>
-              </Card>
-
-              <Card className="border-cyan-400/15 bg-gradient-to-br from-[#07131d] via-panel to-[#07131d] p-6 shadow-[0_24px_80px_rgba(0,0,0,0.28)]">
-                <p className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-300/80">3. Retorno</p>
-                <h3 className="mt-2 text-xl font-bold text-white">Como receber os resultados</h3>
-                <label className="mt-5 block text-sm font-medium text-slate-300">
-                  Retorno
-                  <Select className="mt-2 h-14 rounded-2xl border-cyan-400/20 bg-[#071018] px-4 text-base text-white" value="portal" disabled>
-                    <option value="portal">Apenas Portal</option>
-                  </Select>
-                </label>
-              </Card>
-            </div>
-
-            <Card className="sticky top-5 h-fit border-cyan-400/20 bg-gradient-to-br from-[#081a22] via-panel to-[#071018] p-6 shadow-[0_24px_80px_rgba(0,0,0,0.35)]">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm text-slate-400">Resumo</p>
-                  <h3 className="mt-1 text-2xl font-bold text-white">Pronto para consulta</h3>
-                </div>
-                <Badge tone={canStartMarginBatch ? 'success' : 'neutral'}>{canStartMarginBatch ? 'Liberado' : 'Aguardando'}</Badge>
-              </div>
-
-              <div className="mt-6 space-y-3">
-                <SummaryRow label="Conexão" value={selectedConnectionLabel || '—'} />
-                <SummaryRow label={selectedConnectionUsesMatricula ? 'Matrículas' : 'CPFs'} value={batchCpfCount} />
-                <SummaryRow label="Saldo restante" value={0} />
-                <SummaryRow label="Retorno" value={RETURN_CHANNEL} />
-              </div>
-
-              {selectedConnection ? (
-                <div className="mt-5 rounded-2xl border border-border bg-slate-950/45 px-4 py-3 text-sm text-slate-300">
-                  {selectedCredential?.has_password && selectedCredential?.login ? (
-                    <p>
-                      Credencial vinculada: <span className="font-semibold text-white">{selectedCredential.session_status_label || selectedCredential.session_status}</span>
-                    </p>
-                  ) : (
-                    <p className="text-amber-100">
-                      Credencial não configurada. Acesse a aba Credenciais para conectar este portal.
-                    </p>
-                  )}
-                </div>
-              ) : null}
-
-              {selectedConnection ? (
-                <Button
-                  variant="secondary"
-                  className="mt-4 w-full rounded-2xl px-5 py-4"
-                  onClick={() => void handleStartSession()}
-                  disabled={sessionLoading || !ribeiraoUrlReady}
-                >
-                  <RefreshCcw size={17} />
-                  {sessionLoading ? 'Conectando...' : sessionReady ? 'Reconectar Prefeitura' : 'Conectar Prefeitura'}
-                </Button>
-              ) : null}
-
-              <Button
-                className="mt-7 w-full rounded-2xl border border-lime-200/30 bg-lime-300 px-5 py-5 text-base font-black text-slate-950 shadow-[0_18px_50px_rgba(190,242,100,0.2)] transition hover:bg-lime-200 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/10 disabled:text-slate-500 disabled:shadow-none"
-                onClick={() => void handleStartBatch()}
-                disabled={batchStartLoading || !canStartMarginBatch}
-              >
-                <Search size={18} />
-                {batchStartLoading ? 'Iniciando lote...' : 'Consultar Margem em Lote'}
-              </Button>
-
-              {!canStartMarginBatch ? (
-                <p className="mt-3 text-center text-sm text-amber-100/80">
-                  {selectedConnectionIntegrated
-                    ? 'Selecione uma conexão e envie um arquivo com CPFs.'
-                    : 'Fonte visível na consulta. Para rodar por aqui, falta acoplar o executor por matrícula ao backend.'}
+          <Card className="p-6">
+            <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+              <div className="max-w-2xl">
+                <p className="text-sm font-semibold uppercase tracking-[0.35em] text-accent">1. Conexão</p>
+                <h3 className="mt-2 text-2xl font-bold text-white">Credenciais do portal</h3>
+                <p className="mt-2 text-sm text-slate-400">
+                  Selecione a conexão autorizada para consulta de margem. Ribeirão e os convênios RF1 ficam separados para não misturar fluxos.
                 </p>
-              ) : null}
-              <p className="mt-4 text-center text-xs font-semibold uppercase tracking-[0.22em] text-cyan-200/80">
-                Conexão segura e criptografada
-              </p>
-
-              {currentBatch ? (
-                <div className={`mt-6 rounded-3xl border p-4 ${
-                  currentBatch.status === 'erro'
-                    ? 'border-red-400/30 bg-red-950/15'
-                    : batchHasHighErrorRate
-                      ? 'border-amber-300/40 bg-amber-950/15'
-                      : 'border-white/10 bg-black/20'
-                }`}>
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-200/70">Status do lote</p>
-                      <h4 className="mt-1 text-lg font-black text-white">Lote #{currentBatch.id}</h4>
-                    </div>
-                    <Badge tone={batchStatusTone(currentBatch.status)}>{batchStatusLabel(currentBatch.status)}</Badge>
-                  </div>
-
-                  <div className="mt-4 flex items-center justify-between text-sm">
-                    <span className="text-slate-300">Progresso geral</span>
-                    <span className="font-bold text-white">{currentBatch.processed_count}/{currentBatch.total_cpfs} CPFs · {batchProgress}%</span>
-                  </div>
-                  <div className="mt-3 h-2 rounded-full bg-white/10">
-                    <div className="h-2 rounded-full bg-lime-300 transition-all" style={{ width: `${batchProgress}%` }} />
-                  </div>
-
-                  <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
-                    <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 px-2 py-3">
-                      <p className="text-slate-400">Positivos</p>
-                      <p className="mt-1 text-lg font-black text-emerald-200">{batchPositivePercent}%</p>
-                      <p className="text-[11px] text-slate-500">{batchPositiveCount} CPFs</p>
-                    </div>
-                    <div className="rounded-2xl border border-slate-400/15 bg-white/5 px-2 py-3">
-                      <p className="text-slate-400">Negativos</p>
-                      <p className="mt-1 text-lg font-black text-slate-200">{batchNegativePercent}%</p>
-                      <p className="text-[11px] text-slate-500">{batchNegativeCount} CPFs</p>
-                    </div>
-                    <div className={`rounded-2xl border px-2 py-3 ${
-                      batchErrorPercent >= 20 ? 'border-red-400/30 bg-red-500/10' : 'border-amber-300/20 bg-amber-300/10'
-                    }`}>
-                      <p className="text-slate-400">Erros</p>
-                      <p className="mt-1 text-lg font-black text-amber-100">{batchErrorPercent}%</p>
-                      <p className="text-[11px] text-slate-500">{batchErrorCount} CPFs</p>
-                    </div>
-                  </div>
-
-                  {isBatchActive(currentBatch.status) ? (
-                    <p className="mt-3 text-xs text-slate-400">Atualizando automaticamente a cada poucos segundos.</p>
-                  ) : null}
-                  {batchHasHighErrorRate ? (
-                    <p className="mt-3 rounded-2xl border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">
-                      Atenção: taxa de erro alta. Pause o lote para evitar continuar consumindo consultas com falha.
-                    </p>
-                  ) : null}
-                  {currentBatch.status === 'erro' && currentBatch.error_message ? (
-                    <p className="mt-3 rounded-2xl border border-red-400/20 bg-red-500/10 px-3 py-2 text-xs text-red-100">
-                      {currentBatch.error_message}
-                    </p>
-                  ) : null}
-
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <Button
-                      variant={batchHasHighErrorRate ? 'danger' : 'secondary'}
-                      className="px-3 py-2"
-                      onClick={() => void handlePauseBatch()}
-                      disabled={!isBatchActive(currentBatch?.status)}
-                    >
-                      <PauseCircle size={16} />
-                      {batchHasHighErrorRate ? 'Pausar agora' : 'Pausar lote'}
-                    </Button>
-                    <Button variant="secondary" className="px-3 py-2" onClick={() => void handleResumeBatch()} disabled={currentBatch?.status !== 'pausado' && currentBatch?.status !== 'aguardando_captcha' && currentBatch?.status !== 'pausado_sessao_expirada'}>
-                      <PlayCircle size={16} />
-                      Continuar
-                    </Button>
-                    <Button variant="ghost" className="px-3 py-2" onClick={() => void handleExportBatch(currentBatch.id)}>
-                      Exportar
-                    </Button>
-                  </div>
-                </div>
-              ) : null}
-            </Card>
-          </div>
-
-          <Card className="overflow-hidden border-cyan-400/15 bg-gradient-to-br from-[#07131d] via-panel to-[#07131d] shadow-[0_24px_80px_rgba(0,0,0,0.25)]">
-            <div className="flex flex-col gap-3 border-b border-cyan-400/10 px-6 py-5 md:flex-row md:items-center md:justify-between">
-              <div>
-                <h3 className="text-xl font-bold text-white">Consultas recentes</h3>
-                <p className="mt-1 text-sm text-slate-500">Últimos lotes enviados para consulta de margem.</p>
               </div>
-              <Badge tone="neutral">{batchHistory.length} registros</Badge>
+              <Badge tone={selectedConnectionImplemented ? 'success' : 'neutral'}>
+                {selectedConnectionConfig.status}
+              </Badge>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="min-w-[980px] text-left text-sm">
-                <thead className="bg-[#050d14] text-slate-400">
-                  <tr>
-                    {['ID', 'Conexão', 'CPFs', 'Data / Hora', 'Retorno', 'Status', 'Resultado'].map((column) => (
-                      <th key={column} className="px-6 py-4 font-medium">
-                        {column}
-                      </th>
+            <div className="mt-5 grid gap-4 xl:grid-cols-[1fr_0.8fr]">
+              <label className="block text-sm text-slate-300">
+                Prefeitura / Governo
+                <Select
+                  className="mt-2"
+                  value={selectedConnection}
+                  onChange={(event) => setSelectedConnection(event.target.value as typeof selectedConnection)}
+                >
+                  <optgroup label="Prefeituras">
+                    {availableConnections.filter((connection) => connection.group === 'Prefeituras').map((connection) => (
+                      <option key={connection.value} value={connection.value}>
+                        {connection.label}{connection.enabled ? '' : ' - preparado'}
+                      </option>
                     ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {batchHistory.length ? (
-                    batchHistory.slice(0, 8).map((batch) => (
-                      <tr key={batch.id} className="border-t border-white/10">
-                        <td className="px-6 py-4 font-semibold text-white">#{batch.id}</td>
-                        <td className="px-6 py-4 text-slate-300">{batchConnectionLabel(batch)}</td>
-                        <td className="px-6 py-4 text-slate-300">{batch.total_cpfs}</td>
-                        <td className="px-6 py-4 text-slate-300">{formatBatchDate(batch.created_at)}</td>
-                        <td className="px-6 py-4 text-slate-300">Portal</td>
-                        <td className="px-6 py-4">
-                          <Badge tone={batchStatusTone(batch.status)}>{batchStatusLabel(batch.status)}</Badge>
-                        </td>
-                        <td className="px-6 py-4">
-                          {canDownloadBatchResult(batch) ? (
-                            <Button variant="secondary" className="px-3 py-2" onClick={() => void handleExportBatch(batch.id)}>
-                              <FileDown size={14} />
-                              Baixar resultado
-                            </Button>
-                          ) : isBatchProcessing(batch.status) ? (
-                            <span className="text-slate-400">Aguardando</span>
-                          ) : batch.status === 'erro' ? (
-                            <Button variant="ghost" className="px-3 py-2" onClick={() => void openBatchDetails(batch)}>
-                              Ver detalhes
-                            </Button>
-                          ) : batch.status === 'concluido' ? (
-                            <span className="text-amber-200">Resultado indisponível</span>
-                          ) : (
-                            <span className="text-slate-500">-</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan={7} className="px-6 py-8 text-center text-slate-500">
-                        Nenhuma consulta recente encontrada.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+                  </optgroup>
+                  <optgroup label="Governos">
+                    {availableConnections.filter((connection) => connection.group === 'Governos').map((connection) => (
+                      <option key={connection.value} value={connection.value}>
+                        {connection.label}{connection.enabled ? '' : ' - preparado'}
+                      </option>
+                    ))}
+                  </optgroup>
+                </Select>
+              </label>
+
+              <div className="rounded-2xl border border-border bg-bg/60 p-4 text-sm">
+                <p className="font-semibold text-white">{selectedConnectionLabel}</p>
+                <p className="mt-2 text-slate-400">{selectedConnectionConfig.note}</p>
+                <p className="mt-2 text-accent">{selectedConnectionConfig.captcha}</p>
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-3 md:grid-cols-4">
+              <InfoLine label="Conexão" value={selectedConnectionLabel} />
+              <InfoLine label="CPFs" value={String(batchCpfCount)} />
+              <InfoLine label="Retorno" value={RETURN_CHANNEL} />
+              <InfoLine label="CapSolver" value={selectedConnectionConfig.captcha} />
             </div>
           </Card>
-        </div>
-      ) : null}
 
-      {false && activeTab === 'batch' ? (
-        <div className="space-y-6">
           <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
             <Card className="p-6">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-sm text-slate-400">Origem dos CPFs</p>
-                  <h3 className="mt-2 text-2xl font-bold text-white">Consulta em lote</h3>
+                  <p className="text-sm font-semibold uppercase tracking-[0.35em] text-accent">2. Arquivo ou base</p>
+                  <h3 className="mt-2 text-2xl font-bold text-white">Uma coluna de CPFs, com ou sem formatação</h3>
+                  <p className="mt-2 text-sm text-slate-400">{batchUploadLimitText}</p>
                 </div>
                 <Badge tone="accent">Sequencial</Badge>
               </div>
@@ -1354,7 +1117,7 @@ export default function RibeiraoPage() {
                     <Input
                       className="mt-2"
                       type="file"
-                      accept=".xlsx,.xls,.csv"
+                      accept=".xlsx,.xls,.csv,.txt"
                       onChange={(event) => void handleBatchFileSelect(event.target.files?.[0] || null)}
                     />
                   </label>
@@ -1388,7 +1151,7 @@ export default function RibeiraoPage() {
                           {batchPreview.preview_rows.slice(0, 8).map((row) => (
                             <tr key={row.rowNumber} className="border-t border-border/80">
                               <td className="px-4 py-3 text-slate-300">{row.rowNumber}</td>
-                              <td className="px-4 py-3 text-slate-300">{maskCpfForList(row.cpf_display)}</td>
+                              <td className="px-4 py-3 text-slate-300">{row.cpf_display}</td>
                               <td className="px-4 py-3">
                                 <Badge tone={row.isValid ? 'success' : 'danger'}>{row.isValid ? 'Válido' : 'Inválido'}</Badge>
                               </td>
@@ -1440,14 +1203,19 @@ export default function RibeiraoPage() {
                 </label>
               </div>
 
-              <Button className="mt-5 w-full py-4 text-base" onClick={() => void handleStartBatch()} disabled={batchStartLoading || !ribeiraoUrlReady}>
+              <Button className="mt-5 w-full py-4 text-base" onClick={() => void handleStartBatch()} disabled={batchStartLoading || !marginPortalReady}>
                 <Search size={16} />
                 {batchStartLoading
                   ? 'Iniciando lote...'
-                  : !ribeiraoUrlReady
+                  : !marginPortalReady
                     ? 'Configure a URL do averbador'
-                    : 'Iniciar consulta em lote'}
+                    : 'Consultar Margem em Lote'}
               </Button>
+              {batchSourceMode === 'upload' ? (
+                <p className="mt-3 rounded-2xl border border-accent/20 bg-accent/8 p-3 text-sm text-slate-300">
+                  Este upload será salvo como base da Esteira. Ao concluir a margem, o CRM envia automaticamente somente clientes com margem para a busca de telefone no Nova Vida e deixa a simulação aguardando coeficiente.
+                </p>
+              ) : null}
             </Card>
 
             <Card className="p-6">
@@ -1482,22 +1250,26 @@ export default function RibeiraoPage() {
               </div>
 
               <div className="mt-5 flex flex-wrap gap-3">
-                <Button variant="secondary" onClick={() => void handlePauseBatch()} disabled={!isBatchActive(currentBatch?.status)}>
-                  <PauseCircle size={16} />
-                  Pausar
-                </Button>
-                <Button variant="secondary" onClick={() => void handleResumeBatch()} disabled={currentBatch?.status !== 'pausado' && currentBatch?.status !== 'aguardando_captcha' && currentBatch?.status !== 'pausado_sessao_expirada'}>
-                  <PlayCircle size={16} />
-                  Continuar
-                </Button>
-                <Button variant="ghost" onClick={() => void handleCancelBatch()} disabled={!currentBatch || currentBatch.status === 'cancelado' || currentBatch.status === 'concluido'}>
-                  <StopCircle size={16} />
-                  Cancelar
-                </Button>
+                {!isRf1MarginPortal(selectedPortalId) ? (
+                  <>
+                    <Button variant="secondary" onClick={() => void handlePauseBatch()} disabled={!isBatchActive(currentBatch?.status)}>
+                      <PauseCircle size={16} />
+                      Pausar
+                    </Button>
+                    <Button variant="secondary" onClick={() => void handleResumeBatch()} disabled={currentBatch?.status !== 'pausado' && currentBatch?.status !== 'aguardando_captcha' && currentBatch?.status !== 'pausado_sessao_expirada'}>
+                      <PlayCircle size={16} />
+                      Continuar
+                    </Button>
+                    <Button variant="ghost" onClick={() => void handleCancelBatch()} disabled={!currentBatch || currentBatch.status === 'cancelado' || currentBatch.status === 'concluido'}>
+                      <StopCircle size={16} />
+                      Cancelar
+                    </Button>
+                  </>
+                ) : null}
                 {currentBatch?.id ? (
                   <Button variant="ghost" onClick={() => void handleExportBatch(currentBatch.id)}>
                     <FileDown size={16} />
-                    Exportar resultado
+                    {isRf1MarginPortal(selectedPortalId) ? `Baixar Excel ${selectedConnectionLabel}` : 'Exportar resultado'}
                   </Button>
                 ) : null}
               </div>
@@ -1549,7 +1321,7 @@ export default function RibeiraoPage() {
                               Ver detalhes
                             </Button>
                             <Button variant="ghost" className="px-4 py-2" onClick={() => void handleExportBatch(batch.id)}>
-                              Exportar
+                              {isRf1MarginPortal(selectedPortalId) ? `Baixar Excel ${selectedConnectionLabel}` : 'Exportar'}
                             </Button>
                           </div>
                         </td>
@@ -1579,10 +1351,10 @@ export default function RibeiraoPage() {
                 <div className="p-8 text-sm text-slate-400">Carregando resultados do lote...</div>
               ) : batchResults.length ? (
                 <div className="overflow-x-auto">
-                  <table className="min-w-[1700px] text-left text-sm">
+                  <table className="min-w-[1900px] text-left text-sm">
                     <thead className="bg-bg/80 text-slate-400">
                       <tr>
-                        {['CPF', 'Nome', 'Matrícula', 'Cargo', 'Vínculo', 'Status consulta', 'Melhor produto', 'Melhor margem líquida', 'Empréstimo total', 'Empréstimo disponível', 'Cartão total', 'Cartão disponível', 'Mensagem', 'Data/hora', 'Ação'].map((column) => (
+                        {['CPF', 'Nome', 'Matrícula', 'Cargo', 'Vínculo', 'Status consulta', 'Melhor produto', 'Melhor margem líquida', 'Empréstimo total', 'Empréstimo disponível', 'Cartão total', 'Cartão disponível', 'Cartão benefício total', 'Cartão benefício disponível', 'Mensagem', 'Data/hora', 'Ação'].map((column) => (
                           <th key={column} className="px-5 py-4 font-medium">
                             {column}
                           </th>
@@ -1592,7 +1364,7 @@ export default function RibeiraoPage() {
                     <tbody>
                       {batchResults.map((item) => (
                         <tr key={item.id} className="border-t border-border/80">
-                          <td className="px-5 py-4 text-slate-300">{maskCpfForList(item.cpf)}</td>
+                          <td className="px-5 py-4 text-slate-300">{item.cpf || '-'}</td>
                           <td className="px-5 py-4">
                             <p className="font-semibold text-white">{item.nome || '-'}</p>
                             <p className="mt-1 text-xs text-slate-500">{item.orgao || item.matricula || '-'}</p>
@@ -1609,6 +1381,8 @@ export default function RibeiraoPage() {
                           <td className="px-5 py-4 text-slate-300">{formatCurrencyDisplay(item.margem_emprestimo_disponivel ?? getBatchNetMargin(item, 'credito'))}</td>
                           <td className="px-5 py-4 text-slate-300">{formatCurrencyDisplay(item.margem_cartao_total ?? null)}</td>
                           <td className="px-5 py-4 text-slate-300">{formatCurrencyDisplay(item.margem_cartao_disponivel ?? null)}</td>
+                          <td className="px-5 py-4 text-slate-300">{formatCurrencyDisplay(getBatchGrossMargin(item, 'cartao_beneficio'))}</td>
+                          <td className="px-5 py-4 text-slate-300">{formatCurrencyDisplay(getBatchNetMargin(item, 'cartao_beneficio'))}</td>
                           <td className="px-5 py-4 text-slate-300">{item.mensagem || '-'}</td>
                           <td className="px-5 py-4 text-slate-300">{item.created_at_formatted || item.created_at || '-'}</td>
                           <td className="px-5 py-4">
@@ -1689,7 +1463,7 @@ export default function RibeiraoPage() {
                               Ver detalhes
                             </Button>
                             <Button variant="ghost" className="px-4 py-2" onClick={() => void handleExportBatch(batch.id)}>
-                              Exportar
+                              {isRf1MarginPortal(selectedPortalId) ? `Baixar Excel ${selectedConnectionLabel}` : 'Exportar'}
                             </Button>
                           </div>
                         </td>
@@ -1767,7 +1541,7 @@ export default function RibeiraoPage() {
                     {history.map((item) => (
                       <tr key={item.id} className="border-t border-border/80">
                         <td className="px-5 py-4 text-slate-300">{item.created_at_formatted || item.created_at || '-'}</td>
-                        <td className="px-5 py-4 text-slate-300">{maskCpfForList(item.cpf)}</td>
+                        <td className="px-5 py-4 text-slate-300">{item.cpf || '-'}</td>
                         <td className="px-5 py-4">
                           <p className="font-semibold text-white">{item.nome || '-'}</p>
                           <p className="mt-1 text-xs text-slate-500">{item.orgao || item.matricula || '-'}</p>
@@ -1797,44 +1571,6 @@ export default function RibeiraoPage() {
       ) : null}
     </div>
   );
-}
-
-function SummaryRow({ label, value }: { label: string; value: ReactNode }) {
-  return (
-    <div className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-      <span className="text-sm text-slate-400">{label}</span>
-      <span className="text-right text-sm font-bold text-white">{value}</span>
-    </div>
-  );
-}
-
-function getMarginConnectionLabel(value: string) {
-  return MARGIN_CONNECTIONS.find((connection) => connection.value === value)?.label || '';
-}
-
-function normalizeMarginConnectionValue(value: string) {
-  if (value === 'prefeitura-ribeirao-preto') return 'prefeitura_ribeirao_preto';
-  if (value === 'prefeitura-guarulhos-proconsig' || value === 'prefeitura-guarulhos') return 'prefeitura_guarulhos_proconsig';
-  if (value === 'prefeitura-sorriso-mt') return 'prefeitura_sorriso_mt';
-  if (value === 'governo-amapa') return 'governo_amapa';
-  if (value === 'governo-sp-tjsp') return 'governo_sp';
-  return value;
-}
-
-function batchConnectionLabel(batch: RibeiraoBatchRecord) {
-  if (String(batch.base_name || batch.source_file_name || '').toLowerCase().includes('guarulhos')) {
-    return 'Prefeitura de Guarulhos';
-  }
-  if (String(batch.base_name || batch.source_file_name || '').toLowerCase().includes('sorriso')) {
-    return 'Prefeitura de Sorriso MT';
-  }
-  if (String(batch.base_name || batch.source_file_name || '').toLowerCase().includes('amap')) {
-    return 'Governo do Amapá';
-  }
-  if (String(batch.base_name || batch.source_file_name || '').toLowerCase().includes('tjsp')) {
-    return 'Governo de SP / Tribunal de Justiça de SP';
-  }
-  return 'Prefeitura de Ribeirão Preto';
 }
 
 function MetricCard({ label, value, icon }: { label: string; value: number; icon: ReactNode }) {
@@ -1950,6 +1686,7 @@ function productLabel(productType: string) {
   if (productType === 'consignacao') return 'Consignação';
   if (productType === 'credito') return 'Crédito';
   if (productType === 'cartao') return 'Cartão';
+  if (productType === 'cartao_beneficio') return 'Cartão benefício';
   return productType || 'Outros';
 }
 
@@ -2029,6 +1766,40 @@ function getSessionBlockingMessage(session?: RibeiraoSession | null) {
     return 'Não foi possível acessar o portal da Prefeitura no momento.';
   }
   return 'Você precisa iniciar e validar a sessão com o portal antes de consultar CPF.';
+}
+
+function getMarginConnectionLabel(value: string) {
+  const normalized = normalizeMarginConnectionValue(value);
+  return (
+    MARGIN_CONNECTIONS.find((connection) => connection.value === value)?.label ||
+    MARGIN_CONNECTIONS.find((connection) => normalizeMarginConnectionValue(connection.value) === normalized)?.label ||
+    value ||
+    'Conexão não selecionada'
+  );
+}
+
+function normalizeMarginConnectionValue(value: string) {
+  if (value === 'prefeitura-ribeirao-preto') return 'prefeitura_ribeirao_preto';
+  if (value === 'prefeitura-santana-parnaiba') return 'prefeitura_santana_parnaiba';
+  if (value === 'prefeitura-ananindeua') return 'prefeitura_ananindeua';
+  if (value === 'governo-amapa') return 'governo_amapa';
+  if (value === 'governo-sp' || value === 'governo-sp-tjsp') return 'governo_sp';
+  return value.replace(/-/g, '_');
+}
+
+function isRf1MarginPortal(value: string) {
+  return ['prefeitura_santana_parnaiba', 'prefeitura_ananindeua'].includes(normalizeMarginConnectionValue(value));
+}
+
+function isImplementedMarginConnection(value: string) {
+  const normalized = normalizeMarginConnectionValue(value);
+  return MARGIN_CONNECTIONS.some(
+    (connection) => normalizeMarginConnectionValue(connection.value) === normalized && connection.enabled === true
+  );
+}
+
+function hasBatchCpfLimit(value: string) {
+  return normalizeMarginConnectionValue(value) === 'governo_sp';
 }
 
 function getSessionDisplayMessage(session?: RibeiraoSession | null) {
@@ -2226,20 +1997,12 @@ function batchStatusTone(status?: string) {
   if (status === 'concluido') return 'success';
   if (status === 'pausado' || status === 'aguardando_captcha') return 'info';
   if (status === 'pausado_sessao_expirada' || status === 'erro' || status === 'cancelado') return 'danger';
-  if (status === 'em_andamento') return 'accent';
-  return 'neutral';
-}
-
-function flowTone(status?: string) {
-  const normalized = String(status || '').toLowerCase();
-  if (normalized === 'validado') return 'success';
-  if (normalized === 'candidato') return 'info';
-  if (normalized === 'falhou' || normalized === 'erro') return 'danger';
+  if (status === 'em_andamento' || status === 'em_execucao') return 'accent';
   return 'neutral';
 }
 
 function batchStatusLabel(status?: string) {
-  if (status === 'em_andamento') return 'Em andamento';
+  if (status === 'em_andamento' || status === 'em_execucao') return 'Em andamento';
   if (status === 'pausado') return 'Pausado';
   if (status === 'aguardando_captcha') return 'Aguardando confirmação';
   if (status === 'pausado_sessao_expirada') return 'Sessão expirada';
@@ -2250,22 +2013,70 @@ function batchStatusLabel(status?: string) {
 }
 
 function isBatchActive(status?: string) {
-  return status === 'em_andamento';
-}
-
-function isBatchProcessing(status?: string) {
-  return status === 'pendente' || status === 'em_andamento' || status === 'pausado' || status === 'aguardando_captcha' || status === 'pausado_sessao_expirada';
-}
-
-function canDownloadBatchResult(batch?: RibeiraoBatchRecord | null) {
-  if (!batch) return false;
-  const hasResultFile = Boolean(String(batch.result_file_path || '').trim());
-  return hasResultFile && (batch.status === 'concluido' || batch.status === 'erro' || batch.status === 'pausado');
+  return status === 'em_andamento' || status === 'em_execucao';
 }
 
 function getBatchNetMargin(item: RibeiraoBatchResultItem, productType: string) {
   const product = item.margins?.find((margin) => margin.product_type === productType);
   return product?.net_margin ?? null;
+}
+
+function getBatchGrossMargin(item: RibeiraoBatchResultItem, productType: string) {
+  const product = item.margins?.find((margin) => margin.product_type === productType);
+  return product?.gross_margin ?? null;
+}
+
+function getBatchStorageKey(connection: string) {
+  return `${BATCH_SESSION_KEY}.${normalizeMarginConnectionValue(connection)}`;
+}
+
+function numberOrNull(value: unknown) {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function mapSantanaBatchResult(item: Record<string, unknown>, index: number): RibeiraoBatchResultItem {
+  const status = String(item.status || 'erro');
+  const consignado = numberOrNull(item.margem_consignado);
+  const cartao = numberOrNull(item.margem_cartao);
+  const cartaoBeneficio = numberOrNull(item.margem_cartao_beneficio);
+  const availableMargins = [
+    { product_type: 'credito', value: consignado },
+    { product_type: 'cartao', value: cartao },
+    { product_type: 'cartao_beneficio', value: cartaoBeneficio },
+  ].filter((entry) => entry.value !== null);
+  const best = availableMargins.sort((left, right) => Number(right.value) - Number(left.value))[0];
+
+  return {
+    id: index + 1,
+    user_id: 0,
+    session_id: 0,
+    cpf: maskCpf(String(item.cpf || '')),
+    cpf_masked: maskCpf(String(item.cpf || '')),
+    nome: String(item.nome || ''),
+    matricula: String(item.matricula || ''),
+    orgao: String(item.secretaria || ''),
+    cargo: String(item.situacao || ''),
+    vinculo: String(item.vinculo || ''),
+    consulta_status: status === 'sucesso' ? 'com_marg' : status === 'nao_encontrado' ? 'nao_encontrado' : 'erro',
+    consulta_status_label: status === 'sucesso' ? 'Consultado' : status === 'nao_encontrado' ? 'Não encontrado' : 'Erro',
+    mensagem: String(item.message || ''),
+    best_product_type: best?.product_type || '',
+    best_net_margin: best?.value ?? null,
+    margem_emprestimo_total: consignado,
+    margem_emprestimo_disponivel: consignado,
+    margem_cartao_total: cartao,
+    margem_cartao_disponivel: cartao,
+    margins: [
+      { product_type: 'credito', gross_margin: consignado, net_margin: consignado },
+      { product_type: 'cartao', gross_margin: cartao, net_margin: cartao },
+      { product_type: 'cartao_beneficio', gross_margin: cartaoBeneficio, net_margin: cartaoBeneficio },
+    ],
+    client_matches: [],
+  };
 }
 
 function formatBatchDate(value?: string | null) {

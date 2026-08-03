@@ -493,6 +493,64 @@ export interface UserRecord {
   updated_at?: string;
 }
 
+export interface CredentialPortalConfig {
+  id: string;
+  name: string;
+  url: string;
+  apiBaseUrl?: string;
+  requiresCaptcha: boolean;
+  requiresAssistedLogin: boolean;
+  providerStatus: string;
+}
+
+export interface MarginPortalConfig {
+  id: string;
+  value: string;
+  name: string;
+  category: string;
+  convenio_code: string;
+  provider_status: string;
+  supports_individual: boolean;
+  supports_batch: boolean;
+  requires_captcha: boolean;
+  margin_products: string[];
+}
+
+export interface AverbadorCredential {
+  id: number;
+  portal_id: string;
+  portal_name: string;
+  portal_url: string;
+  api_url?: string;
+  portal_host?: string;
+  login: string;
+  has_password: boolean;
+  requires_captcha: boolean;
+  requires_assisted_login: boolean;
+  session_status: string;
+  session_status_label?: string;
+  last_access_at?: string | null;
+  session_expires_at?: string | null;
+  last_test_at?: string | null;
+  last_error?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CredentialConnectionLog {
+  id: number;
+  credential_id?: number | null;
+  portal_id: string;
+  portal_name?: string;
+  action: string;
+  status: string;
+  message?: string;
+  error_message?: string;
+  created_by?: number | null;
+  created_by_name?: string;
+  created_at: string;
+}
+
 export interface UploadAnalysis {
   headers: string[];
   recognizedFields: Record<string, { status: string; source_column: string; alerts?: string[] }>;

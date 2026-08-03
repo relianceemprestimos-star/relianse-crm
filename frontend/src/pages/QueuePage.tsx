@@ -5,8 +5,7 @@ import toast from 'react-hot-toast';
 
 import { api } from '../lib/api';
 import { formatCurrencyDisplay, getMarginSummary } from '../lib/margins';
-import { maskCpfForList, maskPhoneForList } from '../lib/privacy';
-import { openWhatsAppConversation } from '../lib/whatsapp';
+import { createWhatsAppLink } from '../lib/whatsapp';
 import type { Base, Campaign, Client, ClientsResponse, Settings } from '../types';
 import { Badge, Button, Card, Input, Select, SectionHeader, StatCard } from '../components/ui';
 
@@ -22,6 +21,8 @@ type QueueFilters = {
   assigned_to: string;
   margin_state: string;
   best_product_type: string;
+  age_min: string;
+  age_max: string;
   search: string;
 };
 
@@ -46,6 +47,8 @@ export default function QueuePage() {
     assigned_to: '',
     margin_state: '',
     best_product_type: '',
+    age_min: '',
+    age_max: '',
     search: '',
   }));
 
@@ -130,7 +133,7 @@ export default function QueuePage() {
       return;
     }
 
-    const link = openWhatsAppConversation(client, settings.whatsapp_message, settings);
+    const link = createWhatsAppLink(client, settings.whatsapp_message, settings);
     if (!link) {
       toast.error('Telefone indisponível.');
       return;
@@ -138,9 +141,10 @@ export default function QueuePage() {
 
     try {
       await api.openWhatsappLog(client.id);
+      window.open(link, '_blank', 'noopener,noreferrer');
       toast.success('WhatsApp aberto.');
-    } catch {
-      toast.success('WhatsApp aberto.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'WhatsApp bloqueado por regra de consentimento.');
     }
   }
 
@@ -339,6 +343,32 @@ export default function QueuePage() {
             </Select>
           </label>
 
+          <label className="block text-sm text-slate-300">
+            Idade mínima
+            <Input
+              className="mt-2"
+              type="number"
+              min="0"
+              max="120"
+              value={filters.age_min}
+              onChange={(event) => setFilters((current) => ({ ...current, age_min: event.target.value }))}
+              placeholder="Ex.: 18"
+            />
+          </label>
+
+          <label className="block text-sm text-slate-300">
+            Idade máxima
+            <Input
+              className="mt-2"
+              type="number"
+              min="0"
+              max="120"
+              value={filters.age_max}
+              onChange={(event) => setFilters((current) => ({ ...current, age_max: event.target.value }))}
+              placeholder="Ex.: 65"
+            />
+          </label>
+
           <label className="block text-sm text-slate-300 xl:col-span-2">
             Buscar
             <div className="relative mt-2">
@@ -376,7 +406,7 @@ export default function QueuePage() {
             <table className="min-w-[1700px] text-left text-sm">
               <thead className="bg-bg/80 text-slate-400">
                 <tr>
-                  {['Nome', 'CPF', 'Telefone', 'Base', 'Status atendimento', 'Status consulta', 'Margem líquida consignação', 'Margem líquida crédito', 'Margem líquida cartão', 'Melhor margem', 'Último atendimento', 'Ação'].map((header) => (
+                  {['Nome', 'CPF', 'Telefone', 'Idade', 'Base', 'Status atendimento', 'Status consulta', 'Margem líquida consignação', 'Margem líquida crédito', 'Margem líquida cartão', 'Melhor margem', 'Último atendimento', 'Ação'].map((header) => (
                     <th key={header} className="px-5 py-4 font-medium">
                       {header}
                     </th>
@@ -392,9 +422,9 @@ export default function QueuePage() {
                         <div className="font-semibold text-white">{client.name}</div>
                         <div className="mt-1 text-xs text-slate-500">Posição #{client.queue_position}</div>
                       </td>
-                      <td className="px-5 py-4 text-slate-300">{maskCpfForList(client.cpf)}</td>
+                      <td className="px-5 py-4 text-slate-300">{client.cpf}</td>
                       <td className="px-5 py-4 text-slate-300">
-                        <div>{maskPhoneForList(client.phone)}</div>
+                        <div>{client.phone || '-'}</div>
                         <div className="mt-2">
                           {client.phones?.length ? (
                             <Badge tone="success">Telefone encontrado</Badge>
@@ -409,6 +439,7 @@ export default function QueuePage() {
                           )}
                         </div>
                       </td>
+                      <td className="px-5 py-4 text-slate-300">{client.nova_vida_data?.age ?? '-'}</td>
                       <td className="px-5 py-4">
                         <div className="font-semibold text-white">{client.base_name || client.campaign_name || '-'}</div>
                         <div className="mt-1 text-xs text-slate-500">{client.base_type || client.base_convenio || '-'}</div>
@@ -465,7 +496,7 @@ function consultaTone(status?: string) {
   return 'neutral';
 }
 
-function baseScopeFilters(filters: Pick<QueueFilters, 'campaign_id' | 'base_id' | 'base_type' | 'convenio' | 'estado' | 'cidade'>) {
+function baseScopeFilters(filters: Pick<QueueFilters, 'campaign_id' | 'base_id' | 'base_type' | 'convenio' | 'estado' | 'cidade' | 'age_min' | 'age_max'>) {
   return {
     campaign_id: filters.campaign_id || undefined,
     base_id: filters.base_id || undefined,
@@ -473,5 +504,7 @@ function baseScopeFilters(filters: Pick<QueueFilters, 'campaign_id' | 'base_id' 
     convenio: filters.convenio || undefined,
     estado: filters.estado || undefined,
     cidade: filters.cidade || undefined,
+    age_min: filters.age_min || undefined,
+    age_max: filters.age_max || undefined,
   };
 }

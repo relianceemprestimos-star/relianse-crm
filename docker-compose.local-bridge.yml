@@ -1,0 +1,8 @@
+services:
+  backend:
+    environment:
+      PYTHON_BIN: /opt/venv/bin/python
+    volumes:
+      - ./backend/.env:/app/backend/.env:ro
+    ports:
+      - "127.0.0.1:4000:4000"

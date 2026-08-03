@@ -1,4 +1,5 @@
-﻿from pydantic import BaseModel, Field
+from __future__ import annotations
+from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 

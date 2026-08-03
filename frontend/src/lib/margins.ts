@@ -49,6 +49,7 @@ export function getMarginSummary(client: Client) {
     consignacao: getMarginByProduct(client, 'consignacao'),
     credito: getMarginByProduct(client, 'credito'),
     cartao: getMarginByProduct(client, 'cartao'),
+    cartaoBeneficio: getMarginByProduct(client, 'cartao_beneficio'),
     bestProductType: (best.product_type || client.best_product_type || '') as ProductType | '',
     bestProductLabel: client.best_product_label || productLabel(best.product_type || client.best_product_type || ''),
     bestNetMargin: best.net_margin ?? client.best_net_margin ?? null,
@@ -75,6 +76,7 @@ export function productLabel(productType: ProductType | '') {
     consignacao: 'Consignação',
     credito: 'Crédito',
     cartao: 'Cartão',
+    cartao_beneficio: 'Cartão benefício',
     outros: 'Outros',
   };
 
