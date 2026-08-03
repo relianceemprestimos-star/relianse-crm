@@ -47,8 +47,8 @@ type BatchSourceMode = 'upload' | 'base';
 
 const MARGIN_CONNECTIONS = [
   { value: 'prefeitura-ribeirao-preto', label: 'Prefeitura de Ribeirão Preto', enabled: true },
-  { value: 'governo-amapa', label: 'Governo do Amapá', enabled: false },
-  { value: 'governo-sp-tjsp', label: 'Governo de SP / Tribunal de Justiça de SP', enabled: false },
+  { value: 'governo-sp', label: 'Governo de SP (login assistido)', enabled: false },
+  { value: 'governo-amapa', label: 'Governo do Amapá (provider pendente)', enabled: false },
 ] as const;
 
 const RETURN_CHANNEL = 'Portal';
@@ -67,7 +67,7 @@ const BATCH_SESSION_KEY = 'relianse.ribeirao.batchId';
 const CONNECTION_REGISTRY_IDS: Record<string, string> = {
   'prefeitura-ribeirao-preto': 'prefeitura_ribeirao_preto',
   'governo-amapa': 'governo_amapa',
-  'governo-sp-tjsp': 'governo_sp',
+  'governo-sp': 'governo_sp',
 };
 
 function pickPreferredBatch(
@@ -94,7 +94,7 @@ function pickPreferredBatch(
 }
 
 function hasBatchCpfLimit(connection: string) {
-  return normalizeMarginConnectionValue(connection) === 'governo_sp_tjsp';
+  return normalizeMarginConnectionValue(connection) === 'governo_sp';
 }
 
 export default function RibeiraoPage() {
@@ -372,7 +372,7 @@ export default function RibeiraoPage() {
     const hasSavedCredential = Boolean(selectedCredential?.has_password);
 
     if (portalId !== 'prefeitura_ribeirao_preto') {
-      toast.error('Fonte ainda nÃ£o implementada para conexÃ£o automatizada.');
+      toast.error('Fonte ainda não implementada para conexão automatizada.');
       return;
     }
 
@@ -674,7 +674,8 @@ export default function RibeiraoPage() {
     ? `.xlsx, .xls, .csv ou .txt • máx. ${SP_BATCH_CPF_LIMIT} CPFs`
     : '.xlsx, .xls, .csv ou .txt • sem limite fixo de CPFs para este convênio';
   const batchCpfCount = batchSourceMode === 'upload' ? batchPreview?.valid_rows || 0 : selectedBase?.total_clientes || 0;
-  const canStartMarginBatch = Boolean(selectedConnection && batchSourceMode === 'upload' && batchPreview?.cpfs?.length);
+  const credentialReady = Boolean(selectedCredential?.has_password && selectedCredential?.login);
+  const canStartMarginBatch = Boolean(selectedConnection && credentialReady && batchSourceMode === 'upload' && batchPreview?.cpfs?.length);
 
   return (
     <div className="space-y-8">
@@ -1026,11 +1027,11 @@ export default function RibeiraoPage() {
                     onChange={(event) => setSelectedConnection(event.target.value)}
                   >
                     <option value="">— selecione a conexão —</option>
-                    <option value="prefeitura-ribeirao-preto">Prefeitura de Ribeirão Preto</option>
-                    <option value="governo-amapa">Governo do Amapá</option>
-                    <optgroup label="Governo de SP">
-                      <option value="governo-sp-tjsp">Tribunal de Justiça de SP</option>
-                    </optgroup>
+                    {MARGIN_CONNECTIONS.map((connection) => (
+                      <option key={connection.value} value={connection.value} disabled={!connection.enabled}>
+                        {connection.label}
+                      </option>
+                    ))}
                   </Select>
                 </label>
               </Card>
@@ -1129,7 +1130,13 @@ export default function RibeiraoPage() {
               </Button>
 
               {!canStartMarginBatch ? (
-                <p className="mt-3 text-center text-sm text-amber-100/80">Selecione uma conexão e envie um arquivo com CPFs.</p>
+                <p className="mt-3 text-center text-sm text-amber-100/80">
+                  {!selectedConnection
+                    ? 'Selecione uma conexão e envie um arquivo com CPFs.'
+                    : !credentialReady
+                      ? 'Conecte a credencial do portal antes de iniciar a consulta.'
+                      : 'Envie um arquivo com CPFs para iniciar a consulta.'}
+                </p>
               ) : null}
               <p className="mt-4 text-center text-xs font-semibold uppercase tracking-[0.22em] text-cyan-200/80">
                 Conexão segura e criptografada
@@ -1773,7 +1780,7 @@ function getMarginConnectionLabel(value: string) {
 function normalizeMarginConnectionValue(value: string) {
   if (value === 'prefeitura-ribeirao-preto') return 'prefeitura_ribeirao_preto';
   if (value === 'governo-amapa') return 'governo_amapa';
-  if (value === 'governo-sp-tjsp') return 'governo_sp';
+  if (value === 'governo-sp') return 'governo_sp';
   return value;
 }
 
@@ -1782,7 +1789,7 @@ function batchConnectionLabel(batch: RibeiraoBatchRecord) {
     return 'Governo do Amapá';
   }
   if (String(batch.base_name || batch.source_file_name || '').toLowerCase().includes('tjsp')) {
-    return 'Governo de SP / Tribunal de Justiça de SP';
+    return 'Governo de SP';
   }
   return 'Prefeitura de Ribeirão Preto';
 }

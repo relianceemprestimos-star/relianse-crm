@@ -111,7 +111,7 @@ requires_manual_login
 Script preparado:
 
 ```bash
-python scripts/login_nova_vida.py
+python scripts/phone_lookup/login_nova_vida.py
 ```
 
 Esse comando abre o navegador para login manual autorizado e salva sessao localmente fora do Git.

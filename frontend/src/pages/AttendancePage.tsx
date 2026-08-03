@@ -8,7 +8,6 @@ import {
   MessageCircleMore,
   MoveLeft,
   MoveRight,
-  PhoneCall,
   Send,
   ShieldAlert,
   ThumbsDown,
@@ -41,7 +40,6 @@ export default function AttendancePage() {
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingAction, setSavingAction] = useState(false);
-  const [lookupLoading, setLookupLoading] = useState(false);
   const [note, setNote] = useState('');
   const [privateMode, setPrivateMode] = useState(false);
   const [privateNote, setPrivateNote] = useState('');
@@ -147,7 +145,7 @@ export default function AttendancePage() {
           const nextResponse = await api.getNextClient(baseScope);
           if (!nextResponse.next) {
             if (active) setClient(null);
-            toast('NÃ£o hÃ¡ clientes na fila no momento.');
+            toast('Não há clientes na fila no momento.');
             return;
           }
 
@@ -190,6 +188,7 @@ export default function AttendancePage() {
   const cons = client ? marginState(client.margem_liquida_consignacao) : marginState(null);
   const cred = client ? marginState(client.margem_liquida_credito) : marginState(null);
   const card = client ? marginState(client.margem_liquida_cartao) : marginState(null);
+  const safePhones = useMemo(() => (Array.isArray(client?.phones) ? client.phones.filter(Boolean) : []), [client?.phones]);
 
   async function refreshClient(clientId = client?.id) {
     if (!clientId) return;
@@ -209,7 +208,7 @@ export default function AttendancePage() {
 
     const link = openWhatsAppConversation(client, settings.whatsapp_message, settings);
     if (!link) {
-      toast.error('Telefone indisponÃ­vel para o WhatsApp.');
+      toast.error('Telefone indisponível para o WhatsApp.');
       return;
     }
 
@@ -282,33 +281,6 @@ export default function AttendancePage() {
     }
   }
 
-  async function handleLookupPhone(force = false) {
-    if (!client) return;
-    try {
-      setLookupLoading(true);
-      const response = await api.lookupClientPhone(client.id, force);
-      if (response.client) {
-        setClient(response.client);
-      } else {
-        await refreshClient();
-      }
-      const status = response.job?.status || response.result?.status;
-      if (status === 'success') {
-        toast.success('Telefone encontrado e salvo no cliente.');
-      } else if (status === 'requires_manual_login') {
-        toast.error('Nova Vida precisa de login manual ou mapeamento antes da consulta.');
-      } else if (status === 'not_found') {
-        toast('Nenhum telefone encontrado no Nova Vida.');
-      } else {
-        toast.error(response.job?.error_message || response.result?.message || 'Busca de telefone não concluída.');
-      }
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Falha ao buscar telefone.');
-    } finally {
-      setLookupLoading(false);
-    }
-  }
-
   async function handleSetPrimaryPhone(phoneId: number) {
     if (!client) return;
     try {
@@ -345,7 +317,7 @@ export default function AttendancePage() {
     if (!client) return;
 
     if (!force && !canProceed) {
-      toast.error('Registre uma observaÃ§Ã£o ou escolha uma aÃ§Ã£o antes de avanÃ§ar.');
+      toast.error('Registre uma observação ou escolha uma ação antes de avançar.');
       return;
     }
 
@@ -356,7 +328,7 @@ export default function AttendancePage() {
     }
 
     if (next.next.client.id === client.id) {
-      toast('Ainda nÃ£o hÃ¡ prÃ³ximo cliente disponÃ­vel.');
+      toast('Ainda não há próximo cliente disponível.');
       return;
     }
 
@@ -377,13 +349,13 @@ export default function AttendancePage() {
     setScheduleNote('');
     setScheduleDate('');
     setConvertForm({ bank: '', amount: '', installment: '', term: '', note: '' });
-    toast.success('PrÃ³ximo cliente carregado.');
+    toast.success('Próximo cliente carregado.');
   }
 
   async function handleFinalizar() {
     if (!client) return;
     if (!canProceed) {
-      const confirmed = window.confirm('VocÃª quer finalizar sem observaÃ§Ã£o registrada?');
+      const confirmed = window.confirm('Você quer finalizar sem observação registrada?');
       if (!confirmed) return;
     }
 
@@ -404,7 +376,7 @@ export default function AttendancePage() {
 
   async function handleNoInterest() {
     if (!client) return;
-    const confirmed = window.confirm('Confirmar marcaÃ§Ã£o como sem interesse?');
+    const confirmed = window.confirm('Confirmar marcação como sem interesse?');
     if (!confirmed) return;
 
     try {
@@ -462,7 +434,7 @@ export default function AttendancePage() {
       setConvertOpen(false);
       await goNextClient(true);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Falha ao salvar conversÃ£o.');
+      toast.error(error instanceof Error ? error.message : 'Falha ao salvar conversão.');
     } finally {
       setSavingAction(false);
     }
@@ -470,16 +442,16 @@ export default function AttendancePage() {
 
   async function handleSaveObservationOnly() {
     if (!client || (!note.trim() && !privateNote.trim())) {
-      toast.error('Digite uma observaÃ§Ã£o antes de salvar.');
+      toast.error('Digite uma observação antes de salvar.');
       return;
     }
 
     try {
       setSavingAction(true);
       await saveObservation();
-      toast.success('ObservaÃ§Ã£o salva.');
+      toast.success('Observação salva.');
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Falha ao salvar observaÃ§Ã£o.');
+      toast.error(error instanceof Error ? error.message : 'Falha ao salvar observação.');
     } finally {
       setSavingAction(false);
     }
@@ -526,11 +498,11 @@ export default function AttendancePage() {
                     }
                   >
                     <MoveLeft size={16} />
-                    Voltar Ã  fila
+                    Voltar à fila
                   </Button>
                   <Button variant="secondary" onClick={() => void goNextClient()}>
                     <MoveRight size={16} />
-                    PrÃ³ximo cliente
+                    Próximo cliente
                   </Button>
                 </div>
               </div>
@@ -552,7 +524,7 @@ export default function AttendancePage() {
                 <InfoLine label="Campanha" value={client.campaign_name || client.base_name || '-'} />
                 <InfoLine label="Origem da lista" value={client.base_name || client.campaign_name || '-'} />
                 <InfoLine label="Tipo da base" value={client.base_type || '-'} />
-                <InfoLine label="Conv?nio / ?rg?o" value={client.base_convenio || '-'} />
+                <InfoLine label="Convênio / órgão" value={client.base_convenio || '-'} />
               </div>
 
               <div className="mt-5 flex flex-wrap gap-3">
@@ -560,15 +532,11 @@ export default function AttendancePage() {
                   <MessageCircleMore size={16} />
                   Abrir WhatsApp Web
                 </Button>
-                <Button variant="secondary" className="py-4" onClick={() => void handleLookupPhone(true)} disabled={lookupLoading}>
-                  <PhoneCall size={16} />
-                  {lookupLoading ? 'Buscando...' : 'Buscar telefone no Nova Vida'}
-                </Button>
                 <Button variant="secondary" className="py-4" onClick={() => setRawOpen(true)}>
                   <Eye size={16} />
                   Ver dados originais
                 </Button>
-                <Badge tone="neutral">Vendedor: {client.assigned_to_name || user?.name || 'â€”'}</Badge>
+                <Badge tone="neutral">Vendedor: {client.assigned_to_name || user?.name || '-'}</Badge>
               </div>
 
               <div className="mt-4 rounded-2xl border border-border bg-bg/60 p-4">
@@ -577,16 +545,16 @@ export default function AttendancePage() {
                     <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Telefones</p>
                     <p className="mt-1 text-sm text-slate-300">Origem, qualidade e histórico da busca de telefone.</p>
                   </div>
-                  <Badge tone={client.phones?.length ? 'success' : 'neutral'}>{client.phones?.length || 0} encontrados</Badge>
+                  <Badge tone={safePhones.length ? 'success' : 'neutral'}>{safePhones.length} encontrados</Badge>
                 </div>
                 <div className="mt-3 space-y-2">
-                  {client.phones?.length ? (
-                    client.phones.map((phone) => (
-                      <div key={phone.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-bg/70 p-3 text-sm">
+                  {safePhones.length ? (
+                    safePhones.map((phone, index) => (
+                      <div key={phone.id || phone.normalized_phone || phone.phone_number || index} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-bg/70 p-3 text-sm">
                         <div>
                           <p className="font-semibold text-white">{phone.normalized_phone || phone.phone_number}</p>
                           <p className="text-xs text-slate-500">
-                            {phone.source} • {phone.type || 'tipo não informado'} • {phone.quality || 'qualidade não informada'} • {phone.searched_at_formatted || '-'}
+                            {formatPhoneSource(phone.source)} • {phone.type || 'tipo não informado'} • {phone.quality || 'qualidade não informada'} • {phone.searched_at_formatted || '-'}
                           </p>
                         </div>
                         <div className="flex flex-wrap gap-2">
@@ -594,20 +562,22 @@ export default function AttendancePage() {
                           <Button variant="ghost" className="px-3 py-2" onClick={() => navigator.clipboard?.writeText(phone.normalized_phone || phone.phone_number)}>
                             Copiar
                           </Button>
-                          {!phone.is_primary ? (
+                          {!phone.is_primary && phone.id ? (
                             <Button variant="ghost" className="px-3 py-2" onClick={() => void handleSetPrimaryPhone(phone.id)}>
                               Principal
                             </Button>
                           ) : null}
-                          <Button variant="ghost" className="px-3 py-2" onClick={() => void handleInactivatePhone(phone.id)}>
-                            Inativar
-                          </Button>
+                          {phone.id ? (
+                            <Button variant="ghost" className="px-3 py-2" onClick={() => void handleInactivatePhone(phone.id)}>
+                              Inativar
+                            </Button>
+                          ) : null}
                         </div>
                       </div>
                     ))
                   ) : (
                     <div className="rounded-2xl border border-dashed border-border bg-white/3 p-4 text-sm text-slate-500">
-                      Nenhum telefone encontrado ainda. Use a busca Nova Vida somente para clientes com oportunidade real.
+                      Nenhum telefone salvo neste cliente.
                     </div>
                   )}
                 </div>
@@ -710,7 +680,7 @@ export default function AttendancePage() {
               {client.has_duplicate_in_other_base ? (
                 <div className="mt-4 rounded-2xl border border-accent/20 bg-accent/10 p-4 text-sm text-slate-200">
                   <p className="font-semibold text-white">Cliente encontrado em outras bases</p>
-                  <p className="mt-1 text-slate-300">Este CPF aparece em mÃºltiplas bases importadas.</p>
+                  <p className="mt-1 text-slate-300">Este CPF aparece em múltiplas bases importadas.</p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {(client.duplicate_bases || []).map((base) => (
                       <Badge key={base.id} tone="accent">
@@ -731,7 +701,7 @@ export default function AttendancePage() {
                     <span className="text-slate-500">Tipo:</span> {client.base_type || '-'}
                   </div>
                   <div>
-                    <span className="text-slate-500">ConvÃªnio:</span> {client.base_convenio || '-'}
+                    <span className="text-slate-500">Convênio:</span> {client.base_convenio || '-'}
                   </div>
                   <div>
                     <span className="text-slate-500">Estado/Cidade:</span> {client.base_state || '-'}{client.base_city ? ` / ${client.base_city}` : ''}
@@ -741,55 +711,10 @@ export default function AttendancePage() {
                   </div>
                 </div>
               </div>
-
-              <div className="mt-4 rounded-2xl border border-border bg-bg/60 p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Dados Nova Vida</p>
-                    <p className="mt-1 text-sm text-slate-300">Dados cadastrais enriquecidos pela última consulta autorizada.</p>
-                  </div>
-                  <Badge tone={client.nova_vida_data ? 'success' : 'neutral'}>{client.nova_vida_lookup_status || 'never_searched'}</Badge>
-                </div>
-                {client.nova_vida_data ? (
-                  <div className="mt-4 space-y-4">
-                    <div className="grid gap-3 md:grid-cols-2">
-                      <InfoLine label="Última consulta" value={client.nova_vida_data.searched_at_formatted || client.nova_vida_last_lookup_at_formatted || '-'} />
-                      <InfoLine label="Nome Nova Vida" value={client.nova_vida_data.full_name || '-'} />
-                      <InfoLine label="Nascimento" value={client.nova_vida_data.birth_date || '-'} />
-                      <InfoLine label="Idade" value={client.nova_vida_data.age === null || client.nova_vida_data.age === undefined ? '-' : String(client.nova_vida_data.age)} />
-                      <InfoLine label="Sexo" value={client.nova_vida_data.gender || '-'} />
-                      <InfoLine label="Nome da mãe" value={client.nova_vida_data.mother_name || '-'} />
-                      <InfoLine label="Nome do pai" value={client.nova_vida_data.father_name || '-'} />
-                      <InfoLine label="E-mail" value={client.nova_vida_data.email || client.nova_vida_data.emails?.[0] || '-'} />
-                    </div>
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Endereços</p>
-                      <div className="mt-2 space-y-2">
-                        {client.nova_vida_data.addresses?.length ? (
-                          client.nova_vida_data.addresses.map((address, index) => (
-                            <div key={`${address.address_full}-${index}`} className="rounded-2xl border border-border bg-bg/70 p-3 text-sm text-slate-300">
-                              <p className="font-semibold text-white">{address.address_full || '-'}</p>
-                              <p className="mt-1 text-xs text-slate-500">
-                                {[address.street, address.number, address.complement, address.district, address.city, address.state, address.zipcode].filter(Boolean).join(' • ')}
-                              </p>
-                            </div>
-                          ))
-                        ) : (
-                          <div className="rounded-2xl border border-dashed border-border bg-white/3 p-4 text-sm text-slate-500">Nenhum endereço salvo.</div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="mt-4 rounded-2xl border border-dashed border-border bg-white/3 p-4 text-sm text-slate-500">
-                    Nenhuma consulta cadastral Nova Vida salva ainda.
-                  </div>
-                )}
-              </div>
             </Card>
 
             <Card className="p-6">
-              <p className="text-sm text-slate-400">PosiÃ§Ã£o na fila</p>
+              <p className="text-sm text-slate-400">Posição na fila</p>
               <div className="mt-3 rounded-3xl border border-border bg-bg/60 p-5">
                 <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Atual</p>
                 <p className="mt-2 text-3xl font-bold text-white">{client.queue_position || queuePosition.current || '-'}</p>
@@ -806,15 +731,15 @@ export default function AttendancePage() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-sm text-slate-400">Margens por produto</p>
-                <h3 className="text-xl font-bold text-white">ConsignaÃ§Ã£o, CrÃ©dito e CartÃ£o</h3>
+                <h3 className="text-xl font-bold text-white">Consignação, Crédito e Cartão</h3>
               </div>
               <Badge tone="accent">{client.best_product_label || productLabel(client.best_product_type || '')}</Badge>
             </div>
 
             <div className="mt-5 grid gap-4 lg:grid-cols-3">
-              <MarginCard title="ConsignaÃ§Ã£o" gross={client.margem_bruta_consignacao} net={client.margem_liquida_consignacao} state={cons} />
-              <MarginCard title="CrÃ©dito" gross={client.margem_bruta_credito} net={client.margem_liquida_credito} state={cred} />
-              <MarginCard title="CartÃ£o" gross={client.margem_bruta_cartao} net={client.margem_liquida_cartao} state={card} />
+              <MarginCard title="Consignação" gross={client.margem_bruta_consignacao} net={client.margem_liquida_consignacao} state={cons} />
+              <MarginCard title="Crédito" gross={client.margem_bruta_credito} net={client.margem_liquida_credito} state={cred} />
+              <MarginCard title="Cartão" gross={client.margem_bruta_cartao} net={client.margem_liquida_cartao} state={card} />
             </div>
           </Card>
 
@@ -824,7 +749,7 @@ export default function AttendancePage() {
               <Textarea
                 rows={8}
                 className="mt-4"
-                placeholder="Digite aqui suas observaÃ§Ãµes..."
+                placeholder="Digite aqui suas observações..."
                 value={note}
                 onChange={(event) => setNote(event.target.value)}
               />
@@ -832,14 +757,14 @@ export default function AttendancePage() {
                 <span>{charCount} caracteres</span>
                 <label className="flex items-center gap-2">
                   <input type="checkbox" checked={privateMode} onChange={(event) => setPrivateMode(event.target.checked)} />
-                  Adicionar observaÃ§Ã£o privada
+                  Adicionar observação privada
                 </label>
               </div>
               {privateMode ? (
                 <Textarea
                   rows={4}
                   className="mt-3"
-                  placeholder="ObservaÃ§Ã£o privada..."
+                  placeholder="Observação privada..."
                   value={privateNote}
                   onChange={(event) => setPrivateNote(event.target.value)}
                 />
@@ -847,7 +772,7 @@ export default function AttendancePage() {
               <div className="mt-4 flex flex-wrap gap-3">
                 <Button variant="secondary" onClick={() => void handleSaveObservationOnly()} disabled={savingAction}>
                   <Send size={16} />
-                  Salvar observaÃ§Ã£o
+                  Salvar observação
                 </Button>
                 <Button variant="secondary" onClick={() => setScheduleOpen(true)}>
                   <CalendarClock size={16} />
@@ -872,7 +797,7 @@ export default function AttendancePage() {
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <p className="font-semibold text-white">{timelineLabel(item.type)}</p>
-                          <p className="mt-1 text-sm text-slate-400">{item.note || item.private_note || 'Sem observaÃ§Ã£o'}</p>
+                          <p className="mt-1 text-sm text-slate-400">{item.note || item.private_note || 'Sem observação'}</p>
                         </div>
                         <Badge tone="accent">{new Date(item.created_at).toLocaleString('pt-BR')}</Badge>
                       </div>
@@ -908,24 +833,24 @@ export default function AttendancePage() {
               </Button>
               <Button variant="ghost" className="py-4" onClick={() => void goNextClient()} disabled={savingAction}>
                 <ArrowRight size={16} />
-                PrÃ³ximo cliente
+                Próximo cliente
               </Button>
             </div>
           </Card>
         </div>
       ) : (
-        <Card className="p-8 text-sm text-slate-400">NÃ£o hÃ¡ clientes disponÃ­veis para atendimento.</Card>
+        <Card className="p-8 text-sm text-slate-400">Não há clientes disponíveis para atendimento.</Card>
       )}
 
       <Modal
         open={scheduleOpen}
         title="Agendar retorno"
-        description="Defina a data, hora e a observaÃ§Ã£o do prÃ³ximo contato."
+        description="Defina a data, hora e a observação do próximo contato."
         onClose={() => setScheduleOpen(false)}
       >
         <div className="space-y-4">
           <Input type="datetime-local" value={scheduleDate} onChange={(event) => setScheduleDate(event.target.value)} />
-          <Textarea rows={4} placeholder="ObservaÃ§Ã£o do retorno..." value={scheduleNote} onChange={(event) => setScheduleNote(event.target.value)} />
+          <Textarea rows={4} placeholder="Observação do retorno..." value={scheduleNote} onChange={(event) => setScheduleNote(event.target.value)} />
           <div className="flex justify-end gap-3">
             <Button variant="secondary" onClick={() => setScheduleOpen(false)}>
               Cancelar
@@ -953,7 +878,7 @@ export default function AttendancePage() {
           <Textarea
             rows={4}
             className="md:col-span-2"
-            placeholder="ObservaÃ§Ã£o da conversÃ£o..."
+            placeholder="Observação da conversão..."
             value={convertForm.note}
             onChange={(event) => setConvertForm((current) => ({ ...current, note: event.target.value }))}
           />
@@ -964,7 +889,7 @@ export default function AttendancePage() {
           </Button>
           <Button onClick={() => void handleConvert()} disabled={savingAction}>
             <ThumbsUp size={16} />
-            Confirmar conversÃ£o
+            Confirmar conversão
           </Button>
         </div>
       </Modal>
@@ -1013,17 +938,21 @@ function MarginCard({
       <div className="mt-4 space-y-2 text-sm">
         <p className="text-slate-400">Margem bruta</p>
         <p className="font-semibold text-white">{formatCurrencyDisplay(gross)}</p>
-        <p className="text-slate-400">Margem lÃ­quida</p>
+        <p className="text-slate-400">Margem líquida</p>
         <p className="font-semibold text-white">{formatCurrencyDisplay(net)}</p>
       </div>
     </div>
   );
 }
 
+function formatPhoneSource(source?: string) {
+  return /nova vida/i.test(String(source || '')) ? 'Fonte cadastrada' : source || 'Fonte cadastrada';
+}
+
 function timelineLabel(type: string) {
   const labels: Record<string, string> = {
     atendimento_iniciado: 'Atendimento iniciado',
-    observacao: 'ObservaÃ§Ã£o adicionada',
+    observacao: 'Observação adicionada',
     retorno_agendado: 'Retorno agendado',
     finalizado: 'Finalizado',
     sem_interesse: 'Sem interesse',

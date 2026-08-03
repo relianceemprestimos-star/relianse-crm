@@ -69,6 +69,9 @@ DATABASE_PATH
 UPLOAD_DIR
 LOG_DIR
 JWT_SECRET
+HASH_SECRET
+DATA_ENCRYPTION_KEY
+INITIAL_USER_PASSWORD
 VITE_API_URL
 PYTHON_BIN
 RIBEIRAO_AVERBADOR_URL
@@ -96,6 +99,14 @@ NOVA_VIDA_FIXTURE_PATH
 ```
 
 Nunca commite `.env`, bancos SQLite, logs, sessoes de navegador, planilhas reais ou arquivos de clientes.
+
+Seguranca minima para producao:
+
+- `JWT_SECRET` e obrigatoria.
+- `HASH_SECRET` e obrigatoria.
+- `DATA_ENCRYPTION_KEY` e obrigatoria.
+- `INITIAL_USER_PASSWORD` e opcional e deve ser usada apenas no bootstrap inicial controlado.
+- Sem `INITIAL_USER_PASSWORD`, o sistema nao cria usuarios padrao automaticamente.
 
 ## Instalar localmente
 
@@ -170,8 +181,21 @@ CRM_EXTRA_DOMAINS=relianceconsigzap.com.br,www.relianceconsigzap.com.br,mestrevi
 Se o SSH estiver recusando conexao na porta operacional, use o console do provedor e rode:
 
 ```bash
-bash scripts/vps-repair-access-and-proxy.sh
+bash scripts/ops/vps-repair-access-and-proxy.sh
 ```
+
+## Organizacao do repositorio
+
+O repositorio esta separado por funcao para evitar mistura de rotinas:
+
+- `backend/src/services/credentials/` para credenciais e segredos criptografados
+- `backend/src/services/phone_lookup/` para consulta e automacao de telefones
+- `backend/src/services/whatsapp/` para mensageria e filas de WhatsApp
+- `backend/src/services/averbadores/ribeirao/` para averbador e fluxo de margem
+- `scripts/ops/` para reparo e operacao de VPS
+- `scripts/phone_lookup/` para utilitarios do fluxo Nova Vida
+
+Os arquivos `.env` reais nao sobem para o Git. O repo versiona apenas os exemplos em `.env.example`.
 
 ## Rodar na VPS
 
