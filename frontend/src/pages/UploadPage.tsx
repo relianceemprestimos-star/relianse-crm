@@ -24,12 +24,12 @@ function formatBytes(bytes: number) {
 const PREVIEW_COLUMNS = [
   { label: 'CPF', key: 'cpf' },
   { label: 'Nome', key: 'name' },
-  { label: 'Margem Bruta ConsignaÃ§Ã£o', key: 'margem_bruta_consignacao' },
-  { label: 'Margem LÃ­quida ConsignaÃ§Ã£o', key: 'margem_liquida_consignacao' },
-  { label: 'Margem Bruta CrÃ©dito', key: 'margem_bruta_credito' },
-  { label: 'Margem LÃ­quida CrÃ©dito', key: 'margem_liquida_credito' },
-  { label: 'Margem Bruta CartÃ£o', key: 'margem_bruta_cartao' },
-  { label: 'Margem LÃ­quida CartÃ£o', key: 'margem_liquida_cartao' },
+  { label: 'Margem Bruta Consignação', key: 'margem_bruta_consignacao' },
+  { label: 'Margem Líquida Consignação', key: 'margem_liquida_consignacao' },
+  { label: 'Margem Bruta Crédito', key: 'margem_bruta_credito' },
+  { label: 'Margem Líquida Crédito', key: 'margem_liquida_credito' },
+  { label: 'Margem Bruta Cartão', key: 'margem_bruta_cartao' },
+  { label: 'Margem Líquida Cartão', key: 'margem_liquida_cartao' },
   { label: 'Status', key: 'consulta_status' },
   { label: 'Mensagem', key: 'consulta_mensagem' },
 ] as const;
@@ -44,7 +44,7 @@ export default function UploadPage() {
   const [campaignName, setCampaignName] = useState('');
   const [baseName, setBaseName] = useState('GOV SP - Maio 2026');
   const [baseType, setBaseType] = useState('Governo Estadual');
-  const [convenio, setConvenio] = useState('Governo de SÃ£o Paulo');
+  const [convenio, setConvenio] = useState('Governo de São Paulo');
   const [estado, setEstado] = useState('SP');
   const [cidade, setCidade] = useState('');
   const [notes, setNotes] = useState('');
@@ -210,16 +210,16 @@ export default function UploadPage() {
     <div className="space-y-8">
       <SectionHeader
         title="Upload de Listas"
-        description="Arraste sua planilha ou clique para enviar. O sistema lÃª todas as colunas, identifica margens por produto e prepara a fila de atendimento."
+        description="Arraste sua planilha ou clique para enviar. O sistema lê todas as colunas, identifica margens por produto e prepara a fila de atendimento."
       />
 
       <Card className="p-6">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <p className="text-sm uppercase tracking-[0.22em] text-slate-500">IdentificaÃ§Ã£o da base</p>
+            <p className="text-sm uppercase tracking-[0.22em] text-slate-500">Identificação da base</p>
             <h3 className="mt-1 text-xl font-semibold text-white">Defina a origem antes de importar</h3>
           </div>
-          <Badge tone="accent">ObrigatÃ³rio</Badge>
+          <Badge tone="accent">Obrigatório</Badge>
         </div>
 
         <div className="mt-5 grid gap-4 xl:grid-cols-2">
@@ -265,15 +265,15 @@ export default function UploadPage() {
               <option value="Governo Estadual">Governo Estadual</option>
               <option value="Prefeitura">Prefeitura</option>
               <option value="SPPREV">SPPREV</option>
-              <option value="PolÃ­cia Militar">PolÃ­cia Militar</option>
-              <option value="CÃ¢mara">CÃ¢mara</option>
+              <option value="Polícia Militar">Polícia Militar</option>
+              <option value="Câmara">Câmara</option>
               <option value="Autarquia">Autarquia</option>
               <option value="Outro">Outro</option>
             </select>
           </label>
           <label className="block text-sm text-slate-300">
-            ConvÃªnio / Ã“rgÃ£o
-            <Input className="mt-2" value={convenio} onChange={(event) => setConvenio(event.target.value)} placeholder="Ex: Governo de SÃ£o Paulo" />
+            Convênio / Órgão
+            <Input className="mt-2" value={convenio} onChange={(event) => setConvenio(event.target.value)} placeholder="Ex: Governo de São Paulo" />
           </label>
           <label className="block text-sm text-slate-300">
             Estado
@@ -287,7 +287,7 @@ export default function UploadPage() {
           </label>
           <label className="block text-sm text-slate-300">
             Cidade
-            <Input className="mt-2" value={cidade} onChange={(event) => setCidade(event.target.value)} placeholder="Ex: RibeirÃ£o Preto" />
+            <Input className="mt-2" value={cidade} onChange={(event) => setCidade(event.target.value)} placeholder="Ex: Ribeirão Preto" />
           </label>
           <label className="block text-sm text-slate-300 xl:col-span-2">
             Observação
@@ -369,33 +369,33 @@ export default function UploadPage() {
                 <FieldStatus label="Nome" field={recognized.name} />
                 <FieldStatus label="Telefone" field={recognized.phone} />
                 <FieldStatus label="E-mail" field={recognized.email} />
-                <FieldStatus label="Margem Bruta ConsignaÃ§Ã£o" field={recognized.consignacao_gross} />
-                <FieldStatus label="Margem LÃ­quida ConsignaÃ§Ã£o" field={recognized.consignacao_net} />
-                <FieldStatus label="Margem Bruta CrÃ©dito" field={recognized.credito_gross} />
-                <FieldStatus label="Margem LÃ­quida CrÃ©dito" field={recognized.credito_net} />
-                <FieldStatus label="Margem Bruta CartÃ£o" field={recognized.cartao_gross} />
-                <FieldStatus label="Margem LÃ­quida CartÃ£o" field={recognized.cartao_net} />
+                <FieldStatus label="Margem Bruta Consignação" field={recognized.consignacao_gross} />
+                <FieldStatus label="Margem Líquida Consignação" field={recognized.consignacao_net} />
+                <FieldStatus label="Margem Bruta Crédito" field={recognized.credito_gross} />
+                <FieldStatus label="Margem Líquida Crédito" field={recognized.credito_net} />
+                <FieldStatus label="Margem Bruta Cartão" field={recognized.cartao_gross} />
+                <FieldStatus label="Margem Líquida Cartão" field={recognized.cartao_net} />
                 <FieldStatus label="Status" field={recognized.status} />
                 <FieldStatus label="Mensagem" field={recognized.message} />
               </div>
             </Card>
 
             <Card className="p-5">
-              <p className="text-sm text-slate-400">ValidaÃ§Ã£o</p>
+              <p className="text-sm text-slate-400">Validação</p>
               <div className="mt-4 space-y-2 text-sm text-slate-300">
-                <p>CPF Ã© convertido para texto limpo e alerta caso venha invÃ¡lido ou incompleto.</p>
-                <p>Todas as colunas sÃ£o salvas no raw_data_json para preservar a linha original.</p>
-                <p>Margens negativas, positivas e zero sÃ£o normalizadas para nÃºmero decimal.</p>
+                <p>CPF é convertido para texto limpo e alerta caso venha inválido ou incompleto.</p>
+                <p>Todas as colunas são salvas no raw_data_json para preservar a linha original.</p>
+                <p>Margens negativas, positivas e zero são normalizadas para número decimal.</p>
               </div>
             </Card>
           </div>
 
           <div className="mt-6 overflow-hidden rounded-3xl border border-border">
             <div className="flex items-center justify-between border-b border-border bg-white/3 px-5 py-4">
-              <h4 className="font-semibold text-white">PrÃ©via da planilha</h4>
+              <h4 className="font-semibold text-white">Prévia da planilha</h4>
               <Badge tone={validationTone as 'neutral' | 'accent' | 'success' | 'danger' | 'info'}>
                 {!analysis
-                  ? 'Aguardando validaÃ§Ã£o'
+                  ? 'Aguardando validação'
                   : analysis.summary.invalid_rows > 0
                     ? 'Com alertas'
                     : analysis.summary.warnings > 0
@@ -422,7 +422,7 @@ export default function UploadPage() {
                         <td className="px-5 py-4 text-slate-300">{row.cpf || '-'}</td>
                         <td className="px-5 py-4 font-semibold text-white">
                           {row.name || '-'}
-                          {row.row_alerts?.length ? <div className="mt-1 text-xs text-amber-300">CPF invÃ¡lido ou linha com alerta</div> : null}
+                          {row.row_alerts?.length ? <div className="mt-1 text-xs text-amber-300">CPF inválido ou linha com alerta</div> : null}
                         </td>
                         <td className="px-5 py-4 text-slate-300">{formatCurrencyDisplay(row.margem_bruta_consignacao)}</td>
                         <td className="px-5 py-4 text-slate-300">{formatCurrencyDisplay(row.margem_liquida_consignacao)}</td>
@@ -440,7 +440,7 @@ export default function UploadPage() {
                 </table>
               </div>
             ) : (
-              <div className="p-8 text-sm text-slate-500">Escolha uma planilha para visualizar a prÃ©via antes da importaÃ§Ã£o.</div>
+              <div className="p-8 text-sm text-slate-500">Escolha uma planilha para visualizar a prévia antes da importação.</div>
             )}
           </div>
         </Card>
@@ -452,7 +452,7 @@ export default function UploadPage() {
               <SummaryLine label="Nome do arquivo" value={fileSummary?.name || '-'} />
               <SummaryLine label="Tamanho" value={fileSummary?.size || '-'} />
               <SummaryLine label="Total de clientes encontrados" value={analysis?.summary.total_rows ?? 0} />
-              <SummaryLine label="Status da validaÃ§Ã£o" value={!analysis ? 'Aguardando' : analysis.summary.invalid_rows ? 'Com falhas' : 'Pronto'} />
+              <SummaryLine label="Status da validação" value={!analysis ? 'Aguardando' : analysis.summary.invalid_rows ? 'Com falhas' : 'Pronto'} />
               <SummaryLine label="Data/hora" value={lastCheckedAt || new Date().toLocaleString('pt-BR')} />
             </div>
           </Card>
@@ -462,14 +462,14 @@ export default function UploadPage() {
             <div className="mt-4 space-y-3">
               <SummaryLine label="Nome da base" value={baseForm.nome_base || '-'} />
               <SummaryLine label="Tipo" value={baseForm.tipo_base || '-'} />
-              <SummaryLine label="ConvÃªnio / Ã³rgÃ£o" value={baseForm.convenio || '-'} />
+              <SummaryLine label="Convênio / órgão" value={baseForm.convenio || '-'} />
               <SummaryLine label="Estado" value={baseForm.estado || '-'} />
               <SummaryLine label="Cidade" value={baseForm.cidade || '-'} />
             </div>
           </Card>
 
           <Card className="p-6">
-            <p className="text-sm text-slate-400">AÃ§Ãµes</p>
+            <p className="text-sm text-slate-400">Ações</p>
             <div className="mt-4 space-y-3">
               <Button variant="secondary" className="w-full py-4" onClick={() => void previewFile(file as File)} disabled={!file || loading}>
                 {loading ? <LoaderCircle className="animate-spin" size={16} /> : <ShieldAlert size={16} />}
@@ -489,7 +489,7 @@ export default function UploadPage() {
 
 function FieldStatus({ label, field }: { label: string; field?: { status: string; source_column: string; alerts?: string[] } }) {
   const tone = fieldTone(field?.status || 'not_found');
-  const labelText = field?.status === 'identified' ? 'Identificado' : field?.status === 'alert' ? 'Com alerta' : 'NÃ£o encontrado';
+  const labelText = field?.status === 'identified' ? 'Identificado' : field?.status === 'alert' ? 'Com alerta' : 'Não encontrado';
 
   return (
     <div className="flex items-center justify-between gap-3 rounded-2xl border border-border bg-bg/60 px-4 py-3">
@@ -519,6 +519,5 @@ function SummaryLine({ label, value }: { label: string; value: string | number }
     </div>
   );
 }
-
 
 

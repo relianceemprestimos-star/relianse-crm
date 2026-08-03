@@ -374,7 +374,7 @@ export default function RibeiraoPage() {
     const hasSavedCredential = Boolean(selectedCredential?.has_password);
 
     if (portalId !== 'prefeitura_ribeirao_preto') {
-      toast.error('Fonte ainda nÃ£o implementada para conexÃ£o automatizada.');
+      toast.error('Fonte ainda não implementada para conexão automatizada.');
       return;
     }
 

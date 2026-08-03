@@ -70,7 +70,7 @@ export default function LoginPage() {
           </div>
           <p className="mt-4 text-xs uppercase tracking-[0.3em] text-slate-500">Reliance CRM</p>
           <h1 className="mt-2 text-3xl font-bold text-white">Entrar no sistema</h1>
-          <p className="mt-2 text-sm text-slate-400">Acesse sua Ã¡rea de atendimento</p>
+          <p className="mt-2 text-sm text-slate-400">Acesse sua área de atendimento</p>
         </div>
 
         <form className="space-y-4" onSubmit={(event) => void handleSubmit(event)}>
@@ -96,7 +96,7 @@ export default function LoginPage() {
             </div>
             <div>
               <p className="font-semibold text-white">Acesso protegido</p>
-              <p className="text-xs text-slate-500">UsuÃ¡rios ativos com senha hash.</p>
+              <p className="text-xs text-slate-500">Usuários ativos com senha hash.</p>
             </div>
           </div>
           <Badge tone="accent">Seguro</Badge>
