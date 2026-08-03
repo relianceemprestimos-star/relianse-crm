@@ -311,10 +311,10 @@ export interface Client {
   deals?: unknown[];
   interactions?: unknown[];
   phones?: ClientPhone[];
-  nova_vida_data?: ClientEnrichmentData | null;
-  nova_vida_last_lookup_at?: string;
-  nova_vida_last_lookup_at_formatted?: string;
-  nova_vida_lookup_status?: string;
+  cadastral_data?: ClientEnrichmentData | null;
+  cadastral_last_lookup_at?: string;
+  cadastral_last_lookup_at_formatted?: string;
+  cadastral_lookup_status?: string;
   phone_lookup_job?: PhoneLookupJob | null;
 }
 

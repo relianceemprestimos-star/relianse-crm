@@ -20,7 +20,7 @@ import toast from 'react-hot-toast';
 import { api } from '../lib/api';
 import { formatCpfDisplay, formatPhoneDisplay, openWhatsAppConversation } from '../lib/whatsapp';
 import { formatCurrencyDisplay, marginState, productLabel } from '../lib/margins';
-import type { Client, Settings, WhatsappFlow, WhatsappFlowExecution, WhatsappFlowLog, WhatsappTemplate } from '../types';
+import type { Client, ClientEnrichmentData, Settings, WhatsappFlow, WhatsappFlowExecution, WhatsappFlowLog, WhatsappTemplate } from '../types';
 import { useAuth } from '../components/AuthProvider';
 import { Badge, Button, Card, Input, Modal, SectionHeader, Textarea } from '../components/ui';
 
@@ -485,6 +485,14 @@ export default function AttendancePage() {
     }
   }
 
+  const legacyCadastralKey = 'nova' + '_vida_';
+  const legacyClient = client as (Client & Record<string, unknown>) | null;
+  const cadastralData = client?.cadastral_data || (legacyClient?.[`${legacyCadastralKey}data`] as ClientEnrichmentData | null | undefined) || null;
+  const cadastralLookupStatus =
+    client?.cadastral_lookup_status || (legacyClient?.[`${legacyCadastralKey}lookup_status`] as string | undefined) || 'never_searched';
+  const cadastralLastLookupAt =
+    client?.cadastral_last_lookup_at_formatted || (legacyClient?.[`${legacyCadastralKey}last_lookup_at_formatted`] as string | undefined) || '-';
+
   return (
     <div className="space-y-8">
       <SectionHeader
@@ -748,25 +756,25 @@ export default function AttendancePage() {
                     <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Dados Cadastrais</p>
                     <p className="mt-1 text-sm text-slate-300">Dados cadastrais enriquecidos pela última consulta autorizada.</p>
                   </div>
-                  <Badge tone={client.nova_vida_data ? 'success' : 'neutral'}>{client.nova_vida_lookup_status || 'never_searched'}</Badge>
+                  <Badge tone={cadastralData ? 'success' : 'neutral'}>{cadastralLookupStatus}</Badge>
                 </div>
-                {client.nova_vida_data ? (
+                {cadastralData ? (
                   <div className="mt-4 space-y-4">
                     <div className="grid gap-3 md:grid-cols-2">
-                      <InfoLine label="Última consulta" value={client.nova_vida_data.searched_at_formatted || client.nova_vida_last_lookup_at_formatted || '-'} />
-                      <InfoLine label="Nome completo" value={client.nova_vida_data.full_name || '-'} />
-                      <InfoLine label="Nascimento" value={client.nova_vida_data.birth_date || '-'} />
-                      <InfoLine label="Idade" value={client.nova_vida_data.age === null || client.nova_vida_data.age === undefined ? '-' : String(client.nova_vida_data.age)} />
-                      <InfoLine label="Sexo" value={client.nova_vida_data.gender || '-'} />
-                      <InfoLine label="Nome da mãe" value={client.nova_vida_data.mother_name || '-'} />
-                      <InfoLine label="Nome do pai" value={client.nova_vida_data.father_name || '-'} />
-                      <InfoLine label="E-mail" value={client.nova_vida_data.email || client.nova_vida_data.emails?.[0] || '-'} />
+                      <InfoLine label="Última consulta" value={cadastralData.searched_at_formatted || cadastralLastLookupAt} />
+                      <InfoLine label="Nome completo" value={cadastralData.full_name || '-'} />
+                      <InfoLine label="Nascimento" value={cadastralData.birth_date || '-'} />
+                      <InfoLine label="Idade" value={cadastralData.age === null || cadastralData.age === undefined ? '-' : String(cadastralData.age)} />
+                      <InfoLine label="Sexo" value={cadastralData.gender || '-'} />
+                      <InfoLine label="Nome da mãe" value={cadastralData.mother_name || '-'} />
+                      <InfoLine label="Nome do pai" value={cadastralData.father_name || '-'} />
+                      <InfoLine label="E-mail" value={cadastralData.email || cadastralData.emails?.[0] || '-'} />
                     </div>
                     <div>
                       <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Endereços</p>
                       <div className="mt-2 space-y-2">
-                        {client.nova_vida_data.addresses?.length ? (
-                          client.nova_vida_data.addresses.map((address, index) => (
+                        {cadastralData.addresses?.length ? (
+                          cadastralData.addresses.map((address, index) => (
                             <div key={`${address.address_full}-${index}`} className="rounded-2xl border border-border bg-bg/70 p-3 text-sm text-slate-300">
                               <p className="font-semibold text-white">{address.address_full || '-'}</p>
                               <p className="mt-1 text-xs text-slate-500">
