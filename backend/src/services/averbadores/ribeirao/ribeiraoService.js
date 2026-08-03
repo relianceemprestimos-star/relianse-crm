@@ -13,11 +13,6 @@ import {
   RIBEIRAO_SESSION_STATUSES,
 } from './ribeiraoTypes.js';
 import { runRibeiraoCommand, startRibeiraoSessionBackground } from './ribeiraoAdapter.js';
-import {
-  applyAutomationFlowToPayload,
-  recordAutomationFailure,
-  resolveAutomationForPortal,
-} from '../../automationRegistryService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -25,6 +20,22 @@ const ribeiraoSessionCache = new Map();
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function saoPauloDayRange(reference = new Date()) {
+  const localText = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(reference);
+  const start = new Date(`${localText}T00:00:00-03:00`);
+  const end = new Date(`${localText}T23:59:59.999-03:00`);
+  return {
+    startIso: start.toISOString(),
+    endIso: end.toISOString(),
+    localDate: localText,
+  };
 }
 
 function one(database, sql, params = []) {
@@ -94,6 +105,8 @@ function serializeQueryRow(row) {
     id: row.id,
     user_id: row.user_id,
     session_id: row.session_id,
+    credential_id: row.credential_id === null || row.credential_id === undefined ? null : Number(row.credential_id),
+    portal_id: row.portal_id || '',
     client_id: row.client_id,
     base_id: row.base_id,
     cpf: row.cpf,
@@ -144,6 +157,54 @@ function createSessionGateError(code, message) {
   const error = new Error(message);
   error.code = code;
   return error;
+}
+
+function resolveDailyQueryLimit(portalId) {
+  const normalizedPortalId = normalizePortalId(portalId);
+  if (['governo_sp', 'tjsp', 'portal_consignado'].includes(normalizedPortalId)) {
+    return Math.max(
+      0,
+      Number(
+        process.env.PORTAL_CONSIGNADO_DAILY_QUERY_LIMIT ||
+        process.env.GOV_SP_DAILY_QUERY_LIMIT ||
+        400
+      ) || 0
+    );
+  }
+  return 0;
+}
+
+function countCredentialQueriesInDay(database, credentialId, dayRange) {
+  if (!credentialId) {
+    return 0;
+  }
+  const row = one(
+    database,
+    `
+      SELECT COUNT(*) AS total
+      FROM ribeirao_margin_queries
+      WHERE credential_id = ?
+        AND datetime(created_at) >= datetime(?)
+        AND datetime(created_at) <= datetime(?)
+    `,
+    [Number(credentialId), dayRange.startIso, dayRange.endIso]
+  );
+  return Number(row?.total || 0);
+}
+
+function enforceDailyCredentialLimit(database, { credentialId, portalId }) {
+  const dailyLimit = resolveDailyQueryLimit(portalId);
+  if (!credentialId || dailyLimit <= 0) {
+    return;
+  }
+  const dayRange = saoPauloDayRange();
+  const totalToday = countCredentialQueriesInDay(database, credentialId, dayRange);
+  if (totalToday >= dailyLimit) {
+    throw createSessionGateError(
+      'DAILY_QUERY_LIMIT_REACHED',
+      `Limite diário de ${dailyLimit} consultas atingido para esta credencial em ${dayRange.localDate}.`
+    );
+  }
 }
 
 function clearRibeiraoSessionCache(sessionId = null) {
@@ -347,15 +408,20 @@ function maskRibeiraoUrl(value) {
   }
 }
 
-function resolveRibeiraoUrls() {
-  const registryFlow = resolveAutomationForPortal('prefeitura_ribeirao_preto');
-  if (registryFlow?.login_url || registryFlow?.consulta_url) {
-    const loginUrl = String(registryFlow.login_url || registryFlow.consulta_url || '').trim();
-    const consultaUrl = String(registryFlow.consulta_url || registryFlow.login_url || '').trim();
+function normalizePortalId(portalId = '') {
+  const normalized = String(portalId || '').trim().toLowerCase().replace(/-/g, '_');
+  return normalized || 'prefeitura_ribeirao_preto';
+}
+
+function resolveRibeiraoUrls(portalId = 'prefeitura_ribeirao_preto') {
+  const normalizedPortalId = normalizePortalId(portalId);
+  if (normalizedPortalId === 'governo_sp') {
+    const loginUrl = String(process.env.GOV_SP_AVERBADOR_URL || process.env.GOVSP_AVERBADOR_URL || 'https://www.portaldoconsignado.com.br/home?2').trim();
+    const consultaUrl = String(process.env.GOV_SP_AVERBADOR_CONSULTA_URL || process.env.GOVSP_AVERBADOR_CONSULTA_URL || '').trim() || loginUrl;
     return {
       loginUrl,
       consultaUrl,
-      registryFlow,
+      portalId: normalizedPortalId,
     };
   }
 
@@ -364,11 +430,12 @@ function resolveRibeiraoUrls() {
   return {
     loginUrl,
     consultaUrl,
+    portalId: normalizedPortalId,
   };
 }
 
 export function getRibeiraoDiagnostics() {
-  const { loginUrl, consultaUrl, registryFlow = null } = resolveRibeiraoUrls();
+  const { loginUrl, consultaUrl } = resolveRibeiraoUrls();
   const effectiveUrl = loginUrl || consultaUrl;
   const configured = Boolean(loginUrl) && !isPlaceholderUrl(loginUrl) && loginUrl.startsWith('http');
   const fallbackConsulta = Boolean(consultaUrl) && !isPlaceholderUrl(consultaUrl) && consultaUrl.startsWith('http');
@@ -389,17 +456,6 @@ export function getRibeiraoDiagnostics() {
     headless: resolveRibeiraoHeadless(),
     loginUrlMasked: configured ? maskRibeiraoUrl(loginUrl) : '',
     consultaUrlMasked: fallbackConsulta ? maskRibeiraoUrl(consultaUrl) : '',
-    automationRegistry: registryFlow
-      ? {
-          convenio_id: registryFlow.convenio_id,
-          convenio_nome: registryFlow.convenio_nome,
-          portal: registryFlow.portal,
-          status: registryFlow.status,
-          ultima_validacao: registryFlow.ultima_validacao,
-          fluxo_versao: registryFlow.fluxo_versao,
-          registry_file: registryFlow.registry_file,
-        }
-      : null,
     message: configured
       ? 'URL do averbador configurada no servidor.'
       : 'URL do averbador não configurada no servidor.',
@@ -501,6 +557,14 @@ function normalizeQueryPayload(payload, userId, sessionId, clientMatches = []) {
   return normalizeRibeiraoQueryResult(payload?.rawResult || payload, payload?.cpf || '', sessionId, userId, clientMatches);
 }
 
+function normalizePortalCpf(cpf) {
+  const digits = String(cpf || '').replace(/\D/g, '');
+  if (digits && digits.length < 11) {
+    return digits.padStart(11, '0');
+  }
+  return digits;
+}
+
 function sessionStatusFile(sessionId) {
   return path.resolve(path.join(_repoRoot(), 'data', 'ribeirao_sessions', `session_${sessionId}.status.json`));
 }
@@ -561,7 +625,7 @@ export function getRibeiraoSessionStatus(sessionId) {
   return session;
 }
 
-export async function startRibeiraoSession({ userId, login, password, timeoutSeconds = 900, slowMo = 0, userName = '', role = 'gerencial' }) {
+export async function startRibeiraoSession({ userId, login, password, timeoutSeconds = 900, slowMo = 0, userName = '', role = 'gerencial', portalId = 'prefeitura_ribeirao_preto', credentialId = null }) {
   clearRibeiraoSessionCache();
   const database = getDb();
   const sessionAt = nowIso();
@@ -581,10 +645,13 @@ export async function startRibeiraoSession({ userId, login, password, timeoutSec
       0
   );
 
-  const { loginUrl, consultaUrl } = resolveRibeiraoUrls();
+  const normalizedPortalId = normalizePortalId(portalId);
+  const { loginUrl, consultaUrl } = resolveRibeiraoUrls(normalizedPortalId);
   const configuredUrl = loginUrl || consultaUrl || '';
   if (isPlaceholderUrl(configuredUrl) || !String(configuredUrl || '').startsWith('http')) {
-    const message = 'URL do averbador de Ribeirao nao configurada. Configure RIBEIRAO_AVERBADOR_URL no .env da VPS e reinicie os containers.';
+    const message = normalizedPortalId === 'governo_sp'
+      ? 'URL do averbador Governo de SP nao configurada. Configure GOV_SP_AVERBADOR_URL no .env da VPS e reinicie os containers.'
+      : 'URL do averbador de Ribeirao nao configurada. Configure RIBEIRAO_AVERBADOR_URL no .env da VPS e reinicie os containers.';
     run(
       database,
       'UPDATE ribeirao_query_sessions SET status = ?, error_message = ?, updated_at = ? WHERE id = ?',
@@ -600,10 +667,11 @@ export async function startRibeiraoSession({ userId, login, password, timeoutSec
   console.log('[RIBEIRAO] headless efetivo:', resolveRibeiraoHeadless());
   console.log('[RIBEIRAO] BUILD:', BUILD_VERSION);
 
-  const { payload, flow: registryFlow } = applyAutomationFlowToPayload({
+  const payload = {
     action: 'start_session',
     session_id: sessionId,
-    portal_id: 'prefeitura_ribeirao_preto',
+    credential_id: credentialId ? Number(credentialId) : null,
+    portal_id: normalizedPortalId,
     portal_url: loginUrl,
     consulta_url: consultaUrl,
     login,
@@ -614,11 +682,10 @@ export async function startRibeiraoSession({ userId, login, password, timeoutSec
     user_id: userId,
     user_name: userName,
     role,
-  });
+  };
 
-  let result = null;
   try {
-    result = await runRibeiraoCommand(payload, { timeoutMs: Math.max(60000, timeoutSeconds * 1000 + 30000) });
+    const result = await runRibeiraoCommand(payload, { timeoutMs: Math.max(60000, timeoutSeconds * 1000 + 30000) });
     const status = String(result?.status || '').toLowerCase();
     if (status === RIBEIRAO_SESSION_STATUSES.CONNECTED) {
       run(
@@ -652,14 +719,6 @@ export async function startRibeiraoSession({ userId, login, password, timeoutSec
         [RIBEIRAO_SESSION_STATUSES.SESSION_EXPIRED, result?.message || null, nowIso(), sessionId]
       );
     } else {
-      recordAutomationFailure({
-        convenioId: registryFlow?.convenio_id || 'prefeitura_ribeirao_preto',
-        action: 'start_session',
-        stage: result?.stage || 'start_session',
-        message: result?.message || 'Falha ao iniciar a sessao Ribeirao.',
-        sessionId,
-        raw: result,
-      });
       run(
         database,
         'UPDATE ribeirao_query_sessions SET status = ?, error_message = ?, updated_at = ? WHERE id = ?',
@@ -668,15 +727,6 @@ export async function startRibeiraoSession({ userId, login, password, timeoutSec
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Falha ao iniciar a sessao Ribeirao.';
-    recordAutomationFailure({
-      convenioId: registryFlow?.convenio_id || 'prefeitura_ribeirao_preto',
-      action: 'start_session',
-      stage: error?.stage || 'start_session',
-      error,
-      message,
-      sessionId,
-      raw: { portal_id: 'prefeitura_ribeirao_preto' },
-    });
     run(
       database,
       'UPDATE ribeirao_query_sessions SET status = ?, error_message = ?, updated_at = ? WHERE id = ?',
@@ -700,64 +750,44 @@ export async function startRibeiraoSession({ userId, login, password, timeoutSec
   return session;
 }
 
-export async function queryRibeiraoCpf({ userId, sessionId, cpf, login, password, clientId = null, baseId = null }) {
+export async function queryRibeiraoCpf({ userId, sessionId, cpf, login, password, clientId = null, baseId = null, portalId = 'prefeitura_ribeirao_preto', credentialId = null }) {
   const database = getDb();
   const gate = getRibeiraoSessionGate(sessionId);
   if (!gate.success) {
     throw createSessionGateError(gate.code, gate.message);
   }
 
-  const clientMatches = findClientsByCpf(cpf).filter(Boolean);
+  const normalizedCpf = normalizePortalCpf(cpf);
+  const clientMatches = findClientsByCpf(normalizedCpf).filter(Boolean);
   console.log('[RIBEIRAO] BUILD:', BUILD_VERSION);
   console.log('[RIBEIRAO] NODE_ENV:', process.env.NODE_ENV || '');
   console.log('[RIBEIRAO] RIBEIRAO_HEADLESS:', process.env.RIBEIRAO_HEADLESS || '');
   console.log('[RIBEIRAO] headless efetivo:', resolveRibeiraoHeadless());
-  const { loginUrl, consultaUrl } = resolveRibeiraoUrls();
-  const { payload: commandPayload, flow: registryFlow } = applyAutomationFlowToPayload({
+  const normalizedPortalId = normalizePortalId(portalId);
+  enforceDailyCredentialLimit(database, {
+    credentialId: credentialId ? Number(credentialId) : null,
+    portalId: normalizedPortalId,
+  });
+  const { loginUrl, consultaUrl } = resolveRibeiraoUrls(normalizedPortalId);
+  const payload = await runRibeiraoCommand(
+    {
       action: 'query',
       session_id: sessionId,
-      portal_id: 'prefeitura_ribeirao_preto',
+      credential_id: credentialId ? Number(credentialId) : null,
+      portal_id: normalizedPortalId,
       portal_url: loginUrl,
       consulta_url: consultaUrl,
       login,
       password,
-      cpf,
+      cpf: normalizedCpf,
       client_id: clientId,
       base_id: baseId,
       headless: resolveRibeiraoHeadless(),
-  });
-
-  let payload = null;
-  try {
-    payload = await runRibeiraoCommand(commandPayload, { timeoutMs: 180000 });
-  } catch (error) {
-    recordAutomationFailure({
-      convenioId: registryFlow?.convenio_id || 'prefeitura_ribeirao_preto',
-      action: 'query',
-      stage: error?.stage || 'query',
-      error,
-      sessionId,
-      raw: { portal_id: 'prefeitura_ribeirao_preto', cpf },
-    });
-    throw error;
-  }
+    },
+    { timeoutMs: 180000 }
+  );
 
   const normalized = normalizeQueryPayload(payload, userId, sessionId, clientMatches);
-  if (
-    normalized.consultaStatus === RIBEIRAO_QUERY_STATUSES.ERROR ||
-    normalized.consultaStatus === RIBEIRAO_QUERY_STATUSES.LOGIN_ERROR ||
-    normalized.consultaStatus === RIBEIRAO_QUERY_STATUSES.SESSION_EXPIRED ||
-    normalized.consultaStatus === RIBEIRAO_QUERY_STATUSES.CAPTCHA_REQUIRED
-  ) {
-    recordAutomationFailure({
-      convenioId: registryFlow?.convenio_id || 'prefeitura_ribeirao_preto',
-      action: 'query',
-      stage: payload?.stage || payload?.rawResult?.stage || normalized.consultaStatus,
-      message: normalized.mensagem || 'Falha na consulta de margem.',
-      sessionId,
-      raw: { ...payload, cpf },
-    });
-  }
   const createdAt = nowIso();
 
   run(
@@ -766,6 +796,8 @@ export async function queryRibeiraoCpf({ userId, sessionId, cpf, login, password
       INSERT INTO ribeirao_margin_queries (
         user_id,
         session_id,
+        credential_id,
+        portal_id,
         client_id,
         base_id,
         cpf,
@@ -785,11 +817,13 @@ export async function queryRibeiraoCpf({ userId, sessionId, cpf, login, password
         margem_cartao_disponivel,
         raw_result_json,
         created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     [
       userId,
       sessionId,
+      credentialId ? Number(credentialId) : null,
+      normalizedPortalId,
       clientId,
       baseId,
       normalized.cpf,
@@ -821,6 +855,7 @@ export async function queryRibeiraoCpf({ userId, sessionId, cpf, login, password
   const nextSessionStatus =
     normalized.consultaStatus === RIBEIRAO_QUERY_STATUSES.WITH_MARGIN ||
     normalized.consultaStatus === RIBEIRAO_QUERY_STATUSES.WITHOUT_MARGIN ||
+    normalized.consultaStatus === RIBEIRAO_QUERY_STATUSES.NOT_ALLOWED ||
     normalized.consultaStatus === RIBEIRAO_QUERY_STATUSES.NOT_FOUND
       ? RIBEIRAO_SESSION_STATUSES.CONNECTED
       : normalized.consultaStatus === RIBEIRAO_QUERY_STATUSES.CAPTCHA_REQUIRED

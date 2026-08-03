@@ -85,6 +85,37 @@ function normalizeBatchBaseId(baseId) {
   return Number.isFinite(numeric) ? numeric : null;
 }
 
+function normalizeBatchCpf(value) {
+  const digits = cleanDigits(String(value || ''));
+  if (!digits) {
+    return '';
+  }
+  if (digits.length < 11) {
+    return digits.padStart(11, '0');
+  }
+  return digits;
+}
+
+function parseStoredBatchCpfs(batch) {
+  try {
+    const items = JSON.parse(String(batch?.cpf_list_json || '[]'));
+    if (!Array.isArray(items)) {
+      return [];
+    }
+    return Array.from(new Set(items.map((value) => normalizeBatchCpf(value)).filter((value) => value.length === 11)));
+  } catch {
+    return [];
+  }
+}
+
+function getProcessedBatchCpfs(batchId) {
+  return new Set(
+    listRibeiraoBatchResults(batchId)
+      .map((row) => normalizeBatchCpf(row.cpf))
+      .filter((value) => value.length === 11)
+  );
+}
+
 function normalizeCpfSource(value) {
   const normalized = normalizeCpfValue(value);
   return {
@@ -108,17 +139,32 @@ function extractCpfColumn(headers) {
   }) || '';
 }
 
+function extractNameColumn(headers) {
+  const column = matchColumn(headers, ['nome', 'name', 'cliente', 'servidor', 'beneficiario']);
+  if (column) {
+    return column;
+  }
+
+  return headers.find((header) => {
+    const norm = normalizeHeaderKey(header);
+    return norm.includes('nome') || norm.includes('cliente') || norm.includes('servidor') || norm.includes('beneficiario');
+  }) || '';
+}
+
 export function previewRibeiraoBatchSpreadsheet(buffer, filename) {
   const rows = readSpreadsheetRows(buffer, filename);
   const headers = getWorksheetHeaders(rows);
   const cpfColumn = extractCpfColumn(headers);
+  const nameColumn = extractNameColumn(headers);
 
   const previewRows = rows.map((row, index) => {
     const source = normalizeCpfSource(cpfColumn ? row[cpfColumn] : Object.values(row || {})[0]);
+    const name = String(nameColumn ? row[nameColumn] || '' : row.nome || row.Nome || '').trim();
     return {
       rowNumber: index + 2,
       cpf: source.cpf,
       cpf_display: source.cpf_display,
+      name,
       raw_value: String(source.raw ?? ''),
       isValid: source.isValid,
       alerts: source.alerts,
@@ -128,11 +174,19 @@ export function previewRibeiraoBatchSpreadsheet(buffer, filename) {
   return {
     headers,
     cpf_column: cpfColumn,
+    name_column: nameColumn,
     total_rows: previewRows.length,
     valid_rows: previewRows.filter((row) => row.isValid).length,
     invalid_rows: previewRows.filter((row) => !row.isValid).length,
     preview_rows: previewRows.slice(0, 100),
     cpfs: previewRows.filter((row) => row.isValid).map((row) => row.cpf),
+    clients: previewRows
+      .filter((row) => row.isValid)
+      .map((row) => ({
+        cpf: row.cpf,
+        cpf_display: row.cpf_display,
+        name: row.name || `Cliente ${row.cpf_display}`,
+      })),
   };
 }
 
@@ -267,8 +321,10 @@ function updateBatchCounts(batchId, delta = {}, status) {
 async function processBatch(batchId, {
   userId,
   sessionId,
+  credentialId,
   login,
   password,
+  portalId,
   cpfs,
   sourceType,
   baseId,
@@ -369,9 +425,11 @@ async function processBatch(batchId, {
         queryResult = await queryRibeiraoCpf({
           userId,
           sessionId,
+          credentialId,
           cpf,
           login,
           password,
+          portalId,
           clientId: null,
           baseId: normalizedBaseId,
         });
@@ -408,6 +466,15 @@ async function processBatch(batchId, {
             status: 'erro',
             finished_at: nowIso(),
           });
+          return getRibeiraoBatchById(batchId);
+        }
+
+        if (errorCode === 'DAILY_QUERY_LIMIT_REACHED') {
+          updateRibeiraoBatchRecord(batchId, {
+            status: 'pausado_limite_diario',
+            finished_at: null,
+          });
+          control.paused = true;
           return getRibeiraoBatchById(batchId);
         }
 
@@ -534,8 +601,10 @@ async function processBatch(batchId, {
 export async function startRibeiraoBatch({
   userId,
   sessionId,
+  credentialId = null,
   login,
   password,
+  portalId = 'prefeitura_ribeirao_preto',
   sourceType = 'upload',
   sourceFileName = '',
   cpfs = [],
@@ -550,7 +619,7 @@ export async function startRibeiraoBatch({
     throw error;
   }
 
-  const cleanCpfs = Array.from(new Set((cpfs || []).map((value) => cleanDigits(String(value || ''))).filter((value) => value.length === 11)));
+  const cleanCpfs = Array.from(new Set((cpfs || []).map((value) => normalizeBatchCpf(value)).filter((value) => value.length === 11)));
   const totalCpfs = cleanCpfs.length;
   const normalizedBaseId = normalizeBatchBaseId(baseId);
   const batch = createRibeiraoBatchRecord({
@@ -559,6 +628,7 @@ export async function startRibeiraoBatch({
     sourceType,
     sourceFileName,
     totalCpfs,
+    cpfListJson: JSON.stringify(cleanCpfs),
   });
 
   if (!batch) {
@@ -571,8 +641,10 @@ export async function startRibeiraoBatch({
   void processBatch(batchId, {
     userId,
     sessionId,
+    credentialId,
     login,
     password,
+    portalId,
     cpfs: cleanCpfs,
     sourceType,
     baseId: normalizedBaseId,
@@ -596,11 +668,59 @@ export function pauseRibeiraoBatch(batchId) {
   return getRibeiraoBatchById(batchId);
 }
 
-export function resumeRibeiraoBatch(batchId) {
+export function resumeRibeiraoBatch(batchId, options = {}) {
   const control = getBatchControl(batchId);
   control.paused = false;
   control.waitingCaptcha = false;
   updateRibeiraoBatchRecord(batchId, { status: 'em_andamento' });
+  const batch = getRibeiraoBatchById(batchId);
+  if (!batch || control.running) {
+    return batch;
+  }
+
+  const storedCpfs = parseStoredBatchCpfs(batch);
+  if (!storedCpfs.length) {
+    updateRibeiraoBatchRecord(batchId, { status: 'erro', finished_at: nowIso() });
+    const error = new Error('Este lote antigo nao tem a lista original de CPFs salva. Envie a base novamente para retomar com seguranca.');
+    error.code = 'BATCH_CPF_LIST_NOT_FOUND';
+    throw error;
+  }
+
+  const processedCpfs = getProcessedBatchCpfs(batchId);
+  const remainingCpfs = storedCpfs.filter((cpf) => !processedCpfs.has(cpf));
+  if (!remainingCpfs.length) {
+    updateRibeiraoBatchRecord(batchId, {
+      status: 'concluido',
+      processed_count: batch.total_cpfs,
+      finished_at: nowIso(),
+    });
+    return getRibeiraoBatchById(batchId);
+  }
+
+  if (!options.sessionId) {
+    updateRibeiraoBatchRecord(batchId, { status: 'pausado_sessao_expirada', finished_at: null });
+    const error = new Error('Conecte a credencial do portal antes de retomar o lote.');
+    error.code = 'NO_ACTIVE_SESSION';
+    throw error;
+  }
+
+  void processBatch(batchId, {
+    userId: Number(options.userId || batch.user_id || 0),
+    sessionId: Number(options.sessionId),
+    credentialId: options.credentialId ? Number(options.credentialId) : null,
+    login: options.login || '',
+    password: options.password || '',
+    portalId: options.portalId || 'prefeitura_ribeirao_preto',
+    cpfs: remainingCpfs,
+    sourceType: batch.source_type || 'upload',
+    baseId: batch.base_id,
+    sourceFileName: batch.source_file_name || '',
+    delaySecondsMin: options.delaySecondsMin ?? 3,
+    delaySecondsMax: options.delaySecondsMax ?? 8,
+  }).catch((error) => {
+    console.error('[RIBEIRAO_BATCH] erro ao retomar processamento:', error);
+  });
+
   return getRibeiraoBatchById(batchId);
 }
 
@@ -639,6 +759,20 @@ function buildRibeiraoBatchExportRows(batchId) {
     margem_emprestimo_disponivel: formatMoney(row.margem_emprestimo_disponivel ?? marginByProduct(row, 'credito')?.net_margin ?? row.margem_consignavel_liquida),
     margem_cartao_total: formatMoney(row.margem_cartao_total ?? marginByProduct(row, 'cartao')?.gross_margin ?? row.margem_cartao_bruta),
     margem_cartao_disponivel: formatMoney(row.margem_cartao_disponivel ?? marginByProduct(row, 'cartao')?.net_margin ?? row.margem_cartao_liquida),
+    margem_cartao_beneficio_total: formatMoney(marginByProduct(row, 'cartao_beneficio')?.gross_margin),
+    margem_cartao_beneficio_disponivel: formatMoney(marginByProduct(row, 'cartao_beneficio')?.net_margin),
+    consignacoes_facultativas_bruta: formatMoney(
+      row.margem_consignavel_bruta ?? row.margem_emprestimo_total ?? marginByProduct(row, 'consignacao')?.gross_margin ?? marginByProduct(row, 'credito')?.gross_margin
+    ),
+    consignacoes_facultativas_liquida: formatMoney(
+      row.margem_consignavel_liquida ?? row.margem_emprestimo_disponivel ?? marginByProduct(row, 'consignacao')?.net_margin ?? marginByProduct(row, 'credito')?.net_margin
+    ),
+    cartao_beneficio_bruta: formatMoney(
+      marginByProduct(row, 'cartao_beneficio')?.gross_margin
+    ),
+    cartao_beneficio_liquida: formatMoney(
+      marginByProduct(row, 'cartao_beneficio')?.net_margin
+    ),
     melhor_produto: row.best_product_type || '',
     melhor_margem_liquida: formatMoney(row.best_net_margin),
     data_hora: row.created_at_formatted || row.created_at || '',
@@ -662,6 +796,12 @@ export function exportRibeiraoBatchResultsCsv(batchId) {
     'Margem Emprestimo Disponivel',
     'Margem Cartao Total',
     'Margem Cartao Disponivel',
+    'Margem Cartao Beneficio Total',
+    'Margem Cartao Beneficio Disponivel',
+    'Consignacoes Facultativas - Margem Bruta',
+    'Consignacoes Facultativas - Margem Liquida',
+    'Cartao Beneficio - Margem Bruta',
+    'Cartao Beneficio - Margem Liquida',
     'Melhor produto',
     'Melhor margem liquida',
     'Data/hora',
@@ -693,6 +833,12 @@ export function exportRibeiraoBatchResultsCsv(batchId) {
         row.margem_emprestimo_disponivel,
         row.margem_cartao_total,
         row.margem_cartao_disponivel,
+        row.margem_cartao_beneficio_total,
+        row.margem_cartao_beneficio_disponivel,
+        row.consignacoes_facultativas_bruta,
+        row.consignacoes_facultativas_liquida,
+        row.cartao_beneficio_bruta,
+        row.cartao_beneficio_liquida,
         row.melhor_produto,
         row.melhor_margem_liquida,
         row.data_hora,
@@ -722,6 +868,12 @@ export function exportRibeiraoBatchResultsXlsx(batchId) {
     'Margem Emprestimo Disponivel',
     'Margem Cartao Total',
     'Margem Cartao Disponivel',
+    'Margem Cartao Beneficio Total',
+    'Margem Cartao Beneficio Disponivel',
+    'Consignacoes Facultativas - Margem Bruta',
+    'Consignacoes Facultativas - Margem Liquida',
+    'Cartao Beneficio - Margem Bruta',
+    'Cartao Beneficio - Margem Liquida',
     'Melhor produto',
     'Melhor margem liquida',
     'Data/hora',
@@ -741,6 +893,12 @@ export function exportRibeiraoBatchResultsXlsx(batchId) {
     row.margem_emprestimo_disponivel,
     row.margem_cartao_total,
     row.margem_cartao_disponivel,
+    row.margem_cartao_beneficio_total,
+    row.margem_cartao_beneficio_disponivel,
+    row.consignacoes_facultativas_bruta,
+    row.consignacoes_facultativas_liquida,
+    row.cartao_beneficio_bruta,
+    row.cartao_beneficio_liquida,
     row.melhor_produto,
     row.melhor_margem_liquida,
     row.data_hora,

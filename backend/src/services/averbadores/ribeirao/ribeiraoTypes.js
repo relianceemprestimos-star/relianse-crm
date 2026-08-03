@@ -12,6 +12,7 @@ export const RIBEIRAO_SESSION_STATUSES = {
 export const RIBEIRAO_QUERY_STATUSES = {
   WITH_MARGIN: 'com_marg',
   WITHOUT_MARGIN: 'sem_marg',
+  NOT_ALLOWED: 'cliente_nao_permite_consulta',
   NOT_FOUND: 'nao_encontrado',
   ERROR: 'erro',
   CAPTCHA_REQUIRED: 'captcha_required',
@@ -79,6 +80,43 @@ function selectFirstDefined(values) {
   return '';
 }
 
+function extractPortalField(text, label) {
+  const source = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!source) return '';
+  const escapedLabel = String(label || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const stopWords = [
+    'CPF',
+    'Nome',
+    'Órgão',
+    'Orgao',
+    'Identificação',
+    'Identificacao',
+    'Mês de Referência',
+    'Mes de Referencia',
+    'Data de Processamento',
+    'Margem Bruta',
+    'Dados Funcionais',
+    'Lotação',
+    'Lotacao',
+    'Cargo/Função',
+    'Cargo/Funcao',
+    'Tipo de Vínculo',
+    'Tipo de Vinculo',
+    'Data Fim do Contrato',
+    'Margem Disponível',
+    'Margem Disponivel',
+    'Quem somos',
+  ].join('|');
+  const match = source.match(new RegExp(`${escapedLabel}\\s*-\\s*(.+?)(?=\\s+(?:${stopWords})\\b|$)`, 'i'));
+  return match?.[1]?.trim() || '';
+}
+
+function extractCartaoBeneficioValues(text) {
+  const source = String(text || '');
+  if (!source) return [];
+  return Array.from(source.matchAll(/CART(?:A|Ã)O\s+DE\s+BENEF(?:I|Í)CIO\s+([0-9.]+,\d{2})/gi)).map((match) => match[1]);
+}
+
 function labelForProductType(productType) {
   return PRODUCT_DEFINITIONS[productType]?.label || productType || '';
 }
@@ -97,6 +135,8 @@ export function normalizeRibeiraoCpf(value) {
 export function normalizeRibeiraoQueryResult(rawResult, cpf, sessionId, userId, clientMatches = []) {
   const payload = rawResult?.payload_extra || rawResult?.payload || rawResult?.raw_data || rawResult || {};
   const status = String(rawResult?.status || rawResult?.consulta_status || 'erro').toLowerCase();
+  const portalText = selectFirstDefined([payload.texto_resultado, payload.resultado_texto, payload.raw_text, payload.orgao, rawResult?.texto_resultado]);
+  const cartaoBeneficioValues = extractCartaoBeneficioValues(portalText);
 
   const emprestimoGross = pickMoney(
     payload.margem_emprestimo_total,
@@ -134,30 +174,62 @@ export function normalizeRibeiraoQueryResult(rawResult, cpf, sessionId, userId, 
     payload.cartao_disponivel,
     payload.margem_liquida_cartao,
     rawResult?.margem_cartao,
-    rawResult?.margem_cartao_beneficio,
     payload.disp_cartao
   );
+  const cartaoBeneficioGross = pickMoney(
+    payload.margem_cartao_beneficio_total,
+    payload.cartao_beneficio_total,
+    payload.margem_bruta_cartao_beneficio,
+    payload.cartao_beneficio_margem_consignavel,
+    cartaoBeneficioValues[0],
+    payload.cartao_beneficio_bruto,
+    payload.margem_beneficio_total,
+    payload.beneficio_total,
+    payload.bruta_cartao_beneficio
+  );
+  const cartaoBeneficioNet = pickMoney(
+    payload.margem_cartao_beneficio_disponivel,
+    payload.cartao_beneficio_disponivel,
+    payload.margem_liquida_cartao_beneficio,
+    cartaoBeneficioValues[1],
+    cartaoBeneficioValues[0],
+    rawResult?.margem_cartao_beneficio,
+    payload.margem_beneficio_disponivel,
+    payload.beneficio_disponivel,
+    payload.disp_cartao_beneficio
+  );
 
-  const marginsFound = [emprestimoGross, emprestimoNet, cartaoGross, cartaoNet].some(
+  const consignacaoGross = emprestimoGross;
+  const consignacaoNet = emprestimoNet;
+  const effectiveCartaoGross = cartaoGross;
+  const effectiveCartaoNet = cartaoNet;
+
+  const marginsFound = [consignacaoGross, consignacaoNet, effectiveCartaoGross, effectiveCartaoNet, cartaoBeneficioGross, cartaoBeneficioNet].some(
     (value) => value !== null && value !== undefined
   );
-  const nonNullMargins = [emprestimoGross, emprestimoNet, cartaoGross, cartaoNet].filter(
+  const nonNullMargins = [consignacaoGross, consignacaoNet, effectiveCartaoGross, effectiveCartaoNet, cartaoBeneficioGross, cartaoBeneficioNet].filter(
     (value) => value !== null && value !== undefined
   );
-  const hasPositiveMargin = nonNullMargins.some((value) => Number(value) > 0);
+  const allMarginsZero = marginsFound && nonNullMargins.every((value) => Number(value) === 0);
 
   const margins = {
-    credito: {
-      gross: emprestimoGross,
-      net: emprestimoNet,
+    consignacao: {
+      gross: consignacaoGross,
+      net: consignacaoNet,
       source_gross_column: 'margem_emprestimo_total',
       source_net_column: 'margem_emprestimo_disponivel',
     },
     cartao: {
-      gross: cartaoGross,
-      net: cartaoNet,
+      gross: effectiveCartaoGross,
+      net: effectiveCartaoNet,
       source_gross_column: 'margem_cartao_total',
       source_net_column: 'margem_cartao_disponivel',
+    },
+    cartao_beneficio: {
+      gross: cartaoBeneficioGross,
+      net: cartaoBeneficioNet,
+      source_gross_column: 'margem_cartao_beneficio_total',
+      source_net_column: 'margem_cartao_beneficio_disponivel',
     },
   };
 
@@ -169,12 +241,14 @@ export function normalizeRibeiraoQueryResult(rawResult, cpf, sessionId, userId, 
         ? RIBEIRAO_QUERY_STATUSES.LOGIN_ERROR
         : status.includes('expire')
           ? RIBEIRAO_QUERY_STATUSES.SESSION_EXPIRED
-          : status.includes('not_found') || status.includes('nao_encontrado')
+          : status.includes('not_allowed') || status.includes('nao_permite') || status.includes('cliente_nao_permite_consulta')
+            ? RIBEIRAO_QUERY_STATUSES.NOT_ALLOWED
+            : status.includes('not_found') || status.includes('nao_encontrado')
             ? RIBEIRAO_QUERY_STATUSES.NOT_FOUND
             : marginsFound
-              ? hasPositiveMargin
-                ? RIBEIRAO_QUERY_STATUSES.WITH_MARGIN
-                : RIBEIRAO_QUERY_STATUSES.WITHOUT_MARGIN
+              ? allMarginsZero
+                ? RIBEIRAO_QUERY_STATUSES.WITHOUT_MARGIN
+                : RIBEIRAO_QUERY_STATUSES.WITH_MARGIN
               : status.includes('success') || status.includes('sucesso')
                 ? best.net !== null && best.net > 0
                   ? RIBEIRAO_QUERY_STATUSES.WITH_MARGIN
@@ -190,9 +264,9 @@ export function normalizeRibeiraoQueryResult(rawResult, cpf, sessionId, userId, 
                         : RIBEIRAO_QUERY_STATUSES.ERROR;
 
   const firstClientMatch = Array.isArray(clientMatches) ? clientMatches.find(Boolean) || {} : {};
-  const rawNome = selectFirstDefined([payload.nome_portal, payload.nome, payload.name, rawResult?.nome, firstClientMatch.name]);
-  const rawMatricula = selectFirstDefined([payload.matricula, rawResult?.matricula, firstClientMatch.matricula]);
-  const rawOrgao = selectFirstDefined([payload.orgao, payload.orgao_nome, payload.convenio, rawResult?.orgao, firstClientMatch.orgao]);
+  const rawNome = selectFirstDefined([extractPortalField(portalText, 'Nome'), payload.nome_portal, payload.nome, payload.name, rawResult?.nome, firstClientMatch.name]);
+  const rawMatricula = selectFirstDefined([extractPortalField(portalText, 'Identificação'), extractPortalField(portalText, 'Identificacao'), payload.matricula, rawResult?.matricula, firstClientMatch.matricula]);
+  const rawOrgao = selectFirstDefined([extractPortalField(portalText, 'Órgão'), extractPortalField(portalText, 'Orgao'), payload.orgao_nome, payload.convenio, rawResult?.orgao, firstClientMatch.orgao, payload.orgao]);
   const rawCargo = selectFirstDefined([payload.cargo, payload.funcao, payload.cargo_funcao, rawResult?.cargo, firstClientMatch.cargo]);
   const rawVinculo = selectFirstDefined([payload.vinculo, payload.regime, payload.tipo_vinculo, rawResult?.vinculo, firstClientMatch.vinculo]);
   const mensagem = selectFirstDefined([
@@ -204,7 +278,8 @@ export function normalizeRibeiraoQueryResult(rawResult, cpf, sessionId, userId, 
     payload.message,
     queryStatus === RIBEIRAO_QUERY_STATUSES.WITH_MARGIN ? 'Consulta realizada com margem positiva.' : '',
     queryStatus === RIBEIRAO_QUERY_STATUSES.WITHOUT_MARGIN ? 'Consulta realizada, sem margem disponivel.' : '',
-    queryStatus === RIBEIRAO_QUERY_STATUSES.NOT_FOUND ? 'CPF nao encontrado.' : '',
+    queryStatus === RIBEIRAO_QUERY_STATUSES.NOT_ALLOWED ? 'Cliente nao permite consulta.' : '',
+    queryStatus === RIBEIRAO_QUERY_STATUSES.NOT_FOUND ? 'Dados de cadastro nao localizado.' : '',
   ]);
 
   const consultaStatusLabel =
@@ -212,9 +287,11 @@ export function normalizeRibeiraoQueryResult(rawResult, cpf, sessionId, userId, 
       ? 'Com margem'
       : queryStatus === RIBEIRAO_QUERY_STATUSES.WITHOUT_MARGIN
         ? 'Sem margem'
-        : queryStatus === RIBEIRAO_QUERY_STATUSES.NOT_FOUND
-          ? 'Nao encontrado'
-          : queryStatus === RIBEIRAO_QUERY_STATUSES.CAPTCHA_REQUIRED
+        : queryStatus === RIBEIRAO_QUERY_STATUSES.NOT_ALLOWED
+          ? 'Cliente nao permite consulta'
+          : queryStatus === RIBEIRAO_QUERY_STATUSES.NOT_FOUND
+            ? 'Dados de cadastro nao localizado'
+            : queryStatus === RIBEIRAO_QUERY_STATUSES.CAPTCHA_REQUIRED
             ? 'Aguardando confirmacao'
             : queryStatus === RIBEIRAO_QUERY_STATUSES.LOGIN_ERROR
               ? 'Erro de login'
@@ -231,14 +308,16 @@ export function normalizeRibeiraoQueryResult(rawResult, cpf, sessionId, userId, 
     orgao: rawOrgao,
     cargo: rawCargo,
     vinculo: rawVinculo,
-    margem_emprestimo_total: emprestimoGross,
-    margem_emprestimo_disponivel: emprestimoNet,
-    margem_cartao_total: cartaoGross,
-    margem_cartao_disponivel: cartaoNet,
+    margem_emprestimo_total: consignacaoGross,
+    margem_emprestimo_disponivel: consignacaoNet,
+    margem_cartao_total: effectiveCartaoGross,
+    margem_cartao_disponivel: effectiveCartaoNet,
     margem_consignavel_bruta: emprestimoGross,
     margem_consignavel_liquida: emprestimoNet,
-    margem_cartao_bruta: cartaoGross,
-    margem_cartao_liquida: cartaoNet,
+    margem_cartao_bruta: effectiveCartaoGross,
+    margem_cartao_liquida: effectiveCartaoNet,
+    margem_cartao_beneficio_bruta: cartaoBeneficioGross,
+    margem_cartao_beneficio_liquida: cartaoBeneficioNet,
     margins,
     consultaStatus: queryStatus,
     mensagem,
@@ -284,6 +363,10 @@ export function formatRibeiraoSummary(result) {
     margem_emprestimo_disponivel_formatted: formatMoney(result.margem_emprestimo_disponivel),
     margem_cartao_total_formatted: formatMoney(result.margem_cartao_total),
     margem_cartao_disponivel_formatted: formatMoney(result.margem_cartao_disponivel),
+    margem_cartao_beneficio_bruta: result.margem_cartao_beneficio_bruta ?? null,
+    margem_cartao_beneficio_liquida: result.margem_cartao_beneficio_liquida ?? null,
+    margem_cartao_beneficio_bruta_formatted: formatMoney(result.margem_cartao_beneficio_bruta),
+    margem_cartao_beneficio_liquida_formatted: formatMoney(result.margem_cartao_beneficio_liquida),
     margem_consignavel_bruta: result.margem_consignavel_bruta ?? null,
     margem_consignavel_liquida: result.margem_consignavel_liquida ?? null,
     margem_cartao_bruta: result.margem_cartao_bruta ?? null,

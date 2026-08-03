@@ -1,3 +1,4 @@
+from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, Integer, String, Text
@@ -17,7 +18,7 @@ class Credencial(Base):
 
     ativa: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     status: Mapped[str] = mapped_column(String(30), default="disponivel", index=True)
-    limite_consultas: Mapped[int] = mapped_column(Integer, default=450)
+    limite_consultas: Mapped[int] = mapped_column(Integer, default=400)
     consultas_realizadas: Mapped[int] = mapped_column(Integer, default=0)
 
     ultimo_login_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

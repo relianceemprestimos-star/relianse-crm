@@ -8,6 +8,79 @@ import { formatCurrencyDisplay } from '../lib/margins';
 import type { Campaign, UploadAnalysis } from '../types';
 import { Badge, Button, Card, Input, SectionHeader } from '../components/ui';
 
+type ImportPurpose = 'esteira' | 'margem';
+type ConventionKey = 'prefeitura_ribeirao' | 'governo_sp' | 'outro';
+
+const PURPOSE_MARKERS: Record<ImportPurpose, string> = {
+  esteira: '[FINALIDADE:ESTEIRA]',
+  margem: '[FINALIDADE:MARGEM]',
+};
+
+const CONVENTION_OPTIONS: Array<{
+  value: ConventionKey;
+  label: string;
+  convenio: string;
+  estado: string;
+  cidade: string;
+  esteiraType: string;
+  margemType: string;
+  defaultBaseName: string;
+}> = [
+  {
+    value: 'prefeitura_ribeirao',
+    label: 'Prefeitura de Ribeirão Preto',
+    convenio: 'Prefeitura de Ribeirão Preto',
+    estado: 'SP',
+    cidade: 'Ribeirão Preto',
+    esteiraType: 'Esteira de Campanha',
+    margemType: 'Consulta de Margem',
+    defaultBaseName: 'Prefeitura de Ribeirão - Esteira',
+  },
+  {
+    value: 'governo_sp',
+    label: 'Governo de SP',
+    convenio: 'Governo de SP',
+    estado: 'SP',
+    cidade: '',
+    esteiraType: 'Esteira de Campanha',
+    margemType: 'Consulta de Margem',
+    defaultBaseName: 'Governo de SP - Esteira',
+  },
+  {
+    value: 'outro',
+    label: 'Outro convênio',
+    convenio: '',
+    estado: 'SP',
+    cidade: '',
+    esteiraType: 'Esteira de Campanha',
+    margemType: 'Consulta de Margem',
+    defaultBaseName: 'Base da esteira',
+  },
+];
+
+const DEFAULT_BASE_NAMES = [
+  'Base da esteira',
+  'Base para consulta de margem',
+  'Prefeitura de Ribeirão - Esteira',
+  'Governo de SP - Esteira',
+  'Governo de SP - Maio 2026',
+  'GOV SP - Maio 2026',
+];
+
+function normalizeConventionKey(value: string | null | undefined): ConventionKey {
+  const text = String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+  if (text.includes('governo') || text.includes('gov_sp') || text.includes('gov-sp') || text.includes('sao paulo')) {
+    return 'governo_sp';
+  }
+  if (text.includes('ribeirao') || text.includes('prefeitura')) {
+    return 'prefeitura_ribeirao';
+  }
+  return 'prefeitura_ribeirao';
+}
+
 function formatBytes(bytes: number) {
   if (!Number.isFinite(bytes)) {
     return '-';
@@ -24,12 +97,12 @@ function formatBytes(bytes: number) {
 const PREVIEW_COLUMNS = [
   { label: 'CPF', key: 'cpf' },
   { label: 'Nome', key: 'name' },
-  { label: 'Margem Bruta ConsignaÃ§Ã£o', key: 'margem_bruta_consignacao' },
-  { label: 'Margem LÃ­quida ConsignaÃ§Ã£o', key: 'margem_liquida_consignacao' },
-  { label: 'Margem Bruta CrÃ©dito', key: 'margem_bruta_credito' },
-  { label: 'Margem LÃ­quida CrÃ©dito', key: 'margem_liquida_credito' },
-  { label: 'Margem Bruta CartÃ£o', key: 'margem_bruta_cartao' },
-  { label: 'Margem LÃ­quida CartÃ£o', key: 'margem_liquida_cartao' },
+  { label: 'Margem Bruta Consignação', key: 'margem_bruta_consignacao' },
+  { label: 'Margem Líquida Consignação', key: 'margem_liquida_consignacao' },
+  { label: 'Margem Bruta Crédito', key: 'margem_bruta_credito' },
+  { label: 'Margem Líquida Crédito', key: 'margem_liquida_credito' },
+  { label: 'Margem Bruta Cartão', key: 'margem_bruta_cartao' },
+  { label: 'Margem Líquida Cartão', key: 'margem_liquida_cartao' },
   { label: 'Status', key: 'consulta_status' },
   { label: 'Mensagem', key: 'consulta_mensagem' },
 ] as const;
@@ -38,15 +111,20 @@ export default function UploadPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const initialPurpose = searchParams.get('purpose') === 'margem' ? 'margem' : 'esteira';
+  const initialConventionKey = normalizeConventionKey(searchParams.get('convenio'));
+  const initialConvention = CONVENTION_OPTIONS.find((option) => option.value === initialConventionKey) || CONVENTION_OPTIONS[0];
   const [file, setFile] = useState<File | null>(null);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [campaignId, setCampaignId] = useState(() => searchParams.get('campaign_id') || '');
   const [campaignName, setCampaignName] = useState('');
-  const [baseName, setBaseName] = useState('GOV SP - Maio 2026');
-  const [baseType, setBaseType] = useState('Governo Estadual');
-  const [convenio, setConvenio] = useState('Governo de SÃ£o Paulo');
-  const [estado, setEstado] = useState('SP');
-  const [cidade, setCidade] = useState('');
+  const [purpose, setPurpose] = useState<ImportPurpose>(initialPurpose);
+  const [selectedConvention, setSelectedConvention] = useState<ConventionKey>(initialConventionKey);
+  const [baseName, setBaseName] = useState(initialPurpose === 'margem' ? `Consulta de margem - ${initialConvention.label}` : initialConvention.defaultBaseName);
+  const [baseType, setBaseType] = useState(initialPurpose === 'margem' ? initialConvention.margemType : initialConvention.esteiraType);
+  const [convenio, setConvenio] = useState(initialConvention.convenio);
+  const [estado, setEstado] = useState(initialConvention.estado);
+  const [cidade, setCidade] = useState(initialConvention.cidade);
   const [notes, setNotes] = useState('');
   const [analysis, setAnalysis] = useState<UploadAnalysis | null>(null);
   const [loading, setLoading] = useState(false);
@@ -97,7 +175,7 @@ export default function UploadPage() {
 
   function handleFileSelection(selected: File | null) {
     setFile(selected);
-    if (selected && (!baseName || baseName === 'GOV SP - Maio 2026')) {
+    if (selected && (!baseName || baseName === 'Governo de SP - Maio 2026' || baseName === 'GOV SP - Maio 2026' || baseName === 'Base da esteira' || baseName === 'Base para consulta de margem')) {
       const suggested = selected.name
         .replace(/\.[^.]+$/, '')
         .replace(/[_-]+/g, ' ')
@@ -115,6 +193,41 @@ export default function UploadPage() {
     handleFileSelection(selected);
   }
 
+  function buildPurposeNotes() {
+    const marker = PURPOSE_MARKERS[purpose];
+    const cleanNotes = notes
+      .split('\n')
+      .filter((line) => !line.includes('[FINALIDADE:'))
+      .join('\n')
+      .trim();
+    return cleanNotes ? `${cleanNotes}\n${marker}` : marker;
+  }
+
+  function applyConvention(nextConvention: ConventionKey, nextPurpose = purpose) {
+    setSelectedConvention(nextConvention);
+    const option = CONVENTION_OPTIONS.find((item) => item.value === nextConvention) || CONVENTION_OPTIONS[0];
+    const canReplaceBaseName = !baseName.trim() || DEFAULT_BASE_NAMES.includes(baseName) || baseName.startsWith('Consulta de margem - ');
+    if (canReplaceBaseName) {
+      setBaseName(nextPurpose === 'margem' ? `Consulta de margem - ${option.label}` : option.defaultBaseName);
+    }
+    setBaseType(nextPurpose === 'margem' ? option.margemType : option.esteiraType);
+    if (nextConvention !== 'outro') {
+      setConvenio(option.convenio);
+      setEstado(option.estado);
+      setCidade(option.cidade);
+    } else {
+      if (CONVENTION_OPTIONS.some((item) => item.convenio && item.convenio === convenio)) {
+        setConvenio('');
+      }
+      setCidade('');
+    }
+  }
+
+  function applyPurpose(nextPurpose: ImportPurpose) {
+    setPurpose(nextPurpose);
+    applyConvention(selectedConvention, nextPurpose);
+  }
+
   async function previewFile(selectedFile: File) {
     try {
       setLoading(true);
@@ -124,7 +237,7 @@ export default function UploadPage() {
         convenio,
         estado,
         cidade,
-        notes,
+        notes: buildPurposeNotes(),
         campaign_id: campaignName.trim() ? null : campaignId || null,
         campaign_name: campaignName.trim() || undefined,
       });
@@ -163,13 +276,22 @@ export default function UploadPage() {
         convenio,
         estado,
         cidade,
-        notes,
+        notes: buildPurposeNotes(),
         campaign_id: campaignName.trim() ? null : campaignId || null,
         campaign_name: campaignName.trim() || undefined,
+        auto_margin: purpose === 'esteira',
       });
       if (response.mode === 'import') {
-        toast.success('Lista importada com sucesso.');
-        navigate('/fila');
+        if (response.automation?.status === 'queued') {
+          toast.success('Base importada. A consulta de margem começou automaticamente.');
+        } else if (response.automation?.reason === 'no_valid_cpfs') {
+          toast.error('Base importada, mas a margem não iniciou porque não encontrei CPF válido na planilha.');
+        } else if (response.automation?.status === 'pending_credentials') {
+          toast.error('Base importada, mas falta credencial do portal para iniciar a margem automática.');
+        } else {
+          toast.success('Lista importada com sucesso.');
+        }
+        navigate(purpose === 'esteira' ? '/esteira-inteligente' : '/bases');
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Falha ao importar a lista.');
@@ -210,16 +332,43 @@ export default function UploadPage() {
     <div className="space-y-8">
       <SectionHeader
         title="Upload de Listas"
-        description="Arraste sua planilha ou clique para enviar. O sistema lÃª todas as colunas, identifica margens por produto e prepara a fila de atendimento."
+        description="Escolha se esta base será usada na esteira de campanha ou somente para consulta de margem."
       />
 
       <Card className="p-6">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <p className="text-sm uppercase tracking-[0.22em] text-slate-500">IdentificaÃ§Ã£o da base</p>
+            <p className="text-sm uppercase tracking-[0.22em] text-slate-500">Identificação da base</p>
             <h3 className="mt-1 text-xl font-semibold text-white">Defina a origem antes de importar</h3>
           </div>
-          <Badge tone="accent">ObrigatÃ³rio</Badge>
+          <Badge tone="accent">Obrigatório</Badge>
+        </div>
+
+        <div className="mt-5 grid gap-3 lg:grid-cols-2">
+          <button
+            type="button"
+            onClick={() => applyPurpose('esteira')}
+            className={[
+              'rounded-2xl border p-5 text-left transition',
+              purpose === 'esteira' ? 'border-accent bg-accent/10 shadow-[0_0_24px_rgba(0,209,193,.12)]' : 'border-border bg-bg/60 hover:border-accent/40',
+            ].join(' ')}
+          >
+            <Badge tone={purpose === 'esteira' ? 'accent' : 'neutral'}>Esteira/Campanha</Badge>
+            <h4 className="mt-3 text-lg font-bold text-white">Usar no fluxo novo</h4>
+            <p className="mt-1 text-sm text-slate-400">Conta nos cards da Esteira, passa por Nova Vida, regras, oportunidades e campanha.</p>
+          </button>
+          <button
+            type="button"
+            onClick={() => applyPurpose('margem')}
+            className={[
+              'rounded-2xl border p-5 text-left transition',
+              purpose === 'margem' ? 'border-info bg-info/10 shadow-[0_0_24px_rgba(59,130,246,.12)]' : 'border-border bg-bg/60 hover:border-info/40',
+            ].join(' ')}
+          >
+            <Badge tone={purpose === 'margem' ? 'info' : 'neutral'}>Consulta de margem</Badge>
+            <h4 className="mt-3 text-lg font-bold text-white">Usar em portal de margem</h4>
+            <p className="mt-1 text-sm text-slate-400">Fica separado para Ribeirão/Santana/Amapá e não entra na Esteira de Campanha.</p>
+          </button>
         </div>
 
         <div className="mt-5 grid gap-4 xl:grid-cols-2">
@@ -257,23 +406,42 @@ export default function UploadPage() {
           </label>
           <label className="block text-sm text-slate-300">
             Nome da base
-            <Input className="mt-2" value={baseName} onChange={(event) => setBaseName(event.target.value)} placeholder="Ex: GOV SP - Maio 2026" />
+            <Input className="mt-2" value={baseName} onChange={(event) => setBaseName(event.target.value)} placeholder="Ex: Governo de SP - Maio 2026" />
           </label>
           <label className="block text-sm text-slate-300">
             Tipo da base
             <select className="mt-2 w-full rounded-2xl border border-border bg-bg/80 px-4 py-3 text-sm text-slate-100 outline-none transition focus:border-accent/60 focus:ring-2 focus:ring-accent/10" value={baseType} onChange={(event) => setBaseType(event.target.value)}>
+              <option value="Esteira de Campanha">Esteira de Campanha</option>
+              <option value="Consulta de Margem">Consulta de Margem</option>
               <option value="Governo Estadual">Governo Estadual</option>
               <option value="Prefeitura">Prefeitura</option>
               <option value="SPPREV">SPPREV</option>
-              <option value="PolÃ­cia Militar">PolÃ­cia Militar</option>
-              <option value="CÃ¢mara">CÃ¢mara</option>
+              <option value="Polícia Militar">Polícia Militar</option>
+              <option value="Câmara">Câmara</option>
               <option value="Autarquia">Autarquia</option>
               <option value="Outro">Outro</option>
             </select>
           </label>
           <label className="block text-sm text-slate-300">
-            ConvÃªnio / Ã“rgÃ£o
-            <Input className="mt-2" value={convenio} onChange={(event) => setConvenio(event.target.value)} placeholder="Ex: Governo de SÃ£o Paulo" />
+            Convênio da base
+            <select
+              className="mt-2 w-full rounded-2xl border border-border bg-bg/80 px-4 py-3 text-sm text-slate-100 outline-none transition focus:border-accent/60 focus:ring-2 focus:ring-accent/10"
+              value={selectedConvention}
+              onChange={(event) => applyConvention(event.target.value as ConventionKey)}
+            >
+              {CONVENTION_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            {selectedConvention === 'governo_sp' ? (
+              <p className="mt-2 text-xs text-slate-500">Portal único: o órgão específico vem no retorno da consulta, não na importação.</p>
+            ) : null}
+          </label>
+          <label className="block text-sm text-slate-300">
+            Nome do convênio salvo
+            <Input className="mt-2" value={convenio} onChange={(event) => setConvenio(event.target.value)} placeholder="Ex: Governo de São Paulo" />
           </label>
           <label className="block text-sm text-slate-300">
             Estado
@@ -287,7 +455,7 @@ export default function UploadPage() {
           </label>
           <label className="block text-sm text-slate-300">
             Cidade
-            <Input className="mt-2" value={cidade} onChange={(event) => setCidade(event.target.value)} placeholder="Ex: RibeirÃ£o Preto" />
+            <Input className="mt-2" value={cidade} onChange={(event) => setCidade(event.target.value)} placeholder="Ex: Ribeirão Preto" />
           </label>
           <label className="block text-sm text-slate-300 xl:col-span-2">
             Observação
@@ -295,9 +463,12 @@ export default function UploadPage() {
               className="mt-2 w-full rounded-2xl border border-border bg-bg/80 px-4 py-3 text-sm text-slate-100 outline-none transition focus:border-accent/60 focus:ring-2 focus:ring-accent/10 placeholder:text-slate-500"
               value={notes}
               onChange={(event) => setNotes(event.target.value)}
-              placeholder="Ex: Base consultada em maio com margens atualizadas"
+              placeholder={purpose === 'esteira' ? 'Ex: Base que vai seguir para campanha Maio/2026' : 'Ex: Base usada apenas para consulta no portal de margem'}
               rows={3}
             />
+            <p className="mt-2 text-xs text-slate-500">
+              O sistema grava automaticamente: {PURPOSE_MARKERS[purpose]}
+            </p>
           </label>
         </div>
       </Card>
@@ -369,33 +540,33 @@ export default function UploadPage() {
                 <FieldStatus label="Nome" field={recognized.name} />
                 <FieldStatus label="Telefone" field={recognized.phone} />
                 <FieldStatus label="E-mail" field={recognized.email} />
-                <FieldStatus label="Margem Bruta ConsignaÃ§Ã£o" field={recognized.consignacao_gross} />
-                <FieldStatus label="Margem LÃ­quida ConsignaÃ§Ã£o" field={recognized.consignacao_net} />
-                <FieldStatus label="Margem Bruta CrÃ©dito" field={recognized.credito_gross} />
-                <FieldStatus label="Margem LÃ­quida CrÃ©dito" field={recognized.credito_net} />
-                <FieldStatus label="Margem Bruta CartÃ£o" field={recognized.cartao_gross} />
-                <FieldStatus label="Margem LÃ­quida CartÃ£o" field={recognized.cartao_net} />
+                <FieldStatus label="Margem Bruta Consignação" field={recognized.consignacao_gross} />
+                <FieldStatus label="Margem Líquida Consignação" field={recognized.consignacao_net} />
+                <FieldStatus label="Margem Bruta Crédito" field={recognized.credito_gross} />
+                <FieldStatus label="Margem Líquida Crédito" field={recognized.credito_net} />
+                <FieldStatus label="Margem Bruta Cartão" field={recognized.cartao_gross} />
+                <FieldStatus label="Margem Líquida Cartão" field={recognized.cartao_net} />
                 <FieldStatus label="Status" field={recognized.status} />
                 <FieldStatus label="Mensagem" field={recognized.message} />
               </div>
             </Card>
 
             <Card className="p-5">
-              <p className="text-sm text-slate-400">ValidaÃ§Ã£o</p>
+              <p className="text-sm text-slate-400">Validação</p>
               <div className="mt-4 space-y-2 text-sm text-slate-300">
-                <p>CPF Ã© convertido para texto limpo e alerta caso venha invÃ¡lido ou incompleto.</p>
-                <p>Todas as colunas sÃ£o salvas no raw_data_json para preservar a linha original.</p>
-                <p>Margens negativas, positivas e zero sÃ£o normalizadas para nÃºmero decimal.</p>
+                <p>CPF é convertido para texto limpo e alerta caso venha inválido ou incompleto.</p>
+                <p>Todas as colunas são salvas no raw_data_json para preservar a linha original.</p>
+                <p>Margens negativas, positivas e zero são normalizadas para número decimal.</p>
               </div>
             </Card>
           </div>
 
           <div className="mt-6 overflow-hidden rounded-3xl border border-border">
             <div className="flex items-center justify-between border-b border-border bg-white/3 px-5 py-4">
-              <h4 className="font-semibold text-white">PrÃ©via da planilha</h4>
+              <h4 className="font-semibold text-white">Prévia da planilha</h4>
               <Badge tone={validationTone as 'neutral' | 'accent' | 'success' | 'danger' | 'info'}>
                 {!analysis
-                  ? 'Aguardando validaÃ§Ã£o'
+                  ? 'Aguardando validação'
                   : analysis.summary.invalid_rows > 0
                     ? 'Com alertas'
                     : analysis.summary.warnings > 0
@@ -422,7 +593,7 @@ export default function UploadPage() {
                         <td className="px-5 py-4 text-slate-300">{row.cpf || '-'}</td>
                         <td className="px-5 py-4 font-semibold text-white">
                           {row.name || '-'}
-                          {row.row_alerts?.length ? <div className="mt-1 text-xs text-amber-300">CPF invÃ¡lido ou linha com alerta</div> : null}
+                          {row.row_alerts?.length ? <div className="mt-1 text-xs text-amber-300">CPF inválido ou linha com alerta</div> : null}
                         </td>
                         <td className="px-5 py-4 text-slate-300">{formatCurrencyDisplay(row.margem_bruta_consignacao)}</td>
                         <td className="px-5 py-4 text-slate-300">{formatCurrencyDisplay(row.margem_liquida_consignacao)}</td>
@@ -440,7 +611,7 @@ export default function UploadPage() {
                 </table>
               </div>
             ) : (
-              <div className="p-8 text-sm text-slate-500">Escolha uma planilha para visualizar a prÃ©via antes da importaÃ§Ã£o.</div>
+              <div className="p-8 text-sm text-slate-500">Escolha uma planilha para visualizar a prévia antes da importação.</div>
             )}
           </div>
         </Card>
@@ -452,7 +623,7 @@ export default function UploadPage() {
               <SummaryLine label="Nome do arquivo" value={fileSummary?.name || '-'} />
               <SummaryLine label="Tamanho" value={fileSummary?.size || '-'} />
               <SummaryLine label="Total de clientes encontrados" value={analysis?.summary.total_rows ?? 0} />
-              <SummaryLine label="Status da validaÃ§Ã£o" value={!analysis ? 'Aguardando' : analysis.summary.invalid_rows ? 'Com falhas' : 'Pronto'} />
+              <SummaryLine label="Status da validação" value={!analysis ? 'Aguardando' : analysis.summary.invalid_rows ? 'Com falhas' : 'Pronto'} />
               <SummaryLine label="Data/hora" value={lastCheckedAt || new Date().toLocaleString('pt-BR')} />
             </div>
           </Card>
@@ -462,14 +633,15 @@ export default function UploadPage() {
             <div className="mt-4 space-y-3">
               <SummaryLine label="Nome da base" value={baseForm.nome_base || '-'} />
               <SummaryLine label="Tipo" value={baseForm.tipo_base || '-'} />
-              <SummaryLine label="ConvÃªnio / Ã³rgÃ£o" value={baseForm.convenio || '-'} />
+              <SummaryLine label="Convênio / órgão" value={baseForm.convenio || '-'} />
               <SummaryLine label="Estado" value={baseForm.estado || '-'} />
               <SummaryLine label="Cidade" value={baseForm.cidade || '-'} />
+              <SummaryLine label="Finalidade" value={purpose === 'esteira' ? 'Esteira/Campanha' : 'Consulta de Margem'} />
             </div>
           </Card>
 
           <Card className="p-6">
-            <p className="text-sm text-slate-400">AÃ§Ãµes</p>
+            <p className="text-sm text-slate-400">Ações</p>
             <div className="mt-4 space-y-3">
               <Button variant="secondary" className="w-full py-4" onClick={() => void previewFile(file as File)} disabled={!file || loading}>
                 {loading ? <LoaderCircle className="animate-spin" size={16} /> : <ShieldAlert size={16} />}
@@ -489,7 +661,7 @@ export default function UploadPage() {
 
 function FieldStatus({ label, field }: { label: string; field?: { status: string; source_column: string; alerts?: string[] } }) {
   const tone = fieldTone(field?.status || 'not_found');
-  const labelText = field?.status === 'identified' ? 'Identificado' : field?.status === 'alert' ? 'Com alerta' : 'NÃ£o encontrado';
+  const labelText = field?.status === 'identified' ? 'Identificado' : field?.status === 'alert' ? 'Com alerta' : 'Não encontrado';
 
   return (
     <div className="flex items-center justify-between gap-3 rounded-2xl border border-border bg-bg/60 px-4 py-3">
@@ -519,6 +691,3 @@ function SummaryLine({ label, value }: { label: string; value: string | number }
     </div>
   );
 }
-
-
-

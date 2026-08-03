@@ -1,11 +1,20 @@
 import type {
   AuthResponse,
+  BankCoefficient,
   ChangePasswordResponse,
   Base,
   Campaign,
+  CampaignCoefficient,
+  CampaignOpportunity,
+  CampaignOpportunitySummary,
   Client,
   ClientsResponse,
   DashboardData,
+  DispatchCampaign,
+  DispatchCampaignClient,
+  DocumentChecklist,
+  ClientDocument,
+  ReWhatsSession,
   RibeiraoBatchPreview,
   RibeiraoBatchRecord,
   RibeiraoBatchResultItem,
@@ -23,18 +32,12 @@ import type {
   ClientPhone,
   ClientAddress,
   ClientEnrichmentData,
-  PhoneLookupJob,
-  PhoneLookupHistoryItem,
   AverbadorCredential,
   CredentialConnectionLog,
   CredentialPortalConfig,
-  WhatsappConfig,
-  WhatsappMessage,
-  WhatsappFlow,
-  WhatsappFlowExecution,
-  WhatsappFlowLog,
-  WhatsappTemplate,
-  AutomationRegistrySummary,
+  MarginPortalConfig,
+  PhoneLookupJob,
+  PhoneLookupHistoryItem,
 } from '../types';
 import { clearAuthSession, getAccessSession, getAuthToken } from './session';
 
@@ -44,6 +47,30 @@ export class ApiError extends Error {
   code?: string;
   status?: number;
   data?: unknown;
+}
+
+function parseApiPayload(text: string) {
+  if (!text) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+function extractApiMessage(data: unknown, fallback: string) {
+  if (data && typeof data === 'object' && 'message' in data && typeof data.message === 'string' && data.message.trim()) {
+    return data.message.trim();
+  }
+
+  if (typeof data === 'string' && data.trim()) {
+    return data.trim();
+  }
+
+  return fallback;
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -68,23 +95,23 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
 
   const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
+  const data = parseApiPayload(text);
 
   if (response.status === 401) {
     clearAuthSession();
     if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
       window.location.assign('/login');
     }
-    const error = new ApiError(data?.message || 'Sessão expirada. Faça login novamente.');
-    error.code = data?.code;
+    const error = new ApiError(extractApiMessage(data, 'Sessão expirada. Faça login novamente.'));
+    error.code = data && typeof data === 'object' && 'code' in data && typeof data.code === 'string' ? data.code : undefined;
     error.status = response.status;
     error.data = data;
     throw error;
   }
 
   if (!response.ok) {
-    const error = new ApiError(data?.message || 'Erro inesperado na API.');
-    error.code = data?.code;
+    const error = new ApiError(extractApiMessage(data, `Erro ${response.status} ao acessar ${path}.`));
+    error.code = data && typeof data === 'object' && 'code' in data && typeof data.code === 'string' ? data.code : undefined;
     error.status = response.status;
     error.data = data;
     throw error;
@@ -237,110 +264,124 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  getCampaignOpportunities: (filters: Record<string, string | number | undefined | null> = {}) =>
-    request<{
-      coeficiente: number | null;
-      prazo: number | null;
-      total: number;
-      oportunidades: CampaignOpportunity[];
-      resumo: CampaignOpportunitySummary;
-      grupos: Array<{ grupo: string; total: number }>;
-    }>(`/api/campanhas/oportunidades${buildQuery(filters)}`),
+  getCampaignCoefficientToday: () => request<CampaignCoefficient>('/api/coeficiente/hoje'),
   getBankCoefficientsToday: () =>
-    request<{ data: string; ativos: number; aguardando: number; bancos: BankCoefficient[] }>('/api/campanhas/coeficientes/bancos/hoje'),
+    request<{ cadastrado: boolean; data: string; total: number; ativos: number; aguardando: number; bancos: BankCoefficient[] }>(
+      '/api/coeficiente/bancos/hoje'
+    ),
   saveBankCoefficient: (payload: {
     convenio: string;
     banco: string;
     banco_label?: string;
-    produto: string;
+    produto?: string;
     coeficiente: number;
     taxa?: number | null;
     prazo: number;
     primeiro_vencimento_dias?: number | null;
     status?: string;
   }) =>
-    request<{ data: string; ativos: number; aguardando: number; bancos: BankCoefficient[] }>('/api/campanhas/coeficientes/bancos/hoje', {
+    request<{ cadastrado: boolean; data: string; total: number; ativos: number; aguardando: number; bancos: BankCoefficient[] }>(
+      '/api/coeficiente/bancos',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }
+    ),
+  saveCampaignCoefficient: (payload: { coeficiente: number; prazo: number }) =>
+    request<CampaignCoefficient>('/api/coeficiente', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+  getCampaignOpportunities: (filters: Record<string, string | number | undefined | null> = {}) =>
+    request<{
+      coeficiente: number | null;
+      prazo: number | null;
+      total: number;
+      oportunidades: CampaignOpportunity[];
+      resumo?: CampaignOpportunitySummary;
+      grupos?: Array<{ grupo: string; total: number }>;
+    }>(
+      `/api/campanhas/oportunidades${buildQuery(filters)}`
+    ),
+  getReWhatsSessions: () => request<{ sessoes: ReWhatsSession[]; configured: boolean }>('/api/rewhats/sessoes'),
   getDispatchCampaigns: () => request<{ campanhas: DispatchCampaign[] }>('/api/campanhas'),
-  createDispatchCampaign: (payload: Record<string, unknown>) =>
-    request<{ sucesso: boolean; campanha_id: string; campanha: DispatchCampaign; clientes: DispatchCampaignClient[] }>('/api/campanhas', {
+  createDispatchCampaign: (payload: {
+    nome: string;
+    convenio?: string;
+    sessao_rewhats?: string;
+    banco?: string;
+    produto?: string;
+    faixa_valor?: string;
+    mensagem_inicial?: string;
+    followup_mensagem?: string;
+    followup_intervalo_horas?: number;
+    janela_inicio?: string;
+    janela_fim?: string;
+    intervalo_envios_segundos?: number;
+    correntista_santander?: boolean;
+    conta_diferente_holerite?: boolean;
+    clientes: CampaignOpportunity[];
+  }) =>
+    request<{ sucesso: boolean; campanha_id: string; campanha: DispatchCampaign; clientes: DispatchCampaignClient[]; contadores: Record<string, number> }>('/api/campanhas', {
       method: 'POST',
       body: JSON.stringify(payload),
+    }),
+  startDispatchCampaign: (id: string) =>
+    request<{ sucesso: boolean; total_pendentes: number; campanha: DispatchCampaign }>(`/api/campanhas/${id}/disparar`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+  runCampaignDryRun: (id: string) =>
+    request<{ campanha: DispatchCampaign; dry_run: unknown; resultado: unknown }>(`/api/campanhas/${id}/dry-run`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+  getCampaignDryRuns: (id: string) => request<{ dry_runs: unknown[] }>(`/api/campanhas/${id}/dry-runs`),
+  updateCampaignStatus: (id: string, status: string) =>
+    request<{ campanha: DispatchCampaign; clientes: DispatchCampaignClient[]; contadores: Record<string, number> }>(`/api/campanhas/${id}/status`, {
+      method: 'PUT',
+      body: JSON.stringify({ status }),
     }),
   getDispatchCampaign: (id: string) =>
     request<{ campanha: DispatchCampaign; clientes: DispatchCampaignClient[]; contadores: Record<string, number> }>(`/api/campanhas/${id}`),
-  getDispatchCampaignPreview: (id: string) =>
+  getCampaignDocuments: (campanhaId: string) =>
+    request<{ resumo: { total: number; completos: number; pendentes: number; isentos: number }; checklists: DocumentChecklist[] }>(
+      `/api/documentos/campanha/${campanhaId}`
+    ),
+  getClientDocumentChecklist: (campanhaId: string, telefone: string) =>
+    request<{ checklist: DocumentChecklist; documentos: ClientDocument[]; pendentes: Array<{ tipo: string; label: string }>; completo: boolean }>(
+      `/api/documentos/checklist/${encodeURIComponent(campanhaId)}/${encodeURIComponent(telefone)}`
+    ),
+  markDigitalAccount: (payload: { campanha_id: string; telefone: string }) =>
+    request<{ ok: boolean; checklist: DocumentChecklist; documentos: ClientDocument[]; pendentes: Array<{ tipo: string; label: string }>; completo: boolean }>('/api/documentos/conta-digital', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  validateClientDocument: (id: number, payload: { status: 'validado' | 'rejeitado' | 'recebido'; observacao?: string }) =>
+    request<{ ok: boolean; document: ClientDocument }>(`/api/documentos/${id}/validar`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  getDocumentAiStatus: () =>
     request<{
-      campanha: DispatchCampaign;
-      total: number;
-      previa: Array<DispatchCampaignClient & { mensagem_montada: string; chip_seria_usado: string; cpf?: string }>;
-      resumo: Record<string, unknown>;
-    }>(`/api/campanhas/${id}/previa`),
-  runDispatchCampaignDryRun: (id: string) =>
-    request<{
-      dry_run: boolean;
-      nenhum_envio_real: boolean;
-      seriam_enviados: Array<Record<string, unknown>>;
-      excluidos: Array<Record<string, unknown>>;
-      totais: Record<string, unknown>;
-      campanha: DispatchCampaign;
-    }>(`/api/campanhas/${id}/dry-run`, {
+      enabled: boolean;
+      configured: boolean;
+      project_id_configured: boolean;
+      location: string;
+      processor_id_configured: boolean;
+      credentials_configured: boolean;
+    }>('/api/documentos/document-ai/status'),
+  processClientDocumentAi: (id: number) =>
+    request<{ ok: boolean; document: ClientDocument; result?: { text?: string; entities?: unknown[]; pages?: number } }>(`/api/documentos/${id}/processar-ai`, {
       method: 'POST',
       body: JSON.stringify({}),
     }),
-  approveDispatchCampaign: (id: string) =>
-    request<{ sucesso: boolean; status: string; campanha: DispatchCampaign }>(`/api/campanhas/${id}/aprovar`, {
-      method: 'POST',
-      body: JSON.stringify({}),
-    }),
-  startDispatchCampaign: (id: string, confirmar = false) =>
-    request<{ sucesso: boolean; campanha: DispatchCampaign }>(`/api/campanhas/${id}/disparar`, {
-      method: 'POST',
-      body: JSON.stringify({ confirmar }),
-    }),
+  openClientDocument: (id: number) => requestBlob(`/api/documentos/arquivo/${id}`),
   getDashboard: (filters: Record<string, string | number | undefined | null> = {}) =>
     request<DashboardData>(`/api/dashboard${buildQuery(filters)}`),
   getSettings: () => request<{ settings: Settings }>('/api/settings'),
   getRibeiraoConfig: () => request<{ config: RibeiraoConfigStatus }>('/api/ribeirao/config'),
   getRibeiraoDiagnostics: () => request<{ diagnostics: RibeiraoDiagnostics }>('/api/ribeirao/diagnostics'),
-  getAutomationRegistry: () => request<AutomationRegistrySummary>('/api/automation-registry'),
-  revalidateAutomationFlow: (convenioId: string, note = '') =>
-    request<{ ok: boolean; message: string }>('/api/automation-registry/' + encodeURIComponent(convenioId) + '/revalidate', {
-      method: 'POST',
-      body: JSON.stringify({ note }),
-    }),
-  getCredentialPortals: () => request<{ portals: CredentialPortalConfig[] }>('/api/credentials/portals'),
-  getCredentials: () => request<{ credentials: AverbadorCredential[] }>('/api/credentials'),
-  getCredential: (portalId: string) => request<{ credential: AverbadorCredential }>(`/api/credentials/${portalId}`),
-  saveCredential: (payload: { portal_id: string; portal_url?: string; login?: string; password?: string }) =>
-    request<{ credential: AverbadorCredential }>('/api/credentials', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  updateCredential: (id: number, payload: { portal_url?: string; login?: string; password?: string }) =>
-    request<{ credential: AverbadorCredential }>(`/api/credentials/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    }),
-  testCredential: (id: number) =>
-    request<{ credential: AverbadorCredential }>(`/api/credentials/${id}/test`, {
-      method: 'POST',
-      body: JSON.stringify({}),
-    }),
-  startAssistedLogin: (id: number) =>
-    request<{ credential: AverbadorCredential; portal_url: string; message: string }>(`/api/credentials/${id}/assisted-login/start`, {
-      method: 'POST',
-      body: JSON.stringify({}),
-    }),
-  confirmAssistedLogin: (id: number) =>
-    request<{ credential: AverbadorCredential }>(`/api/credentials/${id}/assisted-login/confirm`, {
-      method: 'POST',
-      body: JSON.stringify({}),
-    }),
-  getCredentialLogs: (filters: Record<string, string | number | undefined | null> = {}) =>
-    request<{ rows: CredentialConnectionLog[] }>(`/api/credentials/logs${buildQuery(filters)}`),
   getBases: (filters: Record<string, string | number | undefined | null> = {}) =>
     request<{ bases: Base[] }>(`/api/bases${buildQuery(filters)}`),
   renameBase: (id: number, nome_base: string) =>
@@ -505,6 +546,60 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+  getCredentialPortals: () => request<{ portals: CredentialPortalConfig[] }>('/api/credentials/portals'),
+  getMarginPortals: () => request<{ portals: MarginPortalConfig[] }>('/api/margin-portals'),
+  getCredentials: () => request<{ credentials: AverbadorCredential[] }>('/api/credentials'),
+  getCredentialLogs: (filters: Record<string, string | number | undefined | null> = {}) =>
+    request<{ rows: CredentialConnectionLog[] }>(`/api/credentials/logs${buildQuery(filters)}`),
+  saveCredential: (payload: { portal_id: string; portal_url?: string; api_url?: string; login: string; password?: string }) =>
+    request<{ credential: AverbadorCredential }>('/api/credentials', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updateCredential: (id: number | string, payload: { portal_id?: string; portal_url?: string; api_url?: string; login?: string; password?: string }) =>
+    request<{ credential: AverbadorCredential }>(`/api/credentials/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  testCredential: (id: number | string) =>
+    request<{ credential: AverbadorCredential }>(`/api/credentials/${id}/test`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+  startAssistedLogin: (id: number | string) =>
+    request<{ credential: AverbadorCredential; portal_url?: string; message?: string }>(`/api/credentials/${id}/assisted-login`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+  confirmAssistedLogin: (id: number | string) =>
+    request<{ credential: AverbadorCredential }>(`/api/credentials/${id}/confirm-assisted-login`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+  querySantanaCpf: (cpf: string, portalId = 'prefeitura_santana_parnaiba') =>
+    request<{
+      success: boolean;
+      result: {
+        status: string;
+        cpf: string;
+        servidores: Array<{ uuid_servidor: string; data: Record<string, unknown> }>;
+        margins: Array<{ key: string; path: string; value: number }>;
+      };
+    }>('/api/santana/query', {
+      method: 'POST',
+      body: JSON.stringify({ cpf, portal_id: portalId }),
+    }),
+  startSantanaBatch: (payload: { cpfs: string[]; source_file_name?: string; portal_id?: string }) =>
+    request<{ message: string; batch: RibeiraoBatchRecord }>('/api/santana/batch', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  getSantanaBatchHistory: (portalId = '') =>
+    request<{ batches: RibeiraoBatchRecord[] }>(`/api/santana/batch/history${portalId ? `?portal_id=${encodeURIComponent(portalId)}` : ''}`),
+  getSantanaBatchStatus: (id: number | string) =>
+    request<{ batch: RibeiraoBatchRecord }>(`/api/santana/batch/${id}/status`),
+  exportSantanaBatch: (id: number | string) =>
+    requestBlob(`/api/santana/batch/${id}/export`),
   getPhoneLookupHistory: (filters: Record<string, string | number | undefined | null> = {}) =>
     request<{ rows: PhoneLookupHistoryItem[] }>(`/api/phone-lookup/history${buildQuery(filters)}`),
   getPhoneLookupConsultation: (id: number | string) =>
@@ -543,6 +638,7 @@ export const api = {
       observacao?: string;
       campaign_id?: number | string | null;
       campaign_name?: string;
+      auto_margin?: boolean | string;
     } = {}
   ) => {
     const formData = new FormData();
@@ -553,6 +649,7 @@ export const api = {
     if (baseInput.convenio) formData.append('convenio', baseInput.convenio);
     if (baseInput.estado) formData.append('estado', baseInput.estado);
     if (baseInput.cidade) formData.append('cidade', baseInput.cidade);
+    if (baseInput.auto_margin !== undefined) formData.append('auto_margin', String(baseInput.auto_margin));
     if (baseInput.notes) {
       formData.append('notes', baseInput.notes);
       formData.append('observacao', baseInput.notes);
@@ -568,7 +665,20 @@ export const api = {
     }
     return request<
       | { mode: 'preview'; file: { name: string; size: number; mime: string }; analysis: UploadAnalysis }
-      | { mode: 'import'; message: string; redirectTo: string; result: unknown }
+      | {
+          mode: 'import';
+          message: string;
+          redirectTo: string;
+          result: unknown;
+          automation?: {
+            status: string;
+            step?: string;
+            reason?: string;
+            portal_id?: string;
+            base_id?: number;
+            total_cpfs?: number;
+          };
+        }
     >('/api/upload', {
       method: 'POST',
       body: formData,
@@ -577,8 +687,9 @@ export const api = {
   getReports: (filters: Record<string, string | number | undefined | null> = {}) =>
     request<ReportResponse>(`/api/reports${buildQuery(filters)}`),
   startRibeiraoSession: (payload: {
-    login: string;
-    password: string;
+    login?: string;
+    password?: string;
+    portal_id?: string;
     timeout_seconds?: number;
     slow_mo?: number;
     user_id?: number;
@@ -590,10 +701,11 @@ export const api = {
   getRibeiraoSessionStatus: (id: number) =>
     request<{ session: RibeiraoSession }>(`/api/ribeirao/session/${id}/status`),
   queryRibeiraoCpf: (payload: {
-    session_id: number;
+    session_id?: number;
     cpf: string;
     login?: string;
     password?: string;
+    portal_id?: string;
     user_id?: number;
     client_id?: number | null;
     base_id?: number | null;
@@ -627,15 +739,18 @@ export const api = {
   },
   startRibeiraoBatch: (payload: {
     cpfs?: string[];
-    session_id: number;
-    portal_id?: string;
+    clients?: Array<{ cpf: string; cpf_display?: string; name?: string }>;
+    session_id?: number;
     login?: string;
     password?: string;
+    portal_id?: string;
     source_type?: RibeiraoBatchSourceType | 'upload' | 'base';
     source_file_name?: string;
     base_id?: number | string | null;
     delay_seconds_min?: number;
     delay_seconds_max?: number;
+    create_pipeline_base?: boolean;
+    auto_pipeline?: boolean;
   }) =>
     request<{ message: string; batch: RibeiraoBatchRecord }>('/api/ribeirao/batch/start', {
       method: 'POST',
@@ -653,70 +768,6 @@ export const api = {
     const blob = await requestBlob(`/api/ribeirao/batch/${id}/export`);
     return blob;
   },
-  getWhatsappStatus: () =>
-    request<{ config: WhatsappConfig | null; connected?: boolean; status?: string; message?: string; qrcode?: string; code?: string }>(
-      '/api/whatsapp/status'
-    ),
-  getWhatsappConfig: () => request<{ config: WhatsappConfig | null }>('/api/whatsapp/config'),
-  saveWhatsappConfig: (payload: Partial<WhatsappConfig> & { token?: string }) =>
-    request<{ config: WhatsappConfig }>('/api/whatsapp/config', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  connectWhatsapp: () => request<{ config: WhatsappConfig; connected?: boolean; status?: string; qrcode?: string }>('/api/whatsapp/connect', { method: 'POST', body: JSON.stringify({}) }),
-  reconnectWhatsapp: () => request<{ config: WhatsappConfig; connected?: boolean; status?: string; qrcode?: string }>('/api/whatsapp/reconnect', { method: 'POST', body: JSON.stringify({}) }),
-  getWhatsappQrcode: () => request<{ qrcode: string; status?: string }>('/api/whatsapp/qrcode'),
-  testWhatsapp: () => request<{ config: WhatsappConfig; connected?: boolean; status?: string; message?: string }>('/api/whatsapp/test', { method: 'POST', body: JSON.stringify({}) }),
-  sendWhatsapp: (payload: { client_id?: number | string | null; phone?: string; message: string; template_id?: number | string | null }) =>
-    request<{ message: WhatsappMessage; provider_result?: unknown }>('/api/whatsapp/send', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  sendWhatsappTemplate: (payload: { client_id?: number | string | null; phone?: string; template_id: number | string; variables?: Record<string, string> }) =>
-    request<{ message: WhatsappMessage; provider_result?: unknown }>('/api/whatsapp/send-template', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  getWhatsappMessages: (filters: Record<string, string | number | undefined | null> = {}) =>
-    request<{ rows: WhatsappMessage[] }>(`/api/whatsapp/messages${buildQuery(filters)}`),
-  getWhatsappTemplates: (filters: Record<string, string | number | undefined | null> = {}) =>
-    request<{ rows: WhatsappTemplate[] }>(`/api/whatsapp/templates${buildQuery(filters)}`),
-  saveWhatsappTemplate: (payload: Partial<WhatsappTemplate>) =>
-    request<{ template: WhatsappTemplate }>('/api/whatsapp/templates', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  updateWhatsappTemplate: (id: number | string, payload: Partial<WhatsappTemplate>) =>
-    request<{ template: WhatsappTemplate }>(`/api/whatsapp/templates/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    }),
-  getWhatsappFlows: (filters: Record<string, string | number | undefined | null> = {}) =>
-    request<{ rows: WhatsappFlow[] }>(`/api/whatsapp/flows${buildQuery(filters)}`),
-  saveWhatsappFlow: (payload: Partial<WhatsappFlow>) =>
-    request<{ flow: WhatsappFlow }>('/api/whatsapp/flows', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  updateWhatsappFlow: (id: number | string, payload: Partial<WhatsappFlow>) =>
-    request<{ flow: WhatsappFlow }>(`/api/whatsapp/flows/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    }),
-  startWhatsappFlow: (payload: { flow_id: number | string; client_id: number | string; phone?: string }) =>
-    request<{ flow: WhatsappFlow; execution: WhatsappFlowExecution; initial_message: string }>('/api/whatsapp/flows/start', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  stopWhatsappFlow: (payload: { execution_id?: number | string; client_id?: number | string; reason?: string }) =>
-    request<{ execution: WhatsappFlowExecution }>('/api/whatsapp/flows/stop', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  getWhatsappFlowExecutions: (filters: Record<string, string | number | undefined | null> = {}) =>
-    request<{ rows: WhatsappFlowExecution[] }>(`/api/whatsapp/flows/executions${buildQuery(filters)}`),
-  getWhatsappFlowLogs: (filters: Record<string, string | number | undefined | null> = {}) =>
-    request<{ rows: WhatsappFlowLog[] }>(`/api/whatsapp/flows/logs${buildQuery(filters)}`),
 };
 
 export { API_URL };

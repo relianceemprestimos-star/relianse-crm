@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import re
@@ -11,7 +12,9 @@ import unicodedata
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib import error as urllib_error
+from urllib import request as urllib_request
+from urllib.parse import urljoin, urlparse
 
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError, async_playwright
 
@@ -94,6 +97,54 @@ def _parse_bool(value: object, default: bool = True) -> bool:
     if text in {"0", "false", "no", "off"}:
         return False
     return default
+
+
+def _capsolver_api_key() -> str:
+    return (
+        os.getenv("CAPSOLVER_API_KEY")
+        or os.getenv("CAPSOLVE_API_KEY")
+        or os.getenv("CAPTCHA_SOLVER_API_KEY")
+        or ""
+    ).strip()
+
+
+def _capsolver_enabled() -> bool:
+    key = _capsolver_api_key()
+    if not key:
+        return False
+    return _parse_bool(
+        os.getenv("CAPSOLVER_ENABLED")
+        or os.getenv("CAPTCHA_SOLVER_ENABLED")
+        or os.getenv("CAPTCHA_ENGINE_ENABLED"),
+        True,
+    )
+
+
+def _capsolver_timeout_seconds() -> int:
+    try:
+        return max(30, min(240, int(os.getenv("CAPSOLVER_TIMEOUT_SECONDS") or "120")))
+    except Exception:
+        return 120
+
+
+def _post_json_sync(url: str, payload: dict, timeout_seconds: int = 30) -> dict:
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib_request.Request(
+        url,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib_request.urlopen(req, timeout=timeout_seconds) as response:
+            raw = response.read().decode("utf-8", errors="replace")
+            return json.loads(raw or "{}")
+    except urllib_error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            return json.loads(raw or "{}")
+        except Exception:
+            return {"errorId": exc.code, "errorDescription": raw or str(exc)}
 
 
 def _has_graphical_display() -> bool:
@@ -189,7 +240,31 @@ def _normalize_ribeirao_text(value: object) -> str:
     return re.sub(r"\s+", " ", text).strip().lower()
 
 
-def _convenio_target_terms() -> list[str]:
+def _normalize_portal_id(value: object) -> str:
+    text = _normalize_ribeirao_text(value).replace("-", "_").replace(" ", "_")
+    return re.sub(r"_+", "_", text).strip("_") or "prefeitura_ribeirao_preto"
+
+
+def _portal_id(connector: object | None = None, payload: dict | None = None) -> str:
+    if payload:
+        return _normalize_portal_id(payload.get("portal_id") or payload.get("portalId") or "")
+    return _normalize_portal_id(getattr(connector, "portal_id", "") if connector is not None else "")
+
+
+def _convenio_target_terms(portal_id: str = "prefeitura_ribeirao_preto") -> list[str]:
+    normalized_portal_id = _normalize_portal_id(portal_id)
+    if normalized_portal_id == "governo_sp":
+        configured_terms = [
+            os.getenv("GOV_SP_ORGAO"),
+            os.getenv("GOV_SP_CONVENIO"),
+            os.getenv("GOVSP_ORGAO"),
+            os.getenv("GOVSP_CONVENIO"),
+        ]
+        return [
+            _normalize_ribeirao_text(term)
+            for term in configured_terms
+            if str(term or "").strip()
+        ]
     return [
         _normalize_ribeirao_text("PREFEITURA RIBEIRAO PRETO SP - RIBEIRAO PRETO"),
         _normalize_ribeirao_text("PREFEITURA RIBEIRAO PRETO"),
@@ -197,6 +272,44 @@ def _convenio_target_terms() -> list[str]:
         _normalize_ribeirao_text("RIBEIRAO PRETO SP"),
         _normalize_ribeirao_text("PREFEITURA DE RIBEIRAO PRETO"),
     ]
+
+
+def _portal_selection_steps(portal_id: str = "prefeitura_ribeirao_preto") -> list[dict]:
+    normalized_portal_id = _normalize_portal_id(portal_id)
+    if normalized_portal_id == "governo_sp":
+        convenio_env = str(os.getenv("GOV_SP_ORGAO") or os.getenv("GOV_SP_CONVENIO") or os.getenv("GOVSP_ORGAO") or os.getenv("GOVSP_CONVENIO") or "").strip()
+        return [
+            {
+                "label": convenio_env or "Perfil disponivel do Governo de SP",
+                "terms": _convenio_target_terms(normalized_portal_id),
+                "not_found_message": "O login foi aceito, mas o sistema nao conseguiu acessar o perfil disponivel do Governo de Sao Paulo.",
+            },
+        ]
+    return [
+        {
+            "label": "Ribeirao Preto",
+            "terms": _convenio_target_terms(normalized_portal_id),
+            "not_found_message": "O login foi aceito, mas o convenio de Ribeirao Preto nao foi encontrado.",
+        }
+    ]
+
+
+def _consulta_margem_url(portal_url: str, consulta_url: str | None = None) -> str:
+    explicit_url = str(consulta_url or "").strip()
+    if explicit_url and "ConsultaMargem.aspx" in explicit_url:
+        return explicit_url
+    base_url = str(explicit_url or portal_url or "").strip()
+    parsed = urlparse(base_url)
+    if parsed.scheme and parsed.netloc:
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        if "ConsultaMargem.aspx" in base_url:
+            return base_url
+        if "Login.aspx" in base_url:
+            return base_url.replace("/Login.aspx", "/Margem/ConsultaMargem.aspx")
+        if "Inicial/Inicial.aspx" in base_url:
+            return base_url.replace("/Inicial/Inicial.aspx", "/Margem/ConsultaMargem.aspx")
+        return f"{origin}/Margem/ConsultaMargem.aspx"
+    return "https://saec.consiglog.com.br/Margem/ConsultaMargem.aspx"
 
 
 def _typed_login_error(code: str, message: str, stage: str | None = None) -> RibeiraoLoginError:
@@ -766,6 +879,645 @@ async def _capture_login_button_debug(connector: PortalSecundarioLegacyConnector
     }
 
 
+async def _extract_recaptcha_metadata(connector: PortalSecundarioLegacyConnector) -> dict:
+    script = """() => {
+      const pick = (value) => String(value || "").trim();
+      const fromSrc = (src) => {
+        try {
+          const url = new URL(String(src || ""), location.href);
+          const key = pick(url.searchParams.get("k") || url.searchParams.get("sitekey"));
+          if (!key) return null;
+          return {
+            siteKey: key,
+            pageUrl: location.href,
+            enterprise: /recaptcha\\/enterprise/i.test(url.pathname + url.hostname),
+            apiDomain: /recaptcha\\.net/i.test(url.hostname) ? "recaptcha.net" : "google.com",
+          };
+        } catch (_) {
+          return null;
+        }
+      };
+      for (const node of Array.from(document.querySelectorAll("[data-sitekey]"))) {
+        const key = pick(node.getAttribute("data-sitekey"));
+        if (key) {
+          return {
+            siteKey: key,
+            pageUrl: location.href,
+            enterprise: Boolean(node.closest("[data-enterprise='true']")),
+            apiDomain: "google.com",
+          };
+        }
+      }
+      for (const frame of Array.from(document.querySelectorAll("iframe[src*='recaptcha' i], iframe[src*='google.com/recaptcha' i], iframe[src*='recaptcha.net' i]"))) {
+        const found = fromSrc(frame.getAttribute("src"));
+        if (found) return found;
+      }
+      return { siteKey: "", pageUrl: location.href, enterprise: false, apiDomain: "google.com" };
+    }"""
+    candidates: list[dict] = []
+    try:
+        candidates.append(await connector.page.evaluate(script))
+    except Exception:
+        pass
+    try:
+        for frame in list(connector.page.frames)[1:]:
+            try:
+                candidates.append(await frame.evaluate(script))
+            except Exception:
+                continue
+    except Exception:
+        pass
+    for item in candidates:
+        if item and item.get("siteKey"):
+            return item
+    return candidates[0] if candidates else {"siteKey": "", "pageUrl": "", "enterprise": False, "apiDomain": "google.com"}
+
+
+async def _capsolver_solve_recaptcha(metadata: dict) -> str:
+    api_key = _capsolver_api_key()
+    site_key = str(metadata.get("siteKey") or "").strip()
+    website_url = str(metadata.get("pageUrl") or "").strip()
+    if not api_key or not site_key or not website_url:
+        return ""
+
+    task_type = (
+        "ReCaptchaV2EnterpriseTaskProxyLess"
+        if metadata.get("enterprise")
+        else "ReCaptchaV2TaskProxyLess"
+    )
+    task = {
+        "type": task_type,
+        "websiteURL": website_url,
+        "websiteKey": site_key,
+    }
+    if str(metadata.get("apiDomain") or "").lower() == "recaptcha.net":
+        task["apiDomain"] = "recaptcha.net"
+
+    create_payload = {"clientKey": api_key, "task": task}
+    create_result = await asyncio.to_thread(
+        _post_json_sync,
+        "https://api.capsolver.com/createTask",
+        create_payload,
+        30,
+    )
+    if create_result.get("errorId"):
+        print(
+            f"[CAPSOLVER] createTask falhou: {create_result.get('errorCode') or create_result.get('errorDescription') or 'erro'}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return ""
+    task_id = str(create_result.get("taskId") or "").strip()
+    if not task_id:
+        print("[CAPSOLVER] createTask sem taskId.", file=sys.stderr, flush=True)
+        return ""
+
+    deadline = asyncio.get_running_loop().time() + _capsolver_timeout_seconds()
+    while asyncio.get_running_loop().time() < deadline:
+        await asyncio.sleep(3)
+        result_payload = {"clientKey": api_key, "taskId": task_id}
+        result = await asyncio.to_thread(
+            _post_json_sync,
+            "https://api.capsolver.com/getTaskResult",
+            result_payload,
+            30,
+        )
+        if result.get("errorId"):
+            print(
+                f"[CAPSOLVER] getTaskResult falhou: {result.get('errorCode') or result.get('errorDescription') or 'erro'}",
+                file=sys.stderr,
+                flush=True,
+            )
+            return ""
+        if result.get("status") == "ready":
+            token = str((result.get("solution") or {}).get("gRecaptchaResponse") or "").strip()
+            if token:
+                return token
+            return ""
+    print("[CAPSOLVER] tempo limite aguardando token.", file=sys.stderr, flush=True)
+    return ""
+
+
+async def _capsolver_solve_image(image_base64: str, website_url: str = "") -> str:
+    api_key = _capsolver_api_key()
+    if not api_key or not image_base64:
+        return ""
+    payload = {
+        "clientKey": api_key,
+        "task": {
+            "type": "ImageToTextTask",
+            "websiteURL": website_url or "https://www.portaldoconsignado.com.br",
+            "module": "common",
+            "body": image_base64,
+        },
+    }
+    create_result = await asyncio.to_thread(_post_json_sync, "https://api.capsolver.com/createTask", payload, 45)
+    if create_result.get("errorId"):
+        print(
+            f"[CAPSOLVER] image createTask falhou: {create_result.get('errorCode') or create_result.get('errorDescription') or 'erro'}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return ""
+    immediate_text = str((create_result.get("solution") or {}).get("text") or create_result.get("text") or "").strip()
+    if immediate_text:
+        return immediate_text
+    task_id = create_result.get("taskId")
+    if not task_id:
+        print("[CAPSOLVER] image createTask sem taskId.", file=sys.stderr, flush=True)
+        return ""
+
+    deadline = asyncio.get_running_loop().time() + _capsolver_timeout_seconds()
+    while asyncio.get_running_loop().time() < deadline:
+        await asyncio.sleep(2)
+        result = await asyncio.to_thread(
+            _post_json_sync,
+            "https://api.capsolver.com/getTaskResult",
+            {"clientKey": api_key, "taskId": task_id},
+            45,
+        )
+        if result.get("errorId"):
+            print(
+                f"[CAPSOLVER] image getTaskResult falhou: {result.get('errorCode') or result.get('errorDescription') or 'erro'}",
+                file=sys.stderr,
+                flush=True,
+            )
+            return ""
+        if result.get("status") == "ready":
+            return str((result.get("solution") or {}).get("text") or result.get("text") or "").strip()
+    print("[CAPSOLVER] image tempo limite aguardando texto.", file=sys.stderr, flush=True)
+    return ""
+
+
+async def _solve_image_captcha_with_capsolver(connector: PortalSecundarioLegacyConnector, stage: str) -> bool:
+    if not _capsolver_enabled():
+        print("[CAPSOLVER] imagem desativado ou sem chave; mantendo validacao manual.", file=sys.stderr, flush=True)
+        return False
+    try:
+        image_locator = connector.page.locator("#cipCaptchaImg, img[alt='Captcha'], img[title='Captcha']").first
+        await image_locator.wait_for(state="visible", timeout=5000)
+        try:
+            image_bytes = await image_locator.screenshot(timeout=10000)
+        except Exception:
+            captcha_src = str(await image_locator.get_attribute("src") or "").strip()
+            if not captcha_src:
+                raise
+            captcha_url = urljoin(connector.page.url, captcha_src)
+            response = await connector.page.context.request.get(captcha_url, timeout=10000)
+            image_bytes = await response.body()
+        image_base64 = base64.b64encode(image_bytes).decode("ascii")
+    except Exception as exc:
+        print(f"[CAPSOLVER] imagem captcha nao encontrada stage={stage}: {exc}", file=sys.stderr, flush=True)
+        return False
+
+    print(f"[CAPSOLVER] resolvendo captcha de imagem stage={stage}", file=sys.stderr, flush=True)
+    text = await _capsolver_solve_image(image_base64, connector.page.url)
+    captcha_text = re.sub(r"[^A-Za-z0-9]", "", text or "").upper()
+    if not captcha_text:
+        print("[CAPSOLVER] captcha de imagem sem texto.", file=sys.stderr, flush=True)
+        return False
+    try:
+        await connector.page.locator("#captcha, input[name='captchaPanel:captcha'], input[title='Captcha']").first.fill(captcha_text, timeout=5000)
+        print("[CAPSOLVER] captcha de imagem preenchido.", file=sys.stderr, flush=True)
+        return True
+    except Exception as exc:
+        print(f"[CAPSOLVER] falha ao preencher captcha de imagem: {exc}", file=sys.stderr, flush=True)
+        return False
+
+
+def _gov_sp_server_login_url(login_url: str) -> str:
+    parsed = urlparse(str(login_url or "https://www.portaldoconsignado.com.br/home?2"))
+    if parsed.scheme and parsed.netloc:
+        return f"{parsed.scheme}://{parsed.netloc}/home?0"
+    return "https://www.portaldoconsignado.com.br/home?0"
+
+
+async def _goto_gov_sp_admin_login(connector: PortalSecundarioLegacyConnector, login_url: str, timeout_ms: int) -> None:
+    # O portal muda o painel por estado interno do Wicket; abrir /home?1 direto pode cair no login de servidor.
+    if (
+        (await connector.page.locator("#username, input[name='username']").count() and await connector.page.locator("#password, input[name='senha'], input[type='password']").count())
+        or (
+            await connector.page.locator("#txtCPF, input[name='cpf']").count()
+            and await connector.page.locator("#txtIdentificador, input[name='identificacao']").count()
+            and await connector.page.locator("#txtSenha, #password, input[name='senha'], input[type='password']").count()
+        )
+    ):
+        return
+    await connector.page.goto(_gov_sp_server_login_url(login_url), wait_until="domcontentloaded", timeout=timeout_ms)
+    await connector.page.wait_for_timeout(1200)
+    if (
+        (await connector.page.locator("#username, input[name='username']").count() and await connector.page.locator("#password, input[name='senha'], input[type='password']").count())
+        or (
+            await connector.page.locator("#txtCPF, input[name='cpf']").count()
+            and await connector.page.locator("#txtIdentificador, input[name='identificacao']").count()
+            and await connector.page.locator("#txtSenha, #password, input[name='senha'], input[type='password']").count()
+        )
+    ):
+        return
+    try:
+        await connector.page.get_by_text("Login Administrativo", exact=True).click(timeout=5000)
+    except Exception:
+        await connector.page.locator("span:has-text('Login Administrativo')").last.click(timeout=5000)
+    try:
+        await connector.page.locator("#username, input[name='username'], #txtCPF, input[name='cpf']").first.wait_for(state="visible", timeout=8000)
+        await connector.page.locator("#password, #txtSenha, input[name='senha'], input[type='password']").first.wait_for(state="visible", timeout=8000)
+    except Exception:
+        snapshot = await _capture_login_snapshot(connector)
+        print(
+            f"[LOGIN_FLOW] govsp admin_tab url: {snapshot.get('url') or ''} inputs={snapshot.get('inputCount') or 0} body={snapshot.get('bodySnippet') or ''}",
+            file=sys.stderr,
+            flush=True,
+        )
+        raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "O sistema nao encontrou o formulario de login do Governo de SP.", stage="govsp_admin_tab")
+
+
+async def _fill_gov_sp_admin_credentials(connector: PortalSecundarioLegacyConnector, login: str, password: str) -> dict:
+    login_digits = _clean_digits(login) or str(login or "").strip()
+    identificacao = str((getattr(connector, "credencial", {}) or {}).get("matricula") or (getattr(connector, "credencial", {}) or {}).get("identificacao") or "").strip()
+    result = await connector.page.evaluate(
+        """({ login, password, identificacao }) => {
+          const setValue = (selector, value) => {
+            const el = document.querySelector(selector);
+            if (!el) return false;
+            el.focus();
+            el.value = value;
+            for (const type of ["keydown", "input", "keyup", "change", "blur"]) {
+              el.dispatchEvent(new Event(type, { bubbles: true }));
+            }
+            return true;
+          };
+          return {
+            usernameSet: setValue("#username, input[name='username']", login),
+            cpfSet: setValue("#txtCPF, input[name='cpf']", login),
+            identificacaoSet: setValue("#txtIdentificador, input[name='identificacao']", identificacao),
+            passwordSet: setValue("#password, #txtSenha, input[name='senha'], input[type='password']", password),
+            usernameValue: document.querySelector("#username, input[name='username']")?.value || "",
+            cpfValue: document.querySelector("#txtCPF, input[name='cpf']")?.value || "",
+            identificacaoValue: document.querySelector("#txtIdentificador, input[name='identificacao']")?.value || "",
+            passwordLength: (document.querySelector("#password, #txtSenha, input[name='senha'], input[type='password']")?.value || "").length,
+          };
+        }""",
+        {"login": login_digits, "password": password, "identificacao": identificacao},
+    )
+    await connector.page.wait_for_timeout(300)
+    return result if isinstance(result, dict) else {}
+
+
+async def _click_gov_sp_profile_option(connector: PortalSecundarioLegacyConnector) -> bool:
+    terms = list(dict.fromkeys(_convenio_target_terms("governo_sp")))
+    try:
+        selected = await connector.page.evaluate(
+            """({ terms }) => {
+              const normalize = (value) => String(value || "")
+                .normalize("NFD")
+                .replace(/[\\u0300-\\u036f]/g, "")
+                .replace(/\\s+/g, " ")
+                .trim()
+                .toLowerCase();
+              const wanted = (terms || []).map(normalize).filter(Boolean);
+              const controls = Array.from(document.querySelectorAll("input[type='checkbox'], input[type='radio']"));
+              const choose = (el) => {
+                try {
+                  el.checked = true;
+                  el.setAttribute("checked", "checked");
+                  el.dispatchEvent(new Event("input", { bubbles: true }));
+                  el.dispatchEvent(new Event("change", { bubbles: true }));
+                  return true;
+                } catch (_) {
+                  return false;
+                }
+              };
+              if (!controls.length) return wanted.length === 0;
+              if (!wanted.length) return choose(controls[0]);
+              for (const el of controls) {
+                const row = el.closest("tr, li, div, label, section") || el.parentElement || el;
+                const text = normalize(`${row.innerText || row.textContent || el.value || ""}`);
+                if (wanted.some((term) => term && text.includes(term))) {
+                  return choose(el);
+                }
+              }
+              return false;
+            }""",
+            {"terms": terms},
+        )
+        if not selected:
+            print("[LOGIN_FLOW] govsp perfil configurado nao encontrado na tela.", file=sys.stderr, flush=True)
+            return False
+    except Exception:
+        return False
+    for selector in [
+        "#id16",
+        "input[name='acessar'][value='Acessar']",
+        "input.botaoAcessar[value='Acessar']",
+    ]:
+        try:
+            locator = connector.page.locator(selector).first
+            if await locator.count():
+                await locator.click(timeout=5000)
+                return True
+        except Exception:
+            pass
+    for selector in [
+        "a:has-text('Portal do Consignatário Financeiro')",
+        "button:has-text('Portal do Consignatário Financeiro')",
+        "input[value*='Portal do Consignatário Financeiro']",
+    ]:
+        try:
+            locator = connector.page.locator(selector).first
+            if await locator.count():
+                await locator.click(timeout=5000)
+                return True
+        except Exception:
+            pass
+    try:
+        direct_clicked = await connector.page.evaluate(
+            """() => {
+              const normalize = (value) => String(value || "")
+                .normalize("NFD")
+                .replace(/[\\u0300-\\u036f]/g, "")
+                .replace(/\\s+/g, " ")
+                .trim()
+                .toLowerCase();
+              const isVisible = (el) => {
+                if (!el) return false;
+                const style = getComputedStyle(el);
+                const rect = el.getBoundingClientRect();
+                return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
+              };
+              const matches = Array.from(document.querySelectorAll("a, button, input[type='button'], input[type='submit'], [onclick], span, div"))
+                .filter(isVisible)
+                .map((el) => ({ el, text: normalize(`${el.innerText || el.textContent || el.value || ""}`) }))
+                .filter((item) => item.text.includes("portal do consignatario financeiro"))
+                .sort((a, b) => a.text.length - b.text.length);
+              const target = matches[0]?.el || null;
+              if (!target) return false;
+              target.click();
+              return true;
+            }"""
+        )
+        if direct_clicked:
+            return True
+    except Exception:
+        pass
+    try:
+        return bool(
+            await connector.page.evaluate(
+                """({ terms }) => {
+                  const normalize = (value) => String(value || "")
+                    .normalize("NFD")
+                    .replace(/[\\u0300-\\u036f]/g, "")
+                    .replace(/\\s+/g, " ")
+                    .trim()
+                    .toLowerCase();
+                  const wanted = (terms || []).map(normalize).filter(Boolean);
+                  const isVisible = (el) => {
+                    if (!el) return false;
+                    const style = getComputedStyle(el);
+                    const rect = el.getBoundingClientRect();
+                    return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
+                  };
+                  const candidates = Array.from(document.querySelectorAll("tr, li, div, a, button, input[type='button'], input[type='submit'], [onclick]"))
+                    .filter(isVisible);
+                  const row = candidates.find((el) => {
+                    const text = normalize(`${el.innerText || el.textContent || el.value || ""}`);
+                    return wanted.some((term) => term && text.includes(term));
+                  });
+                  if (!row) return false;
+                  const action = Array.from(row.querySelectorAll("a, button, input[type='button'], input[type='submit'], [onclick]"))
+                    .filter(isVisible)
+                    .find((el) => normalize(`${el.innerText || el.textContent || el.value || ""}`).includes("portal do consignatario financeiro"))
+                    || Array.from(row.querySelectorAll("a, button, input[type='button'], input[type='submit'], [onclick]")).filter(isVisible).pop()
+                    || row;
+                  try {
+                    action.click();
+                    return true;
+                  } catch (_) {
+                    try {
+                      row.click();
+                      return true;
+                    } catch (_) {
+                      return false;
+                    }
+                  }
+                }""",
+                {"terms": terms},
+            )
+        )
+    except Exception:
+        return False
+
+
+async def _click_text_option(connector: PortalSecundarioLegacyConnector, text: str) -> bool:
+    try:
+        clicked = bool(
+            await connector.page.evaluate(
+                """(wantedText) => {
+                  const normalize = (value) => String(value || "")
+                    .normalize("NFD")
+                    .replace(/[\\u0300-\\u036f]/g, "")
+                    .replace(/\\s+/g, " ")
+                    .trim()
+                    .toLowerCase();
+                  const wanted = normalize(wantedText);
+                  const isVisible = (el) => {
+                    if (!el) return false;
+                    const style = getComputedStyle(el);
+                    const rect = el.getBoundingClientRect();
+                    return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
+                  };
+                  const candidates = Array.from(document.querySelectorAll("a, button, input[type='button'], input[type='submit'], [onclick], span, div, li"))
+                    .filter(isVisible)
+                    .map((el) => {
+                      const clickable = el.matches("a, button, input[type='button'], input[type='submit'], [onclick]")
+                        ? el
+                        : el.closest("a, button, input[type='button'], input[type='submit'], [onclick]");
+                      return { el, clickable, text: normalize(`${el.innerText || el.textContent || el.value || ""}`) };
+                    })
+                    .filter((item) => item.clickable && isVisible(item.clickable))
+                    .filter((item) => item.text === wanted || item.text.includes(wanted))
+                    .sort((a, b) => a.text.length - b.text.length);
+                  const target = candidates[0]?.clickable || null;
+                  if (!target) return false;
+                  target.click();
+                  return true;
+                }""",
+                text,
+            )
+        )
+        if clicked:
+            return True
+    except Exception:
+        pass
+    try:
+        await connector.page.get_by_text(text, exact=True).first.click(timeout=5000)
+        return True
+    except Exception:
+        return False
+
+
+async def _find_gov_sp_consulta_margem_href(connector: PortalSecundarioLegacyConnector) -> str:
+    try:
+        href = await connector.page.evaluate(
+            """() => {
+              const normalize = (value) => String(value || "")
+                .normalize("NFD")
+                .replace(/[\\u0300-\\u036f]/g, "")
+                .replace(/\\s+/g, " ")
+                .trim()
+                .toLowerCase();
+              const anchors = Array.from(document.querySelectorAll("a[href]"));
+              const direct = anchors.find((el) => normalize(el.textContent || el.innerText || "").includes("consulta de margem")
+                && String(el.getAttribute("href") || "").includes("pesquisarMargem"));
+              if (direct) return direct.getAttribute("href") || "";
+              const byHref = anchors.find((el) => String(el.getAttribute("href") || "").includes("pesquisarMargem"));
+              return byHref ? byHref.getAttribute("href") || "" : "";
+            }"""
+        )
+        return str(href or "").strip()
+    except Exception:
+        return ""
+
+
+async def _open_gov_sp_consulta_margem(connector: PortalSecundarioLegacyConnector, timeout_ms: int) -> bool:
+    for step in range(1, 5):
+        try:
+            if await connector._wait_any(connector.settings.pdc_selector_cpf_input, 1500):
+                return True
+        except Exception:
+            pass
+
+        href = await _find_gov_sp_consulta_margem_href(connector)
+        if href:
+            target_url = urljoin(connector.page.url, href)
+            print(f"[LOGIN_FLOW] govsp abrindo rota Consulta de Margem: {_safe_host(target_url)}{urlparse(target_url).path}", file=sys.stderr, flush=True)
+            try:
+                await connector.page.goto(target_url, wait_until="domcontentloaded", timeout=timeout_ms)
+                await connector.page.wait_for_timeout(1200)
+                if await connector._wait_any(connector.settings.pdc_selector_cpf_input, 5000):
+                    return True
+            except Exception:
+                pass
+
+        clicked = await _click_text_option(connector, "Consulta de Margem")
+        print(f"[LOGIN_FLOW] govsp clique Consulta de Margem etapa {step}: {str(clicked).lower()}", file=sys.stderr, flush=True)
+        if not clicked:
+            return False
+        await connector.page.wait_for_timeout(1800)
+    try:
+        return bool(await connector._wait_any(connector.settings.pdc_selector_cpf_input, 3000))
+    except Exception:
+        return False
+
+
+async def _inject_recaptcha_token(connector: PortalSecundarioLegacyConnector, token: str) -> bool:
+    if not token:
+        return False
+    script = """(token) => {
+      const setValue = (el) => {
+        if (!el) return false;
+        el.value = token;
+        el.innerHTML = token;
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+        return true;
+      };
+      const ensureTextarea = () => {
+        let el = document.querySelector("textarea[name='g-recaptcha-response'], #g-recaptcha-response");
+        if (!el) {
+          el = document.createElement("textarea");
+          el.name = "g-recaptcha-response";
+          el.id = "g-recaptcha-response";
+          el.style.display = "none";
+          (document.querySelector("form") || document.body || document.documentElement).appendChild(el);
+        }
+        return el;
+      };
+      let changed = setValue(ensureTextarea());
+      for (const el of Array.from(document.querySelectorAll("textarea[name='g-recaptcha-response'], textarea[id*='g-recaptcha-response']"))) {
+        changed = setValue(el) || changed;
+      }
+      const seen = new Set();
+      const callbacks = [];
+      const walk = (obj) => {
+        if (!obj || typeof obj !== "object" || seen.has(obj)) return;
+        seen.add(obj);
+        for (const key of Object.keys(obj)) {
+          let value;
+          try { value = obj[key]; } catch (_) { continue; }
+          if (key === "callback" && typeof value === "function") callbacks.push(value);
+          else if (value && typeof value === "object") walk(value);
+        }
+      };
+      try { walk(window.___grecaptcha_cfg); } catch (_) {}
+      for (const callback of callbacks) {
+        try { callback(token); changed = true; } catch (_) {}
+      }
+      return changed;
+    }"""
+    injected = False
+    try:
+        injected = bool(await connector.page.evaluate(script, token)) or injected
+    except Exception:
+        pass
+    try:
+        for frame in list(connector.page.frames)[1:]:
+            try:
+                injected = bool(await frame.evaluate(script, token)) or injected
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return injected
+
+
+async def _solve_recaptcha_with_capsolver(connector: PortalSecundarioLegacyConnector, stage: str) -> bool:
+    if getattr(connector, "_capsolver_token_injected", False):
+        return True
+    if not _capsolver_enabled():
+        print("[CAPSOLVER] desativado ou sem chave; mantendo validacao manual.", file=sys.stderr, flush=True)
+        return False
+    metadata = await _extract_recaptcha_metadata(connector)
+    if not metadata.get("siteKey"):
+        print("[CAPSOLVER] sitekey do reCAPTCHA nao encontrada.", file=sys.stderr, flush=True)
+        return False
+    print(
+        f"[CAPSOLVER] resolvendo reCAPTCHA stage={stage} enterprise={bool(metadata.get('enterprise'))}",
+        file=sys.stderr,
+        flush=True,
+    )
+    token = await _capsolver_solve_recaptcha(metadata)
+    if not token:
+        return False
+    injected = await _inject_recaptcha_token(connector, token)
+    if injected:
+        setattr(connector, "_capsolver_token_injected", True)
+        print("[CAPSOLVER] token injetado no portal.", file=sys.stderr, flush=True)
+        await connector.page.wait_for_timeout(800)
+        return True
+    print("[CAPSOLVER] token recebido, mas nao foi possivel injetar no portal.", file=sys.stderr, flush=True)
+    return False
+
+
+async def _fill_password_if_visible(connector: PortalSecundarioLegacyConnector, password: str) -> bool:
+    if not password:
+        return False
+    try:
+        if await connector._fill_login_password(password):
+            return True
+    except Exception:
+        pass
+    for scope in _login_scopes(connector):
+        for selector in ["#txtSenha", "input[name='txtSenha']", "input[type='password']", "input[id*='Senha']", "input[name*='Senha']", "input[id*='senha']", "input[name*='senha']"]:
+            try:
+                locator = scope.locator(selector).first
+                await locator.wait_for(state="visible", timeout=1200)
+                await locator.fill(password, timeout=3000)
+                return True
+            except Exception:
+                continue
+    return False
+
+
 async def find_login_elements(connector: PortalSecundarioLegacyConnector) -> dict:
     return await _capture_login_button_debug(connector)
 
@@ -835,9 +1587,26 @@ async def _click_login_initial_button(connector: PortalSecundarioLegacyConnector
             locator = scope.locator(selector).first
             await locator.wait_for(state='visible', timeout=timeout_ms)
             if method == 'js':
-                await locator.evaluate("(el) => el.click()")
+                await locator.evaluate(
+                    """(el) => {
+                        const fire = (type) => el.dispatchEvent(new MouseEvent(type, {
+                            bubbles: true,
+                            cancelable: true,
+                            view: window,
+                        }));
+                        fire('mousedown');
+                        fire('mouseup');
+                        fire('click');
+                        if (typeof el.click === 'function') {
+                            el.click();
+                        }
+                    }"""
+                )
             else:
-                await locator.click(timeout=timeout_ms)
+                try:
+                    await locator.click(timeout=timeout_ms, force=True, no_wait_after=True)
+                except TypeError:
+                    await locator.click(timeout=timeout_ms, force=True)
             return True
         except Exception:
             return False
@@ -847,8 +1616,17 @@ async def _click_login_initial_button(connector: PortalSecundarioLegacyConnector
             return bool(
                 await scope.evaluate(
                     """() => {
-                        const form = document.querySelector('form');
+                        const button = document.querySelector('#Entrar, #btnEntrar, #btnProxima, input[name="Entrar"], input[value="Próxima"], input[value="Proxima"]');
+                        const form = button?.form || document.querySelector('form');
+                        if (button && form && typeof form.requestSubmit === 'function') {
+                            form.requestSubmit(button);
+                            return true;
+                        }
                         if (form) {
+                            if (button && typeof button.click === 'function') {
+                                button.click();
+                                return true;
+                            }
                             form.submit();
                             return true;
                         }
@@ -864,6 +1642,11 @@ async def _click_login_initial_button(connector: PortalSecundarioLegacyConnector
             return bool(
                 await scope.evaluate(
                     """() => {
+                        const button = document.querySelector('#Entrar, #btnEntrar, #btnProxima, input[name="Entrar"], input[value="Próxima"], input[value="Proxima"]');
+                        if (button && typeof button.click === 'function') {
+                            button.click();
+                            return true;
+                        }
                         if (typeof __doPostBack === 'function') {
                             __doPostBack('Entrar', '');
                             return true;
@@ -874,6 +1657,50 @@ async def _click_login_initial_button(connector: PortalSecundarioLegacyConnector
             )
         except Exception:
             return False
+
+    async def _click_by_normalized_text(scope) -> tuple[bool, dict]:
+        try:
+            result = await scope.evaluate(
+                """() => {
+                    const normalize = (value) => String(value || '')
+                        .normalize('NFD')
+                        .replace(/[\\u0300-\\u036f]/g, '')
+                        .replace(/\\s+/g, ' ')
+                        .trim()
+                        .toLowerCase();
+                    const candidates = Array.from(document.querySelectorAll('button,input[type="button"],input[type="submit"],a,[role="button"]'));
+                    for (const el of candidates) {
+                        const text = normalize([
+                            el.innerText,
+                            el.textContent,
+                            el.value,
+                            el.getAttribute('aria-label'),
+                            el.getAttribute('title'),
+                            el.id,
+                            el.name,
+                        ].filter(Boolean).join(' '));
+                        if (!text) continue;
+                        if (['proxima', 'entrar', 'acessar', 'login', 'continuar'].some((token) => text.includes(token))) {
+                            el.click();
+                            return {
+                                clicked: true,
+                                tag: el.tagName,
+                                id: el.id || '',
+                                name: el.getAttribute('name') || '',
+                                type: el.getAttribute('type') || '',
+                                value: el.getAttribute('value') || '',
+                                textContent: el.textContent || '',
+                                className: el.className || '',
+                                onclick: String(el.getAttribute('onclick') || ''),
+                            };
+                        }
+                    }
+                    return { clicked: false };
+                }"""
+            )
+            return bool((result or {}).get("clicked")), result or {}
+        except Exception:
+            return False, {}
 
     for selector in candidate_selectors:
         for scope_index, scope in scopes:
@@ -904,6 +1731,17 @@ async def _click_login_initial_button(connector: PortalSecundarioLegacyConnector
                 print(f"[LOGIN_FLOW] tentou click JS: true", file=sys.stderr, flush=True)
                 print(f"[LOGIN_FLOW] tentou Enter: false", file=sys.stderr, flush=True)
                 return True, selector, {**debug, "attempts": attempts, "chosenButton": chosen_button, "chosenSelector": chosen_selector, "chosenMethod": "js", "chosenButtonInfo": chosen_button_info}
+
+    for scope_index, scope in scopes:
+        ok_text, text_button_info = await _click_by_normalized_text(scope)
+        attempts.append({"selector": "normalized_text", "scope": scope_index, "method": "normalized_text", "ok": ok_text})
+        if ok_text:
+            scope_label = 'page' if scope_index == 0 else f'frame-{scope_index}'
+            print(f"[LOGIN_FLOW] botao clicado por texto normalizado ({scope_label})", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] tentou click normal: false", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] tentou click JS: true", file=sys.stderr, flush=True)
+            print(f"[LOGIN_FLOW] tentou Enter: false", file=sys.stderr, flush=True)
+            return True, 'normalized_text', {**debug, "attempts": attempts, "chosenButton": 'normalized_text', "chosenSelector": 'normalized_text', "chosenMethod": "normalized_text", "chosenButtonInfo": text_button_info}
 
     for scope_index, scope in scopes:
         ok_postback = await _do_postback(scope)
@@ -1243,8 +2081,8 @@ async def _capture_second_stage_login_debug(connector: PortalSecundarioLegacyCon
     return aggregate
 
 
-async def _capture_convenio_selection_debug(connector: PortalSecundarioLegacyConnector) -> dict:
-    target_terms = _convenio_target_terms()
+async def _capture_convenio_selection_debug(connector: PortalSecundarioLegacyConnector, target_terms: list[str] | None = None) -> dict:
+    target_terms = target_terms or _convenio_target_terms(_portal_id(connector))
     aggregate = {
         "selectionDetected": False,
         "url": "",
@@ -1451,7 +2289,7 @@ async def _capture_convenio_selection_debug(connector: PortalSecundarioLegacyCon
                         ? selectedRow.actionCandidates[0]
                         : null;
                       return {
-                        selectionDetected: /selecione o convenio|selecione o convênio|convenio sigla acao|convênio sigla ação/i.test(String(root.body?.innerText || root.body?.textContent || "")) || /loginselecao\\.aspx/i.test(String(location.href || "")),
+                        selectionDetected: /selecione o convenio|selecione o convênio|convenio sigla acao|convênio sigla ação|selecao de perfil|seleção de perfil|sua conta esta associada a mais de um perfil|sua conta está associada a mais de um perfil/i.test(String(root.body?.innerText || root.body?.textContent || "")) || /loginselecao\\.aspx|selecaoperfil/i.test(String(location.href || "")),
                         url: String(location.href || ""),
                         title: String(document.title || ""),
                         bodySnippet: String(root.body?.innerText || root.body?.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 500),
@@ -1537,6 +2375,7 @@ async def _click_convenio_action(
     connector: PortalSecundarioLegacyConnector,
     selection_debug: dict,
     timeout_ms: int,
+    target_terms: list[str] | None = None,
 ) -> tuple[bool, str, dict]:
     selected_row = dict(selection_debug.get("selectedRow") or {})
     selected_action = dict(selection_debug.get("selectedAction") or {})
@@ -1635,7 +2474,7 @@ async def _click_convenio_action(
                         "actionText": action_text,
                         "postbackTarget": postback_target,
                         "postbackArg": postback_arg,
-                        "targetTerms": _convenio_target_terms(),
+                        "targetTerms": target_terms or _convenio_target_terms(_portal_id(connector)),
                     },
                 )
             )
@@ -1701,300 +2540,115 @@ async def _handle_convenio_selection(
     timeout_ms: int,
     snapshot: dict,
 ) -> tuple[dict, dict, bool]:
-    selection_debug = await _capture_convenio_selection_debug(connector)
-    if not selection_debug.get("selectionDetected"):
-        return snapshot, selection_debug, False
+    steps = _portal_selection_steps(_portal_id(connector))
+    post_snapshot = snapshot
+    last_debug: dict = {}
 
-    print(f"[LOGIN_FLOW] selecao_convenio_detectada: true", file=sys.stderr, flush=True)
-    print(f"[LOGIN_FLOW] url selecao convenio: {selection_debug.get('url') or snapshot.get('url') or ''}", file=sys.stderr, flush=True)
-    print(f"[LOGIN_FLOW] body_text_sample selecao convenio: {selection_debug.get('bodySnippet') or snapshot.get('bodySnippet') or ''}", file=sys.stderr, flush=True)
-    print(f"[LOGIN_FLOW] inputs selecao convenio: {json.dumps(selection_debug.get('inputs') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
-    print(f"[LOGIN_FLOW] buttons selecao convenio: {json.dumps(selection_debug.get('buttons') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
-    print(f"[LOGIN_FLOW] links selecao convenio: {json.dumps(selection_debug.get('links') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
-    print(f"[LOGIN_FLOW] tabelas selecao convenio: {json.dumps(selection_debug.get('tables') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
-    print(f"[LOGIN_FLOW] convenio alvo encontrado: {str(bool(selection_debug.get('targetFound'))).lower()}", file=sys.stderr, flush=True)
-    print(f"[LOGIN_FLOW] acao convenio encontrada: {str(bool(selection_debug.get('actionFound'))).lower()}", file=sys.stderr, flush=True)
+    for step_index, step in enumerate(steps):
+        target_terms = list(step.get("terms") or [])
+        selection_debug = await _capture_convenio_selection_debug(connector, target_terms)
+        last_debug = selection_debug
+        if not selection_debug.get("selectionDetected"):
+            return post_snapshot, selection_debug, step_index > 0
 
-    selected_row = dict(selection_debug.get("selectedRow") or {})
-    selected_action = dict(selection_debug.get("selectedAction") or {})
-    if not selection_debug.get("targetFound") and not selection_debug.get("singleConvenio"):
-        raise _typed_login_error(
-            "CONVENIO_NOT_FOUND",
-            "O login foi aceito, mas o convenio de Ribeirao Preto nao foi encontrado.",
-            stage="selecionar_convenio",
+        print(f"[LOGIN_FLOW] selecao_convenio_detectada: true", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] etapa selecao convenio: {step.get('label') or step_index + 1}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] url selecao convenio: {selection_debug.get('url') or post_snapshot.get('url') or ''}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] body_text_sample selecao convenio: {selection_debug.get('bodySnippet') or post_snapshot.get('bodySnippet') or ''}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] inputs selecao convenio: {json.dumps(selection_debug.get('inputs') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] buttons selecao convenio: {json.dumps(selection_debug.get('buttons') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] links selecao convenio: {json.dumps(selection_debug.get('links') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] tabelas selecao convenio: {json.dumps(selection_debug.get('tables') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] convenio alvo encontrado: {str(bool(selection_debug.get('targetFound'))).lower()}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] acao convenio encontrada: {str(bool(selection_debug.get('actionFound'))).lower()}", file=sys.stderr, flush=True)
+
+        selected_row = dict(selection_debug.get("selectedRow") or {})
+        selected_action = dict(selection_debug.get("selectedAction") or {})
+        if not selection_debug.get("targetFound") and not selection_debug.get("singleConvenio"):
+            raise _typed_login_error(
+                "CONVENIO_NOT_FOUND",
+                str(step.get("not_found_message") or "O login foi aceito, mas o convenio esperado nao foi encontrado."),
+                stage="selecionar_convenio",
+            )
+        if not selected_row:
+            raise _typed_login_error(
+                "CONVENIO_ACTION_NOT_FOUND",
+                "O login foi aceito, mas o sistema nao encontrou o botao de acesso do convenio.",
+                stage="selecionar_convenio",
+            )
+        if not selected_action or not selected_action.get("selectorHints") and not selected_action.get("domSelectors") and not selected_action.get("postbackTarget"):
+            raise _typed_login_error(
+                "CONVENIO_ACTION_NOT_FOUND",
+                "O login foi aceito, mas o sistema nao encontrou o botao de acesso do convenio.",
+                stage="selecionar_convenio",
+            )
+
+        print(f"[LOGIN_FLOW] convenio escolhido: {json.dumps(selected_row, ensure_ascii=False)}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] convenio action escolhido: {json.dumps(selected_action, ensure_ascii=False)}", file=sys.stderr, flush=True)
+        if selection_debug.get("singleConvenio"):
+            print("[LOGIN_FLOW] auto_select_first_convenio: true", file=sys.stderr, flush=True)
+
+        clicked, method_name, click_debug = await _click_convenio_action(connector, selection_debug, timeout_ms, target_terms)
+        print(f"[LOGIN_FLOW] convenio clique metodo final: {method_name or ''}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] convenio clique executado: {str(clicked).lower()}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] convenio click debug: {json.dumps(click_debug or {}, ensure_ascii=False)}", file=sys.stderr, flush=True)
+        if not clicked:
+            raise _typed_login_error(
+                "CONVENIO_SELECTION_FAILED",
+                "O login foi aceito, mas o portal nao avancou apos selecionar o convenio.",
+                stage="selecionar_convenio",
+            )
+
+        await connector.page.wait_for_timeout(2500)
+        post_snapshot = await _capture_login_snapshot(connector)
+        _log_login_snapshot(post_snapshot, login, password, f"apos-selecao-convenio-{step_index + 1}")
+        _log_login_flow(post_snapshot, f"apos-selecao-convenio-{step_index + 1}", login, password, click_executed=True, final_code="PENDING")
+        print(f"[LOGIN_FLOW] url depois selecao convenio: {post_snapshot.get('url') or ''}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] body_text_sample depois selecao convenio: {post_snapshot.get('bodySnippet') or ''}", file=sys.stderr, flush=True)
+        print(f"[LOGIN_FLOW] sucesso apos selecao convenio: {str(bool(post_snapshot.get('successFound') or post_snapshot.get('operacionalFound') or post_snapshot.get('consultaMargemFound'))).lower()}", file=sys.stderr, flush=True)
+
+        if post_snapshot.get("captchaFound"):
+            solved_captcha = await _solve_recaptcha_with_capsolver(connector, f"apos-selecao-convenio-{step_index + 1}")
+            if not solved_captcha:
+                raise _typed_login_error("CAPTCHA_REQUIRED", "O portal solicitou validacao manual.", stage="selecionar_convenio")
+            post_snapshot = await _capture_login_snapshot(connector)
+        if post_snapshot.get("certificateFound"):
+            raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticacao manual/certificado digital.", stage="selecionar_convenio")
+        if post_snapshot.get("errorText"):
+            code, typed_message = _classify_login_issue(None, post_snapshot.get("errorText") or "", post_snapshot)
+            if code == "CAPTCHA_REQUIRED":
+                solved_captcha = await _solve_recaptcha_with_capsolver(connector, f"erro-texto-convenio-{step_index + 1}")
+                if not solved_captcha:
+                    raise _typed_login_error(code, typed_message, stage="selecionar_convenio")
+                post_snapshot = await _capture_login_snapshot(connector)
+            if code in {"LOGIN_REJECTED", "MANUAL_AUTH_REQUIRED"}:
+                raise _typed_login_error(code, typed_message, stage="selecionar_convenio")
+
+        if post_snapshot.get("successFound") or post_snapshot.get("operacionalFound") or post_snapshot.get("consultaMargemFound"):
+            return post_snapshot, selection_debug, True
+
+        post_url = str(post_snapshot.get("url") or "").lower()
+        post_body = _normalize_ribeirao_text(post_snapshot.get("bodySnippet") or "")
+        still_selection = (
+            "loginselecao.aspx" in post_url
+            or "selecaoperfil" in post_url
+            or "selecione o convenio" in post_body
+            or "convênio sigla ação" in post_body
+            or "convenio sigla acao" in post_body
+            or "selecao de perfil" in post_body
+            or "sua conta esta associada a mais de um perfil" in post_body
         )
-    if not selected_row:
-        raise _typed_login_error(
-            "CONVENIO_ACTION_NOT_FOUND",
-            "O login foi aceito, mas o sistema nao encontrou o botao de acesso do convenio.",
-            stage="selecionar_convenio",
-        )
-    if not selected_action or not selected_action.get("selectorHints") and not selected_action.get("domSelectors") and not selected_action.get("postbackTarget"):
-        raise _typed_login_error(
-            "CONVENIO_ACTION_NOT_FOUND",
-            "O login foi aceito, mas o sistema nao encontrou o botao de acesso do convenio.",
-            stage="selecionar_convenio",
-        )
-
-    print(f"[LOGIN_FLOW] convenio escolhido: {json.dumps(selected_row, ensure_ascii=False)}", file=sys.stderr, flush=True)
-    print(f"[LOGIN_FLOW] convenio action escolhido: {json.dumps(selected_action, ensure_ascii=False)}", file=sys.stderr, flush=True)
-    if selection_debug.get("singleConvenio"):
-        print("[LOGIN_FLOW] auto_select_first_convenio: true", file=sys.stderr, flush=True)
-
-    clicked, method_name, click_debug = await _click_convenio_action(connector, selection_debug, timeout_ms)
-    print(f"[LOGIN_FLOW] convenio clique metodo final: {method_name or ''}", file=sys.stderr, flush=True)
-    print(f"[LOGIN_FLOW] convenio clique executado: {str(clicked).lower()}", file=sys.stderr, flush=True)
-    print(f"[LOGIN_FLOW] convenio click debug: {json.dumps(click_debug or {}, ensure_ascii=False)}", file=sys.stderr, flush=True)
-    if not clicked:
-        raise _typed_login_error(
-            "CONVENIO_SELECTION_FAILED",
-            "O login foi aceito, mas o portal nao avancou apos selecionar o convenio.",
-            stage="selecionar_convenio",
-        )
-
-    await connector.page.wait_for_timeout(2500)
-    post_snapshot = await _capture_login_snapshot(connector)
-    _log_login_snapshot(post_snapshot, login, password, "apos-selecao-convenio")
-    _log_login_flow(post_snapshot, "apos-selecao-convenio", login, password, click_executed=True, final_code="PENDING")
-    print(f"[LOGIN_FLOW] url depois selecao convenio: {post_snapshot.get('url') or ''}", file=sys.stderr, flush=True)
-    print(f"[LOGIN_FLOW] body_text_sample depois selecao convenio: {post_snapshot.get('bodySnippet') or ''}", file=sys.stderr, flush=True)
-    print(f"[LOGIN_FLOW] sucesso apos selecao convenio: {str(bool(post_snapshot.get('successFound') or post_snapshot.get('operacionalFound') or post_snapshot.get('consultaMargemFound'))).lower()}", file=sys.stderr, flush=True)
-
-    if post_snapshot.get("successFound") or post_snapshot.get("operacionalFound") or post_snapshot.get("consultaMargemFound"):
+        if still_selection and step_index < len(steps) - 1:
+            continue
+        if still_selection:
+            raise _typed_login_error(
+                "CONVENIO_SELECTION_FAILED",
+                "O login foi aceito, mas o portal nao avancou apos selecionar o convenio.",
+                stage="selecionar_convenio",
+            )
         return post_snapshot, selection_debug, True
 
-    post_url = str(post_snapshot.get("url") or "").lower()
-    post_body = _normalize_ribeirao_text(post_snapshot.get("bodySnippet") or "")
-    if "loginselecao.aspx" in post_url or "selecione o convenio" in post_body or "convênio sigla ação" in post_body:
-        raise _typed_login_error(
-            "CONVENIO_SELECTION_FAILED",
-            "O login foi aceito, mas o portal nao avancou apos selecionar o convenio.",
-            stage="selecionar_convenio",
-        )
-
-    if post_snapshot.get("captchaFound"):
-        raise _typed_login_error("CAPTCHA_REQUIRED", "O portal solicitou validacao manual.", stage="selecionar_convenio")
-    if post_snapshot.get("certificateFound"):
-        raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticacao manual/certificado digital.", stage="selecionar_convenio")
-    if post_snapshot.get("errorText"):
-        code, typed_message = _classify_login_issue(None, post_snapshot.get("errorText") or "", post_snapshot)
-        if code in {"LOGIN_REJECTED", "CAPTCHA_REQUIRED", "MANUAL_AUTH_REQUIRED"}:
-            raise _typed_login_error(code, typed_message, stage="selecionar_convenio")
-
-    raise _typed_login_error(
-        "CONVENIO_SELECTION_FAILED",
-        "O login foi aceito, mas o portal nao avancou apos selecionar o convenio.",
-        stage="selecionar_convenio",
-    )
-
-
-async def _click_user_already_logged_confirm(connector: PortalSecundarioLegacyConnector, password: str = "") -> bool:
-    candidate_selectors = [
-        "#ucAjaxModalPopup1_btnConfirmarPopup",
-        "input[name='ucAjaxModalPopup1$btnConfirmarPopup']",
-        "#ucAjaxModalPopup1_btnOkPopup",
-        "input[name='ucAjaxModalPopup1$btnOkPopup']",
-        "#Entrar",
-        "input[name='Entrar']",
-        "input[value='Entrar']",
-        "input[value='OK']",
-        "input[value='Ok']",
-        "input[value='Sim']",
-        "input[value='Confirmar']",
-        "input[value*='Desconectar']",
-        "button:has-text('OK')",
-        "button:has-text('Sim')",
-        "button:has-text('Confirmar')",
-        "button:has-text('Desconectar')",
-        "button:has-text('Continuar')",
-        "a:has-text('OK')",
-        "a:has-text('Sim')",
-        "a:has-text('Confirmar')",
-        "a:has-text('Desconectar')",
-    ]
-    for scope in _login_scopes(connector):
-        if password:
-            for password_selector in ("#txtSenha", "input[name='txtSenha']", "input[type='password']"):
-                try:
-                    password_locator = scope.locator(password_selector).first
-                    if await password_locator.count():
-                        await password_locator.fill(password, timeout=1500)
-                        break
-                except Exception:
-                    continue
-        for selector in candidate_selectors:
-            for force in (False, True):
-                try:
-                    await scope.locator(selector).first.click(timeout=2500, force=force)
-                    return True
-                except Exception:
-                    continue
-            try:
-                clicked = await scope.evaluate(
-                    """(selector) => {
-                        try {
-                            const el = document.querySelector(selector);
-                            if (!el) return false;
-                            el.click();
-                            return true;
-                        } catch (_) {
-                            return false;
-                        }
-                    }""",
-                    selector,
-                )
-                if clicked:
-                    return True
-            except Exception:
-                continue
-    for scope in _login_scopes(connector):
-        try:
-            clicked = await scope.evaluate(
-                """(password) => {
-                    const normalize = (value) => String(value || "")
-                        .normalize("NFD")
-                        .replace(/[\\u0300-\\u036f]/g, "")
-                        .replace(/\\s+/g, " ")
-                        .trim()
-                        .toLowerCase();
-                    const isVisible = (el) => {
-                        if (!el) return false;
-                        const style = window.getComputedStyle(el);
-                        const rect = el.getBoundingClientRect();
-                        return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
-                    };
-                    const passwordInput = document.querySelector("#txtSenha, input[name='txtSenha'], input[type='password']");
-                    if (password && passwordInput) {
-                        passwordInput.removeAttribute("disabled");
-                        passwordInput.value = password;
-                        passwordInput.dispatchEvent(new Event("input", { bubbles: true }));
-                        passwordInput.dispatchEvent(new Event("change", { bubbles: true }));
-                    }
-                    const elements = Array.from(document.querySelectorAll("input,button,a"));
-                    const preferred = elements.find((el) => {
-                        const haystack = normalize([
-                            el.id,
-                            el.name,
-                            el.value,
-                            el.textContent,
-                            el.getAttribute("title"),
-                            el.getAttribute("aria-label"),
-                            el.getAttribute("onclick"),
-                        ].join(" "));
-                        return (
-                            haystack.includes("confirmarpopup") ||
-                            haystack.includes("okpopup") ||
-                            haystack.includes("desconectar") ||
-                            haystack.includes("confirmar") ||
-                            haystack === "entrar" ||
-                            haystack.includes(" entrar ")
-                        );
-                    }) || elements.find((el) => isVisible(el) && ["submit", "button", "image"].includes(normalize(el.type)));
-                    if (preferred) {
-                        preferred.removeAttribute("disabled");
-                        preferred.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
-                        preferred.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
-                        preferred.click();
-                        return true;
-                    }
-                    return false;
-                }""",
-                password or "",
-            )
-            if clicked:
-                return True
-        except Exception:
-            continue
-    for target in ("ucAjaxModalPopup1$btnConfirmarPopup", "ucAjaxModalPopup1$btnOkPopup", "btnConfirmarPopup", "Entrar"):
-        try:
-            clicked = await connector.page.evaluate(
-                """(postbackTarget) => {
-                    try {
-                        if (typeof __doPostBack === 'function') {
-                            __doPostBack(postbackTarget, '');
-                            return true;
-                        }
-                        return false;
-                    } catch (_) {
-                        return false;
-                    }
-                }""",
-                target,
-            )
-            if clicked:
-                return True
-        except Exception:
-            continue
-    try:
-        submitted = await connector.page.evaluate(
-            """(password) => {
-                try {
-                    const form = document.querySelector("form");
-                    if (!form) return false;
-                    const passwordInput = document.querySelector("#txtSenha, input[name='txtSenha'], input[type='password']");
-                    if (password && passwordInput) {
-                        passwordInput.removeAttribute("disabled");
-                        passwordInput.value = password;
-                    }
-                    const eventTarget = document.querySelector("#__EVENTTARGET");
-                    const eventArgument = document.querySelector("#__EVENTARGUMENT");
-                    if (eventTarget && !eventTarget.value) eventTarget.value = "Entrar";
-                    if (eventArgument && !eventArgument.value) eventArgument.value = "";
-                    const submitMarker = document.createElement("input");
-                    submitMarker.type = "hidden";
-                    submitMarker.name = "Entrar";
-                    submitMarker.value = "Entrar";
-                    form.appendChild(submitMarker);
-                    if (typeof form.requestSubmit === "function") {
-                        form.requestSubmit();
-                    } else {
-                        form.submit();
-                    }
-                    return true;
-                } catch (_) {
-                    return false;
-                }
-            }""",
-            password or "",
-        )
-        return bool(submitted)
-    except Exception:
-        return False
-
-
-async def _confirm_user_already_logged_disconnect(
-    connector: PortalSecundarioLegacyConnector,
-    login: str,
-    password: str,
-    timeout_ms: int,
-    snapshot: dict,
-) -> tuple[dict, bool]:
-    clicked_any = False
-    last_snapshot = snapshot
-    for attempt in range(1, 4):
-        clicked_any = await _click_user_already_logged_confirm(connector, password) or clicked_any
-        print(f"[LOGIN_FLOW] confirmar_desconectar_tentativa_{attempt}: {str(clicked_any).lower()}", file=sys.stderr, flush=True)
-        for wait_ms in (1500, 3000, 6000):
-            await connector.page.wait_for_timeout(wait_ms)
-            last_snapshot = await _capture_login_snapshot(connector)
-            body = _normalize_ribeirao_text(last_snapshot.get("bodySnippet") or "")
-            url = str(last_snapshot.get("url") or "").lower()
-            if "loginselecao.aspx" in url or "selecione o convenio" in body or "convenio sigla acao" in body:
-                selection_snapshot, _selection_debug, selection_ok = await _handle_convenio_selection(
-                    connector,
-                    login,
-                    password,
-                    timeout_ms,
-                    last_snapshot,
-                )
-                last_snapshot = selection_snapshot
-                if selection_ok:
-                    return last_snapshot, True
-            if last_snapshot.get("successFound") or last_snapshot.get("operacionalFound") or last_snapshot.get("consultaMargemFound"):
-                return last_snapshot, True
-            if not _is_user_already_logged_message(body, last_snapshot.get("errorText") or ""):
-                break
-    return last_snapshot, bool(last_snapshot.get("successFound") or last_snapshot.get("operacionalFound") or last_snapshot.get("consultaMargemFound"))
+    return post_snapshot, last_debug, True
 
 
 async def _retry_login_post_click(
@@ -2402,7 +3056,11 @@ async def _goto_login_with_fallback(
     host = _safe_host(target_url)
     dns_ok, dns_ips, dns_error = _resolve_dns_host(host)
     if host and not dns_ok:
-        return await _capture_login_fallback_snapshot(connector), None, False, dns_ok, dns_ips, dns_error, False
+        print(
+            f"[LOGIN_FLOW] {stage_label} DNS local falhou; tentando abrir o portal mesmo assim pelo Chromium",
+            file=sys.stderr,
+            flush=True,
+        )
 
     response = None
     last_exc: Exception | None = None
@@ -2598,19 +3256,31 @@ def _write_status(session_id: str, status: str, message: str = "", extra: dict |
 
 def _make_settings(payload: dict):
     settings = get_settings()
+    portal_id = _portal_id(payload=payload)
     settings.headless = _resolve_headless(payload)
     settings.timeout_ms = int(payload.get("timeout_ms") or settings.timeout_ms)
     settings.retry_attempts = int(payload.get("retry_attempts") or settings.retry_attempts)
     settings.intervalo_entre_consultas_ms = int(payload.get("intervalo_entre_consultas_ms") or settings.intervalo_entre_consultas_ms)
 
-    portal_url = str(payload.get("portal_url") or os.getenv("RIBEIRAO_AVERBADOR_URL") or settings.pdc_portal_url)
+    if portal_id == "governo_sp":
+        portal_url = str(
+            payload.get("portal_url")
+            or os.getenv("GOV_SP_AVERBADOR_URL")
+            or os.getenv("GOVSP_AVERBADOR_URL")
+            or "https://www.portaldoconsignado.com.br/home?2"
+        )
+    else:
+        portal_url = str(payload.get("portal_url") or os.getenv("RIBEIRAO_AVERBADOR_URL") or settings.pdc_portal_url)
     if _is_placeholder_url(portal_url):
         raise RuntimeError(
             "Configure RIBEIRAO_AVERBADOR_URL com a URL real do averbador de Ribeirao antes de iniciar a sessao."
         )
     settings.pdc_portal_url = portal_url
 
-    consulta_url = str(payload.get("consulta_url") or os.getenv("RIBEIRAO_AVERBADOR_CONSULTA_URL") or settings.pdc_portal_url)
+    if portal_id == "governo_sp":
+        consulta_url = str(payload.get("consulta_url") or os.getenv("GOV_SP_AVERBADOR_CONSULTA_URL") or os.getenv("GOVSP_AVERBADOR_CONSULTA_URL") or settings.pdc_portal_url)
+    else:
+        consulta_url = str(payload.get("consulta_url") or os.getenv("RIBEIRAO_AVERBADOR_CONSULTA_URL") or settings.pdc_portal_url)
     settings.pdc_portal_url = consulta_url
 
     orgao_nome = str(payload.get("orgao_nome") or os.getenv("RIBEIRAO_AVERBADOR_ORGAO") or settings.pdc_orgao_nome)
@@ -2624,20 +3294,159 @@ def _make_settings(payload: dict):
 
 def _build_connector(payload: dict, settings) -> PortalSecundarioLegacyConnector:
     session_id = str(payload.get("session_id") or payload.get("sessionId") or "1")
+    credential_id = str(payload.get("credential_id") or payload.get("credentialId") or session_id)
     login = str(payload.get("login") or payload.get("username") or os.getenv("RIBEIRAO_AVERBADOR_LOGIN") or "").strip()
     password = str(payload.get("password") or os.getenv("RIBEIRAO_AVERBADOR_PASSWORD") or "")
+    identificacao = str(payload.get("matricula") or payload.get("identificacao") or "").strip()
     credencial = {
-        "id": session_id,
-        "credential_id": session_id,
+        "id": credential_id,
+        "credential_id": credential_id,
         "username": login,
         "usuario": login,
         "password": password,
         "senha": password,
+        "matricula": identificacao,
+        "identificacao": identificacao,
     }
-    return PortalSecundarioLegacyConnector(lote_id=0, settings=settings, credencial=credencial)
+    connector = PortalSecundarioLegacyConnector(lote_id=0, settings=settings, credencial=credencial)
+    connector.portal_id = _portal_id(payload=payload)
+    connector.portal_login_url = str(payload.get("portal_url") or settings.pdc_portal_url or "")
+    connector.portal_consulta_url = str(payload.get("consulta_url") or settings.pdc_portal_url or "")
+    return connector
+
+
+async def _open_gov_sp_login_browser(connector: PortalSecundarioLegacyConnector, login: str, password: str) -> None:
+    timeout_ms = max(60000, connector.settings.timeout_ms)
+    login_url = str(getattr(connector, "portal_login_url", "") or connector.settings.pdc_portal_url or "https://www.portaldoconsignado.com.br/home?2")
+    snapshot, _response, login_found, dns_ok, _dns_ips, dns_error, chromium_dns_failed = await _goto_login_with_fallback(
+        connector,
+        login_url,
+        stage_label="govsp-goto",
+        timeout_ms=timeout_ms,
+    )
+    if not dns_ok:
+        raise _typed_login_error(
+            "DNS_RESOLUTION_FAILED",
+            "Não foi possível resolver o endereço do portal no servidor. Verifique DNS da VPS/container.",
+            stage="govsp_goto",
+        )
+    if chromium_dns_failed or "chromium_dns_failed" in str(dns_error or "").lower():
+        raise _typed_login_error(
+            "CHROMIUM_DNS_FAILED",
+            "O navegador interno do servidor não conseguiu resolver o portal, mesmo com DNS do container funcionando.",
+            stage="govsp_goto",
+        )
+    _log_login_snapshot(snapshot, login, password, "govsp-goto")
+
+    for attempt in range(1, 7):
+        try:
+            await _goto_gov_sp_admin_login(connector, login_url, timeout_ms)
+            credential_state = await _fill_gov_sp_admin_credentials(connector, login, password)
+            if (
+                not credential_state.get("passwordLength")
+                or (
+                    not credential_state.get("usernameValue")
+                    and not (credential_state.get("cpfValue") and credential_state.get("identificacaoValue"))
+                )
+            ):
+                raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "O sistema nao conseguiu preencher os campos administrativos do Governo de SP.", stage="govsp_login_fields")
+            solved = await _solve_image_captcha_with_capsolver(connector, f"govsp-login-{attempt}")
+            if not solved:
+                raise _typed_login_error("CAPTCHA_REQUIRED", "O portal solicitou captcha de imagem e o CapSolver nao retornou resposta.", stage="govsp_captcha")
+            clicked_login, clicked_selector, _clicked_debug = await _click_login_initial_button(connector, timeout_ms=5000)
+            if not clicked_login:
+                raise _typed_login_error(
+                    "LOGIN_BUTTON_NOT_FOUND",
+                    "O sistema preencheu login/senha/captcha, mas nao encontrou o botao de entrada do Governo de SP.",
+                    stage="govsp_login_button",
+                )
+            print(f"[LOGIN_FLOW] govsp botao login acionado: {clicked_selector}", file=sys.stderr, flush=True)
+            await connector.page.wait_for_timeout(3500)
+            post_snapshot = await _capture_login_snapshot(connector)
+            _log_login_snapshot(post_snapshot, login, password, f"govsp-apos-login-{attempt}")
+            _log_login_flow(post_snapshot, f"govsp-apos-login-{attempt}", login, password, click_executed=True, final_code="PENDING")
+
+            if _is_user_already_logged_message(post_snapshot.get("bodySnippet"), post_snapshot.get("errorText")):
+                clicked_confirm = await _click_ok_popup(connector)
+                print(f"[LOGIN_FLOW] govsp clicou_confirmar_desconectar: {str(clicked_confirm).lower()}", file=sys.stderr, flush=True)
+                await connector.page.wait_for_timeout(2500)
+                post_snapshot = await _capture_login_snapshot(connector)
+
+            post_body = _normalize_ribeirao_text(post_snapshot.get("bodySnippet") or "")
+            post_url = str(post_snapshot.get("url") or "").lower()
+            if (
+                ("captcha" in post_body and ("invalido" in post_body or "inválido" in post_body or "incorreto" in post_body or "correspondem" in post_body))
+                or ("cpf e obrigatorio" in post_body or "cpf é obrigatorio" in post_body or "cpf obrigatorio" in post_body)
+            ):
+                print("[LOGIN_FLOW] govsp validacao do portal falhou; reabrindo login administrativo e tentando novamente", file=sys.stderr, flush=True)
+                continue
+
+            if "selecaoperfil" in post_url or "selecao de perfil" in post_body or "selecao de perfil" in post_body or "sua conta esta associada a mais de um perfil" in post_body:
+                clicked_profile = await _click_gov_sp_profile_option(connector)
+                profile_label = str(os.getenv("GOV_SP_ORGAO") or os.getenv("GOV_SP_CONVENIO") or "disponivel").strip()
+                print(f"[LOGIN_FLOW] govsp perfil {profile_label} clicado: {str(clicked_profile).lower()}", file=sys.stderr, flush=True)
+                if not clicked_profile:
+                    raise _typed_login_error("CONVENIO_ACTION_NOT_FOUND", f"O login foi aceito, mas o sistema nao conseguiu acessar o perfil {profile_label} no portal.", stage="selecionar_perfil")
+                await connector.page.wait_for_timeout(2500)
+                post_snapshot = await _capture_login_snapshot(connector)
+                _log_login_snapshot(post_snapshot, login, password, "govsp-apos-selecao-perfil")
+                _log_login_flow(post_snapshot, "govsp-apos-selecao-perfil", login, password, click_executed=True, final_code="PENDING")
+                post_body = _normalize_ribeirao_text(post_snapshot.get("bodySnippet") or "")
+                post_url = str(post_snapshot.get("url") or "").lower()
+
+            if "login" in post_body and (await connector.page.locator("#username").count() or await connector.page.locator("#txtCPF").count()):
+                if attempt < 6:
+                    continue
+                raise _typed_login_error("LOGIN_REJECTED", "O portal Governo de SP nao aceitou login, senha ou captcha.", stage="govsp_login")
+
+            if (
+                "loginselecao.aspx" in post_url
+                or "selecione o convenio" in post_body
+                or "convenio sigla acao" in post_body
+                or "selecao de perfil" in post_body
+                or "sua conta esta associada a mais de um perfil" in post_body
+            ):
+                post_snapshot, selection_debug, selection_ok = await _handle_convenio_selection(
+                    connector,
+                    login,
+                    password,
+                    timeout_ms,
+                    post_snapshot,
+                )
+                print(f"[LOGIN_FLOW] govsp selecao targetFound: {str(bool(selection_debug.get('targetFound'))).lower()}", file=sys.stderr, flush=True)
+                if selection_ok:
+                    print("[LOGIN_FLOW] govsp convenio/banco selecionado", file=sys.stderr, flush=True)
+
+            print("[LOGIN_FLOW] govsp consulta_margem menu iniciando", file=sys.stderr, flush=True)
+            consulta_ready = await _open_gov_sp_consulta_margem(connector, timeout_ms)
+            if not consulta_ready:
+                failed_snapshot = await _capture_login_snapshot(connector)
+                _log_login_snapshot(failed_snapshot, login, password, "govsp-consulta-nao-encontrada")
+                _log_login_flow(failed_snapshot, "govsp-consulta-nao-encontrada", login, password, click_executed=True, final_code="LOGIN_OK_NAVIGATION_FAILED")
+                raise _typed_login_error("LOGIN_OK_NAVIGATION_FAILED", "Login aceito, mas nao foi possivel abrir Consulta de Margem Governo de SP.", stage="govsp_cpf_input")
+            final_snapshot = await _capture_login_snapshot(connector)
+            _log_login_snapshot(final_snapshot, login, password, "govsp-consulta-preparada")
+            return
+        except RibeiraoLoginError:
+            raise
+        except Exception as exc:
+            if attempt >= 6:
+                raise _typed_login_error("LOGIN_REJECTED", "Falha ao autenticar no Portal do Consignado Governo de SP.", stage="govsp_login") from exc
+            print(f"[LOGIN_FLOW] govsp tentativa {attempt} falhou: {exc}", file=sys.stderr, flush=True)
+            try:
+                await connector.page.reload(wait_until="domcontentloaded", timeout=timeout_ms)
+                await connector.page.wait_for_timeout(1200)
+            except Exception:
+                pass
+
+    raise _typed_login_error("LOGIN_REJECTED", "Falha ao autenticar no Portal do Consignado Governo de SP.", stage="govsp_login")
 
 
 async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login: str, password: str) -> None:
+    if _portal_id(connector) == "governo_sp":
+        await _open_gov_sp_login_browser(connector, login, password)
+        return
+
     dialog_messages: list[str] = []
     last_modal: dict = {}
 
@@ -2689,21 +3498,30 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
 
     connector.page.on("dialog", on_dialog)
     try:
-        try:
-            await connector._open_login_entry()
-        except Exception as exc:
-            raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "Nao foi possivel localizar a entrada de login do portal.", stage="open_login_entry") from exc
         snapshot = await _capture_login_snapshot(connector)
-        _log_login_snapshot(snapshot, login, password, "open-login-entry")
-        _log_login_flow(snapshot, "open-login-entry", login, password, final_code="PENDING")
+        _log_login_snapshot(snapshot, login, password, "login-inicial")
+        _log_login_flow(snapshot, "login-inicial", login, password, final_code="PENDING")
 
-        try:
-            await connector._open_login_administrativo()
-        except Exception as exc:
-            raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "Nao foi possivel abrir a tela de login do portal.", stage="open_login_administrativo") from exc
-        snapshot = await _capture_login_snapshot(connector)
-        _log_login_snapshot(snapshot, login, password, "open-login-administrativo")
-        _log_login_flow(snapshot, "open-login-administrativo", login, password, final_code="PENDING")
+        login_ready = bool(snapshot.get("loginFound"))
+        if login_ready:
+            print("[LOGIN_FLOW] formulario de login ja estava visivel; pulando atalhos de entrada.", file=sys.stderr, flush=True)
+        else:
+            try:
+                await connector._open_login_entry()
+            except Exception as exc:
+                raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "Nao foi possivel localizar a entrada de login do portal.", stage="open_login_entry") from exc
+            snapshot = await _capture_login_snapshot(connector)
+            _log_login_snapshot(snapshot, login, password, "open-login-entry")
+            _log_login_flow(snapshot, "open-login-entry", login, password, final_code="PENDING")
+
+            if not snapshot.get("loginFound"):
+                try:
+                    await connector._open_login_administrativo()
+                except Exception as exc:
+                    raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "Nao foi possivel abrir a tela de login do portal.", stage="open_login_administrativo") from exc
+                snapshot = await _capture_login_snapshot(connector)
+                _log_login_snapshot(snapshot, login, password, "open-login-administrativo")
+                _log_login_flow(snapshot, "open-login-administrativo", login, password, final_code="PENDING")
 
         if not login:
             raise _typed_login_error("LOGIN_FIELDS_NOT_FOUND", "Login ausente para a sessao Ribeirao.", stage="login_missing")
@@ -2748,6 +3566,17 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
         print(f"[LOGIN_FLOW] inputs submit/button encontrados: {json.dumps(button_debug.get('inputs') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
         print(f"[LOGIN_FLOW] links encontrados próximos ao form, se houver: {json.dumps(button_debug.get('links') or [], ensure_ascii=False)}", file=sys.stderr, flush=True)
         print(f"[LOGIN_FLOW] current_url antes: {snapshot.get('url') or ''}", file=sys.stderr, flush=True)
+        if snapshot.get("passwordFound") and password:
+            password_prefilled = await _fill_password_if_visible(connector, password)
+            print(f"[LOGIN_FLOW] senha preenchida antes do primeiro submit: {str(password_prefilled).lower()}", file=sys.stderr, flush=True)
+            if password_prefilled:
+                snapshot = await _capture_login_snapshot(connector)
+                _log_login_snapshot(snapshot, login, password, "senha-preenchida-antes-submit")
+                _log_login_flow(snapshot, "senha-preenchida-antes-submit", login, password, final_code="PENDING")
+        if snapshot.get("captchaFound"):
+            solved_captcha = await _solve_recaptcha_with_capsolver(connector, "antes-primeiro-submit")
+            if not solved_captcha:
+                raise _typed_login_error("CAPTCHA_REQUIRED", "O portal solicitou validacao manual.", stage="captcha")
         try:
             clicked_login, clicked_selector, click_debug = await _click_login_initial_button(connector)
         except Exception as exc:
@@ -2789,10 +3618,18 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
             raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autentica??o manual/certificado digital.", stage="certificado_digital")
 
         if snapshot.get("captchaFound"):
-            raise _typed_login_error("CAPTCHA_REQUIRED", "O portal solicitou validacao manual.", stage="captcha")
+            solved_captcha = await _solve_recaptcha_with_capsolver(connector, "apos-primeiro-submit")
+            if not solved_captcha:
+                raise _typed_login_error("CAPTCHA_REQUIRED", "O portal solicitou validacao manual.", stage="captcha")
+            snapshot = await _capture_login_snapshot(connector)
         if snapshot.get("errorText"):
             code, typed_message = _classify_login_issue(None, snapshot.get("errorText") or '', snapshot)
-            if code in {"LOGIN_REJECTED", "CAPTCHA_REQUIRED", "MANUAL_AUTH_REQUIRED"}:
+            if code == "CAPTCHA_REQUIRED":
+                solved_captcha = await _solve_recaptcha_with_capsolver(connector, "erro-texto-apos-primeiro-submit")
+                if not solved_captcha:
+                    raise _typed_login_error(code, typed_message, stage="erro_texto_portal")
+                snapshot = await _capture_login_snapshot(connector)
+            if code in {"LOGIN_REJECTED", "MANUAL_AUTH_REQUIRED"}:
                 raise _typed_login_error(code, typed_message, stage="erro_texto_portal")
 
         handled_password_stage = False
@@ -2868,6 +3705,11 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
             _log_login_flow(snapshot, "senha-preenchida-segunda-etapa", login, password, final_code="PENDING")
             print(f"[LOGIN_FLOW] url antes senha: {snapshot.get('url') or ''}", file=sys.stderr, flush=True)
             print(f"[LOGIN_FLOW] password_submit_method: pending", file=sys.stderr, flush=True)
+            if snapshot.get("captchaFound"):
+                solved_captcha = await _solve_recaptcha_with_capsolver(connector, "segunda-etapa-antes-submit")
+                if not solved_captcha:
+                    raise _typed_login_error("CAPTCHA_REQUIRED", "O portal solicitou validacao manual.", stage="captcha")
+                snapshot = await _capture_login_snapshot(connector)
 
             try:
                 clicked_password, clicked_selector, click_debug = await _click_login_initial_button(connector)
@@ -2905,17 +3747,61 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
             )
             print(f"[LOGIN_FLOW] usuario_ja_logado_detectado: {str(user_already_logged).lower()}", file=sys.stderr, flush=True)
             if user_already_logged:
-                snapshot, disconnect_ok = await _confirm_user_already_logged_disconnect(
-                    connector,
-                    login,
-                    password,
-                    timeout_ms,
-                    snapshot,
-                )
+                clicked_confirm = await _click_ok_popup(connector)
+                print(f"[LOGIN_FLOW] clicou_confirmar_desconectar: {str(clicked_confirm).lower()}", file=sys.stderr, flush=True)
+                await connector.page.wait_for_timeout(3500)
+                snapshot = await _capture_login_snapshot(connector)
                 last_modal = await _capture_login_modal_state(connector)
                 print(f"[LOGIN_FLOW] url depois confirmar desconectar: {snapshot.get('url') or ''}", file=sys.stderr, flush=True)
-                print(f"[LOGIN_FLOW] sucesso apos confirmar desconectar: {str(disconnect_ok).lower()}", file=sys.stderr, flush=True)
-                if not disconnect_ok:
+                print(f"[LOGIN_FLOW] sucesso apos confirmar desconectar: {str(bool(snapshot.get('successFound') or snapshot.get('operacionalFound') or snapshot.get('consultaMargemFound'))).lower()}", file=sys.stderr, flush=True)
+                confirm_body = _normalize_ribeirao_text(snapshot.get("bodySnippet") or "")
+                confirm_url = str(snapshot.get("url") or "").lower()
+                if "loginselecao.aspx" in confirm_url or "selecione o convenio" in confirm_body or "convenio sigla acao" in confirm_body:
+                    selection_snapshot, selection_debug, selection_ok = await _handle_convenio_selection(
+                        connector,
+                        login,
+                        password,
+                        timeout_ms,
+                        snapshot,
+                    )
+                    snapshot = selection_snapshot
+                    if selection_ok:
+                        print(f"[LOGIN_FLOW] convenios processados com sucesso: {str(bool(snapshot.get('successFound') or snapshot.get('operacionalFound') or snapshot.get('consultaMargemFound'))).lower()}", file=sys.stderr, flush=True)
+                if not (snapshot.get('successFound') or snapshot.get('operacionalFound') or snapshot.get('consultaMargemFound')) and snapshot.get("passwordFound"):
+                    print("[LOGIN_FLOW] usuario ja logado: tentando reenviar segunda etapa apos confirmar desconexao", file=sys.stderr, flush=True)
+                    try:
+                        clicked_password_retry, clicked_selector_retry, click_debug_retry = await _click_login_initial_button(connector)
+                    except Exception:
+                        clicked_password_retry, clicked_selector_retry, click_debug_retry = False, "", {}
+                    print(f"[LOGIN_FLOW] clique retry segunda etapa executado: {clicked_selector_retry or 'false'}", file=sys.stderr, flush=True)
+                    print(f"[LOGIN_FLOW] retry metodo: {str((click_debug_retry or {}).get('chosenMethod') or '').strip()}", file=sys.stderr, flush=True)
+                    if clicked_password_retry:
+                        await connector.page.wait_for_timeout(3500)
+                        snapshot = await _capture_login_snapshot(connector)
+                        last_modal = await _capture_login_modal_state(connector)
+                        confirm_body = _normalize_ribeirao_text(snapshot.get('bodySnippet') or '')
+                        confirm_url = str(snapshot.get('url') or '').lower()
+                        if "loginselecao.aspx" in confirm_url or "selecione o convenio" in confirm_body or "convenio sigla acao" in confirm_body:
+                            selection_snapshot, selection_debug, selection_ok = await _handle_convenio_selection(
+                                connector,
+                                login,
+                                password,
+                                timeout_ms,
+                                snapshot,
+                            )
+                            snapshot = selection_snapshot
+                            if selection_ok:
+                                print(f"[LOGIN_FLOW] convenios processados com sucesso apos retry: {str(bool(snapshot.get('successFound') or snapshot.get('operacionalFound') or snapshot.get('consultaMargemFound'))).lower()}", file=sys.stderr, flush=True)
+                if not (snapshot.get('successFound') or snapshot.get('operacionalFound') or snapshot.get('consultaMargemFound')):
+                    if not getattr(connector, "_already_logged_retry_done", False):
+                        setattr(connector, "_already_logged_retry_done", True)
+                        print("[LOGIN_FLOW] usuario ja logado desconectado; tentando login novamente", file=sys.stderr, flush=True)
+                        try:
+                            await connector.page.goto(connector.settings.pdc_portal_url, wait_until="domcontentloaded", timeout=timeout_ms)
+                            await connector.page.wait_for_timeout(1200)
+                        except Exception:
+                            pass
+                        return await _open_login_browser(connector, login, password)
                     raise _typed_login_error(
                         'USER_ALREADY_LOGGED_CONFIRM_FAILED',
                         'O portal informou que o usu?rio j? estava logado, mas n?o foi poss?vel confirmar a desconex?o autom?tica.',
@@ -2938,6 +3824,11 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
             snapshot = await _capture_login_snapshot(connector)
             _log_login_snapshot(snapshot, login, password, "senha-preenchida")
             _log_login_flow(snapshot, "senha-preenchida", login, password, final_code="PENDING")
+            if snapshot.get("captchaFound"):
+                solved_captcha = await _solve_recaptcha_with_capsolver(connector, "senha-preenchida-antes-submit")
+                if not solved_captcha:
+                    raise _typed_login_error("CAPTCHA_REQUIRED", "O portal solicitou validacao manual.", stage="captcha")
+                snapshot = await _capture_login_snapshot(connector)
             try:
                 clicked_password, clicked_selector, click_debug = await _click_login_initial_button(connector)
             except Exception as exc:
@@ -3006,17 +3897,27 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
                 snapshot.get("errorText") or "",
                 snapshot.get("bodySnippet") or "",
             ):
-                snapshot, disconnect_ok = await _confirm_user_already_logged_disconnect(
-                    connector,
-                    login,
-                    password,
-                    timeout_ms,
-                    snapshot,
-                )
+                clicked_confirm = await _click_ok_popup(connector)
+                print(f"[LOGIN_FLOW] clicou_confirmar_desconectar: {str(clicked_confirm).lower()}", file=sys.stderr, flush=True)
+                await connector.page.wait_for_timeout(2500)
+                snapshot = await _capture_login_snapshot(connector)
                 last_modal = await _capture_login_modal_state(connector)
                 print(f"[LOGIN_FLOW] url depois confirmar desconectar: {snapshot.get('url') or ''}", file=sys.stderr, flush=True)
-                print(f"[LOGIN_FLOW] sucesso apos confirmar desconectar: {str(disconnect_ok).lower()}", file=sys.stderr, flush=True)
-                if disconnect_ok:
+                print(f"[LOGIN_FLOW] sucesso apos confirmar desconectar: {str(bool(snapshot.get('successFound') or snapshot.get('operacionalFound') or snapshot.get('consultaMargemFound'))).lower()}", file=sys.stderr, flush=True)
+                confirm_body = _normalize_ribeirao_text(snapshot.get("bodySnippet") or "")
+                confirm_url = str(snapshot.get("url") or "").lower()
+                if "loginselecao.aspx" in confirm_url or "selecione o convenio" in confirm_body or "convenio sigla acao" in confirm_body:
+                    selection_snapshot, selection_debug, selection_ok = await _handle_convenio_selection(
+                        connector,
+                        login,
+                        password,
+                        timeout_ms,
+                        snapshot,
+                    )
+                    snapshot = selection_snapshot
+                    if selection_ok:
+                        print(f"[LOGIN_FLOW] convenios processados com sucesso: {str(bool(snapshot.get('successFound') or snapshot.get('operacionalFound') or snapshot.get('consultaMargemFound'))).lower()}", file=sys.stderr, flush=True)
+                if snapshot.get("successFound") or snapshot.get("operacionalFound") or snapshot.get("consultaMargemFound"):
                     pass
                 else:
                     raise _typed_login_error(
@@ -3044,7 +3945,10 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
                 raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticacao manual por certificado digital.", stage="alerta_certificado")
 
         if snapshot.get("captchaFound"):
-            raise _typed_login_error("CAPTCHA_REQUIRED", "O portal solicitou validacao manual.", stage="captcha")
+            solved_captcha = await _solve_recaptcha_with_capsolver(connector, "validacao-final-login")
+            if not solved_captcha:
+                raise _typed_login_error("CAPTCHA_REQUIRED", "O portal solicitou validacao manual.", stage="captcha")
+            snapshot = await _capture_login_snapshot(connector)
         if snapshot.get("successFound") or snapshot.get("operacionalFound") or snapshot.get("consultaMargemFound"):
             pass
         elif snapshot.get("loginPageVisible") or snapshot.get("loginFound"):
@@ -3052,7 +3956,12 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
                 code, typed_message = _classify_login_issue(None, snapshot.get("errorText") or '', snapshot)
                 if code == "LOGIN_REJECTED":
                     raise _typed_login_error(code, typed_message, stage="erro_texto_portal")
-                if code in {"MANUAL_AUTH_REQUIRED", "CAPTCHA_REQUIRED"}:
+                if code == "CAPTCHA_REQUIRED":
+                    solved_captcha = await _solve_recaptcha_with_capsolver(connector, "erro-texto-portal")
+                    if not solved_captcha:
+                        raise _typed_login_error(code, typed_message, stage="erro_texto_portal")
+                    snapshot = await _capture_login_snapshot(connector)
+                if code == "MANUAL_AUTH_REQUIRED":
                     raise _typed_login_error(code, typed_message, stage="erro_texto_portal")
             if snapshot.get("host") and "login-identific" in str(snapshot.get("host") or '').lower():
                 raise _typed_login_error("MANUAL_AUTH_REQUIRED", "O portal solicitou autenticacao manual por certificado digital.", stage="certificado")
@@ -3182,13 +4091,10 @@ async def _open_login_browser(connector: PortalSecundarioLegacyConnector, login:
             await connector._select_profile_access()
         except Exception as exc:
             raise _typed_login_error("PORTAL_CHANGED", "Nao foi possivel selecionar o perfil de acesso no portal.", stage="select_profile_access") from exc
-        consulta_url = str(connector.settings.pdc_portal_url or "")
-        if "Login.aspx" in consulta_url:
-            consulta_url = consulta_url.replace("/Login.aspx", "/Margem/ConsultaMargem.aspx")
-        elif "Inicial/Inicial.aspx" in consulta_url:
-            consulta_url = consulta_url.replace("/Inicial/Inicial.aspx", "/Margem/ConsultaMargem.aspx")
-        elif "ConsultaMargem.aspx" not in consulta_url:
-            consulta_url = "https://saec.consigx.com.br/Margem/ConsultaMargem.aspx"
+        consulta_url = _consulta_margem_url(
+            str(getattr(connector, "portal_login_url", "") or connector.settings.pdc_portal_url or ""),
+            str(getattr(connector, "portal_consulta_url", "") or connector.settings.pdc_portal_url or ""),
+        )
         print("[LOGIN_FLOW] consulta_margem goto iniciando", file=sys.stderr, flush=True)
         try:
             await connector.page.goto(
@@ -3324,6 +4230,61 @@ async def start_session(payload: dict) -> dict:
     _write_status(session_id, "conectando", "Iniciando navegador e abrindo portal.")
 
     try:
+        reused_session = False
+        if connector.session_state_path and connector.session_state_path.exists():
+            portal_url = str(getattr(connector, "portal_login_url", "") or connector.settings.pdc_portal_url or "")
+            if _portal_id(connector) == "governo_sp":
+                consulta_url = urljoin(portal_url, "/consignatario/pesquisarMargem")
+            else:
+                consulta_url = _consulta_margem_url(
+                    portal_url,
+                    str(getattr(connector, "portal_consulta_url", "") or connector.settings.pdc_portal_url or ""),
+                )
+            try:
+                print("[RIBEIRAO_SESSION] tentativa de reutilizar sessao existente", file=sys.stderr, flush=True)
+                await connector.page.goto(
+                    consulta_url,
+                    wait_until="domcontentloaded",
+                    timeout=max(60000, connector.settings.timeout_ms),
+                )
+                await connector.page.wait_for_timeout(1200)
+                reuse_snapshot = await _capture_login_snapshot(connector)
+                print(f"[RIBEIRAO_SESSION] reuse url: {reuse_snapshot.get('url') or ''}", file=sys.stderr, flush=True)
+                print(f"[RIBEIRAO_SESSION] reuse body_text_sample: {reuse_snapshot.get('bodySnippet') or ''}", file=sys.stderr, flush=True)
+                reuse_url = str(reuse_snapshot.get("url") or "").lower()
+                reuse_body = _normalize_ribeirao_text(reuse_snapshot.get("bodySnippet") or "")
+                if "loginselecao.aspx" in reuse_url or "selecione o convenio" in reuse_body or "convenio sigla acao" in reuse_body:
+                    selection_snapshot, selection_debug, selection_ok = await _handle_convenio_selection(
+                        connector,
+                        login,
+                        password,
+                        max(60000, connector.settings.timeout_ms),
+                        reuse_snapshot,
+                    )
+                    reuse_snapshot = selection_snapshot
+                    print(f"[RIBEIRAO_SESSION] reuse convenio targetFound: {str(bool(selection_debug.get('targetFound'))).lower()}", file=sys.stderr, flush=True)
+                    print(f"[RIBEIRAO_SESSION] reuse convenio actionFound: {str(bool(selection_debug.get('actionFound'))).lower()}", file=sys.stderr, flush=True)
+                    if selection_ok:
+                        print("[RIBEIRAO_SESSION] sessao reutilizada avancou via selecao de convenio", file=sys.stderr, flush=True)
+                if _portal_id(connector) != "governo_sp":
+                    await connector._prepare_consulta_context()
+                elif not await connector._wait_any(connector.settings.pdc_selector_cpf_input, 2500):
+                    await _open_gov_sp_consulta_margem(connector, max(60000, connector.settings.timeout_ms))
+                if await connector._wait_any(connector.settings.pdc_selector_cpf_input, 5000):
+                    reused_session = True
+                    print("[RIBEIRAO_SESSION] sessao reutilizada com sucesso", file=sys.stderr, flush=True)
+            except Exception as exc:
+                print(f"[RIBEIRAO_SESSION] sessao reutilizada falhou: {exc}", file=sys.stderr, flush=True)
+
+        if reused_session:
+            if connector.context and connector.session_state_path:
+                try:
+                    await connector.context.storage_state(path=str(connector.session_state_path))
+                except Exception:
+                    pass
+            _write_status(session_id, "conectado", "Sessao autenticada com sucesso.")
+            return {"status": "conectado", "session_id": session_id, "reused": True}
+
         await _open_login_browser(connector, login, password)
         if connector.context and connector.session_state_path:
             try:
@@ -3398,6 +4359,8 @@ async def query_cpf(payload: dict) -> dict:
     settings = _make_settings(payload)
     session_id = str(payload.get("session_id") or payload.get("sessionId") or "1")
     cpf = _clean_digits(payload.get("cpf"))
+    if cpf and len(cpf) < 11:
+        cpf = cpf.zfill(11)
     login = str(payload.get("login") or payload.get("username") or os.getenv("RIBEIRAO_AVERBADOR_LOGIN") or "").strip()
     password = str(payload.get("password") or os.getenv("RIBEIRAO_AVERBADOR_PASSWORD") or "")
 
@@ -3443,14 +4406,14 @@ async def query_cpf(payload: dict) -> dict:
         connector.page = await connector.context.new_page()
         reused_session = False
         if connector.session_state_path and connector.session_state_path.exists():
-            portal_url = str(connector.settings.pdc_portal_url or "")
-            consulta_url = portal_url
-            if "Login.aspx" in consulta_url:
-                consulta_url = consulta_url.replace("/Login.aspx", "/Margem/ConsultaMargem.aspx")
-            elif "Inicial/Inicial.aspx" in consulta_url:
-                consulta_url = consulta_url.replace("/Inicial/Inicial.aspx", "/Margem/ConsultaMargem.aspx")
-            elif "ConsultaMargem.aspx" not in consulta_url:
-                consulta_url = "https://saec.consigx.com.br/Margem/ConsultaMargem.aspx"
+            portal_url = str(getattr(connector, "portal_login_url", "") or connector.settings.pdc_portal_url or "")
+            if _portal_id(connector) == "governo_sp":
+                consulta_url = urljoin(portal_url, "/consignatario/pesquisarMargem")
+            else:
+                consulta_url = _consulta_margem_url(
+                    portal_url,
+                    str(getattr(connector, "portal_consulta_url", "") or connector.settings.pdc_portal_url or ""),
+                )
             try:
                 print("[RIBEIRAO_QUERY] tentativa de reutilizar sessao existente", file=sys.stderr, flush=True)
                 await connector.page.goto(
@@ -3477,7 +4440,10 @@ async def query_cpf(payload: dict) -> dict:
                     print(f"[RIBEIRAO_QUERY] reuse convenio actionFound: {str(bool(selection_debug.get('actionFound'))).lower()}", file=sys.stderr, flush=True)
                     if selection_ok:
                         print("[RIBEIRAO_QUERY] sessao reutilizada avancou via selecao de convenio", file=sys.stderr, flush=True)
-                await connector._prepare_consulta_context()
+                if _portal_id(connector) != "governo_sp":
+                    await connector._prepare_consulta_context()
+                elif not await connector._wait_any(connector.settings.pdc_selector_cpf_input, 2500):
+                    await _open_gov_sp_consulta_margem(connector, max(60000, connector.settings.timeout_ms))
                 if await connector._wait_any(connector.settings.pdc_selector_cpf_input, 5000):
                     reused_session = True
                     print("[RIBEIRAO_QUERY] sessao reutilizada com sucesso", file=sys.stderr, flush=True)
@@ -3514,6 +4480,12 @@ async def query_cpf(payload: dict) -> dict:
             status = "aguardando_validacao_manual"
         elif code == "CAPTCHA_REQUIRED":
             status = "captcha_required"
+        elif code == "CPF_NOT_FOUND":
+            status = "not_found"
+            clean_message = "Dados de cadastro nao localizado."
+        elif code == "CLIENT_QUERY_NOT_ALLOWED":
+            status = "cliente_nao_permite_consulta"
+            clean_message = "Cliente nao permite consulta."
         elif code == "LOGIN_REJECTED":
             status = "login_error"
         elif code == "LOGIN_OK_NAVIGATION_FAILED":
@@ -3527,7 +4499,25 @@ async def query_cpf(payload: dict) -> dict:
             clean_message = "Erro ao iniciar navegador de consulta no servidor. Verifique configuracao do Playwright/Chromium em producao."
             code = code or "BROWSER_LAUNCH_ERROR"
 
-        _write_status(session_id, status, clean_message or message, extra)
+        connection_alive_codes = {
+            "CPF_NOT_FOUND",
+            "CLIENT_QUERY_NOT_ALLOWED",
+            "MARGIN_ROWS_NOT_FOUND",
+        }
+        if code in connection_alive_codes:
+            _write_status(
+                session_id,
+                "conectado",
+                "Sessao autenticada com sucesso.",
+                {
+                    **(extra or {}),
+                    "last_query_status": status,
+                    "last_query_code": code,
+                    "last_query_message": clean_message or message,
+                },
+            )
+        else:
+            _write_status(session_id, status, clean_message or message, extra)
         return {
             "ok": False,
             "cpf": cpf,

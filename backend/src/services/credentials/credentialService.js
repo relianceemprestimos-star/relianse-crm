@@ -10,7 +10,10 @@ import {
   upsertAverbadorCredential,
   upsertAverbadorSession,
 } from '../../db.js';
-import { getPortalConfig, normalizePortalId, PORTAL_CONFIGS } from './portalConfigs.js';
+import { getPortalConfig, isRf1ApiPortal, normalizePortalId, PORTAL_CONFIGS } from './portalConfigs.js';
+import { runSantanaPortalCommand } from '../averbadores/santana/santanaPortalAdapter.js';
+import { inferSantanaApiBaseUrl, testSantanaApiCredential } from '../averbadores/santana/santanaApiService.js';
+import { resetRibeiraoSessionCache, startRibeiraoSession } from '../averbadores/ribeirao/ribeiraoService.js';
 
 const STATUS_LABELS = {
   sessao_ativa: 'Sessão ativa',
@@ -80,6 +83,7 @@ function sanitizeCredential(row) {
     portal_id: row.portal_id,
     portal_name: row.portal_name || config?.name || '',
     portal_url: row.portal_url || config?.url || '',
+    api_url: row.api_url || '',
     portal_host: safeUrlHost(row.portal_url || config?.url || ''),
     login: row.login || '',
     has_password: Boolean(row.encrypted_password),
@@ -102,6 +106,7 @@ function mergeConfigCredential(config, row = null) {
     portal_id: config.id,
     portal_name: row?.portal_name || config.name,
     portal_url: row?.portal_url || config.url,
+    api_url: row?.api_url || '',
     login: row?.login || '',
     encrypted_password: row?.encrypted_password || '',
     requires_captcha: row?.requires_captcha ?? config.requiresCaptcha,
@@ -161,6 +166,7 @@ export function saveCredential(payload = {}, userId = null) {
     portal_id: portalId,
     portal_name: config.name,
     portal_url: payload.portal_url || payload.portalUrl || config.url,
+    api_url: payload.api_url || payload.apiUrl || current?.api_url || '',
     login: payload.login || '',
     encrypted_password: encryptedPassword,
     requires_captcha: config.requiresCaptcha,
@@ -196,14 +202,14 @@ async function checkPortalReachable(url) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15000);
   try {
-    let response = await fetch(url, { method: 'HEAD', redirect: 'follow', signal: controller.signal });
+    let response = await fetch(url, { method: 'HEAD', redirect: 'manual', signal: controller.signal });
     if (response.status === 405 || response.status === 403) {
-      response = await fetch(url, { method: 'GET', redirect: 'follow', signal: controller.signal });
+      response = await fetch(url, { method: 'GET', redirect: 'manual', signal: controller.signal });
     }
     return {
-      ok: response.ok || response.status < 500,
+      ok: response.ok || (response.status >= 300 && response.status < 400) || response.status < 500,
       status: response.status,
-      url: response.url || url,
+      url: response.headers.get('location') || response.url || url,
     };
   } finally {
     clearTimeout(timer);
@@ -240,11 +246,56 @@ export async function testCredential(id, userId = null) {
   }
 
   try {
-    const result = await checkPortalReachable(portalUrl);
-    if (!result.ok) {
-      throw new Error(`Portal respondeu status ${result.status}.`);
+    const password = decryptSecret(current.encrypted_password || '');
+    let result;
+    let status = 'sessao_ativa';
+    if (isRf1ApiPortal(current.portal_id)) {
+      const apiBaseUrl = inferSantanaApiBaseUrl({
+        apiBaseUrl: current.api_url || config?.apiBaseUrl,
+        portalUrl,
+      });
+      result = apiBaseUrl
+        ? await testSantanaApiCredential({
+          apiBaseUrl,
+          login: current.login,
+          password,
+        })
+        : await runSantanaPortalCommand({
+          action: 'inspect',
+          login: current.login,
+          password,
+        });
+      if (!result.ok) {
+        throw new Error(`${config?.name || 'Portal RF1'} não confirmou a autenticação.`);
+      }
+    } else if (current.portal_id === 'prefeitura_ribeirao_preto') {
+      resetRibeiraoSessionCache();
+      const session = await startRibeiraoSession({
+        userId: userId || current.updated_by || current.created_by || 1,
+        credentialId: id,
+        login: current.login,
+        password,
+        portalId: current.portal_id,
+        timeoutSeconds: 900,
+        role: 'gerencial',
+      });
+      const sessionStatus = String(session?.status || '').toLowerCase();
+      if (sessionStatus !== 'conectado') {
+        const error = new Error(session?.message || session?.error_message || 'O portal não confirmou a autenticação.');
+        error.code = session?.error_code || sessionStatus || 'LOGIN_FAILED';
+        throw error;
+      }
+      result = { ok: true, session };
+    } else {
+      if (config?.providerStatus === 'pending_provider') {
+        throw new Error('Conector deste portal ainda não está implementado.');
+      }
+      result = await checkPortalReachable(portalUrl);
+      if (!result.ok) {
+        throw new Error(`Portal respondeu status ${result.status}.`);
+      }
+      status = config?.requiresAssistedLogin ? 'login_assistido_necessario' : 'sessao_ativa';
     }
-    const status = config?.requiresAssistedLogin ? 'login_assistido_necessario' : 'sessao_ativa';
     const next = updateAverbadorCredentialById(id, {
       session_status: status,
       last_access_at: status === 'sessao_ativa' ? nowIso() : current.last_access_at,
@@ -268,7 +319,11 @@ export async function testCredential(id, userId = null) {
       status: 'success',
       message: config?.requiresAssistedLogin
         ? 'Portal acessível. Login assistido necessário por CAPTCHA.'
-        : `Portal acessível. HTTP ${result.status}.`,
+        : isRf1ApiPortal(current.portal_id)
+          ? `${config?.name || 'Portal RF1'} autenticado pela API RF1 quando disponível; robô mantido como fallback.`
+          : current.portal_id === 'prefeitura_ribeirao_preto'
+            ? 'Portal autenticado pelo robô de consulta.'
+            : `Portal acessível. HTTP ${result.status}.`,
       created_by: userId,
     });
     return sanitizeCredential(next);

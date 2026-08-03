@@ -1,44 +1,34 @@
-# Arquitetura
+# Arquitetura — CRM Reliance
 
-## Visao atual
+## Classificacao
 
-O CRM Reliance e um sistema operacional de uso interno para correspondente bancario. A arquitetura atual combina frontend React/Vite, backend Node.js/Express, persistencia SQLite/sql.js e integracoes operacionais com portais de margem, consulta cadastral/telefones e WhatsApp Web.
+Uso interno controlado. Nao e SaaS nesta fase.
 
-## Centro operacional
+## Fluxo de Consentimento
 
-Campanhas passa a ser a porta principal da operacao. O operador escolhe primeiro o grupo de trabalho, como Prefeitura de Ribeirao Preto, Governo de SP, MP/MPSP ou outros convenios, e so entao acessa clientes, bases, relatorios ou atendimento relacionados.
+1. Usuario interno registra opt-in do cliente por canal.
+2. O CRM grava `customer_consents`.
+3. Antes de abrir WhatsApp via CRM, o backend valida consentimento ativo.
+4. Se nao houver opt-in, a acao e bloqueada e registrada em `audit_log`.
+5. Opt-out marca consentimento como `revoked` e bloqueia novas comunicacoes.
 
-Rotas antigas de clientes, fila, atendimento, upload, bases e WhatsApp permanecem preservadas para compatibilidade tecnica e links internos, mas deixam de ser atalhos principais do menu lateral. Essa decisao reduz confusao operacional sem remover dados nem quebrar fluxos existentes.
+## Fluxo de Protecao de Dados
 
-Credenciais permanece como modulo gerencial para cadastro dos logins de averbadores e portais. Consulta de margem e consulta de telefones seguem como ferramentas operacionais diretas porque sao usadas em lote e alimentam as campanhas.
+- Mascaramento e sanitizacao ficam em `backend/src/dataProtection.js`.
+- Hashes de CPF/telefone/email sao derivados com segredo.
+- Criptografia AES-256-GCM esta disponivel para novos campos sensiveis.
+- Dados legados ainda exigem plano de migracao controlado.
 
-## Classificacao de uso
+## Fluxo de Seguranca HTTP
 
-O projeto permanece classificado como **USO_PROPRIO / USO INTERNO CONTROLADO**. Nao ha arquitetura SaaS ou multi-tenant aprovada nesta fase. Qualquer evolucao para SaaS exige nova investigacao, ADR especifico, isolamento de dados, segregacao de clientes, revisao LGPD e plano de operacao.
+- `helmet` adiciona headers de seguranca.
+- `express-rate-limit` protege globalmente login, comunicacao e consultas sensiveis.
+- JWT continua via Bearer token.
 
-## Comunicacao e opt-in
+## Dividas Tecnicas
 
-Fluxos de WhatsApp, email ou SMS devem validar opt-in ativo antes de qualquer envio para cliente especifico. Tentativas sem consentimento devem ser bloqueadas e registradas sem dados pessoais completos.
+- `backend/src/db.js` ainda concentra schema, persistencia e regras.
+- `backend/src/server.js` ainda concentra muitas rotas.
+- Migrations ainda nao sao arquivos versionados independentes.
+- Multi-tenant, isolamento por cliente e billing nao existem.
 
-Opt-in nao deve bloquear busca interna autorizada do Nova Vida, consulta operacional de margem ou conferencias internas do CRM. A regra de consentimento vale para comunicacao ativa enviada ao cliente, nao para pesquisa interna feita por operador autorizado.
-
-## Dados sensiveis
-
-CPF, telefone, conta, agencia, endereco, beneficio, matricula e dados de credito devem ser tratados como sensiveis. Logs, telas administrativas e relatorios operacionais devem mascarar ou reduzir exposicao sempre que o dado completo nao for estritamente necessario.
-
-CPF completo pode aparecer em tela de atendimento individual quando necessario para conferencia operacional. Em listas, filas, dashboards, cards e resumos, CPF e telefone devem ser mascarados para reduzir exposicao em massa.
-
-## Integracoes operacionais preservadas
-
-Nova Vida permanece como integracao de busca interna de clientes/telefones. Santana de Parnaiba usa o fluxo de averbador Ribeirao com wrapper CapSolver quando configurado. Variaveis de ambiente dessas integracoes devem ser preservadas em exemplos e deploys, sempre sem valores reais versionados.
-
-## Rotas sensiveis
-
-Login, recuperacao de senha, consulta de telefone, consulta de margem, envio de comunicacao e webhooks devem ter rate limit proporcional ao risco. O objetivo e reduzir abuso, brute force e vazamento por volume.
-
-## Limites conhecidos
-
-- O schema ainda concentra muitas regras no backend principal.
-- Migrations versionadas devem ser formalizadas em PR futuro.
-- Audit log e consentimento precisam ser implementados no backend em PR separado.
-- Vulnerabilidades herdadas `qs` e `xlsx` devem ser tratadas em PR separado.

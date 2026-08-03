@@ -21,7 +21,7 @@ import {
   updatePhoneLookupJob,
 } from '../../db.js';
 import { cleanDigits } from '../../utils.js';
-import { getNovaVidaDiagnostics, lookupPhoneNovaVida, mapNovaVidaFlow, searchPhoneNovaVida } from './novaVidaProvider.js';
+import { getNovaVidaDiagnostics, lookupPhoneNovaVida, mapNovaVidaFlow, searchNovaVidaCpfCandidates, searchPhoneNovaVida } from './novaVidaProvider.js';
 
 function nowIso() {
   return new Date().toISOString();
@@ -145,13 +145,13 @@ export function queuePhoneLookupForClient({ clientId, userId, force = false }) {
   return { job };
 }
 
-export function queuePhoneLookupForMarginClients({ userId, filters = {}, force = false } = {}) {
+export function queuePhoneLookupForMarginClients({ userId, filters = {}, force = false, limit = null } = {}) {
   const result = enqueuePhoneLookupForMarginClients({
     ...filters,
     userId,
     source: 'Nova Vida',
     force,
-    limit: Number(process.env.PHONE_LOOKUP_MAX_PER_RUN || 50),
+    limit: Number(limit || process.env.PHONE_LOOKUP_MAX_PER_RUN || 50),
   });
   logLookup('bulk_jobs_created', { created: result.created, source: 'Nova Vida' });
   return result;
@@ -161,9 +161,9 @@ export async function searchPhones({ cpf = '', name = '', phone = '', clientId =
   markExpiredClientConsultations();
   const clientDetails = clientId ? getClientById(Number(clientId)) : null;
   const client = clientDetails?.client || null;
-  const searchPhone = String(phone || client?.phone || '').trim();
   const searchCpf = cleanDigits(cpf || client?.cpf || '');
-  const searchName = String(name || client?.name || (!searchCpf && searchPhone ? searchPhone : '')).trim();
+  const searchName = String(name || client?.name || '').trim();
+  const searchPhone = String(phone || client?.phone || '').trim();
   if (!searchCpf && !searchName) {
     return { error: 'Informe CPF ou nome para buscar.', status: 400 };
   }
@@ -212,8 +212,6 @@ export async function searchPhones({ cpf = '', name = '', phone = '', clientId =
     status: finalStatus,
     phonesFound: result.phones?.length || 0,
     consultationId: savedConsultation?.id ?? null,
-    reconnectAttempted: Boolean(result.reconnectAttempted),
-    reconnectOk: Boolean(result.reconnectOk),
   });
 
   if (client?.id) {
@@ -261,6 +259,20 @@ export async function searchPhones({ cpf = '', name = '', phone = '', clientId =
     expires_at: savedConsultation?.expires_at || '',
     consulted_at: savedConsultation?.consulted_at || '',
   };
+}
+
+export async function searchCpfCandidatesByName({ name = '' } = {}) {
+  const searchName = String(name || '').trim();
+  if (!searchName) {
+    return { error: 'Informe nome para buscar CPFs candidatos.', status: 400 };
+  }
+  const result = await searchNovaVidaCpfCandidates({ name: searchName });
+  logLookup('name_candidates_finished', {
+    name: searchName,
+    status: result.status,
+    candidates: result.candidates?.length || 0,
+  });
+  return result;
 }
 
 export function getPhoneLookupConsultation(id) {

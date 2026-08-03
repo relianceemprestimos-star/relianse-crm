@@ -1,3 +1,4 @@
+from __future__ import annotations
 from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -92,7 +93,7 @@ class CredencialCreateIn(BaseModel):
     usuario: str
     senha: str
     nome_credencial: str = ""
-    limite_consultas: int = 450
+    limite_consultas: int = 400
     ativa: bool = True
 
 

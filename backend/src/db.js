@@ -1263,7 +1263,7 @@ function initSchema(database) {
       created_by INTEGER,
       updated_by INTEGER,
       created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL,
       FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
       FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL
     );
@@ -1277,8 +1277,8 @@ function initSchema(database) {
       expires_at TEXT,
       requires_manual_action INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL DEFAULT '',
-      FOREIGN KEY (credential_id) REFERENCES averbador_credentials(id) ON DELETE SET NULL
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (credential_id) REFERENCES averbador_credentials(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS credential_connection_logs (
@@ -1295,125 +1295,37 @@ function initSchema(database) {
       FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
     );
 
-    CREATE TABLE IF NOT EXISTS whatsapp_config (
-      id INTEGER PRIMARY KEY CHECK (id = 1),
-      provider TEXT NOT NULL DEFAULT 'unofficial',
-      api_url TEXT NOT NULL DEFAULT '',
-      encrypted_token TEXT NOT NULL DEFAULT '',
-      default_country_code TEXT NOT NULL DEFAULT '55',
-      default_number TEXT NOT NULL DEFAULT '',
-      instance_id TEXT NOT NULL DEFAULT '',
-      enabled INTEGER NOT NULL DEFAULT 1,
-      send_delay_seconds INTEGER NOT NULL DEFAULT 120,
-      daily_limit_per_number INTEGER NOT NULL DEFAULT 30,
-      status TEXT NOT NULL DEFAULT 'not_configured',
-      qrcode TEXT NOT NULL DEFAULT '',
-      last_error TEXT NOT NULL DEFAULT '',
-      last_test_at TEXT,
-      connected_at TEXT,
-      updated_by INTEGER,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL DEFAULT '',
-      FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL
-    );
+    CREATE INDEX IF NOT EXISTS idx_averbador_credentials_portal
+      ON averbador_credentials(portal_id);
 
-    CREATE TABLE IF NOT EXISTS whatsapp_templates (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      body TEXT NOT NULL DEFAULT '',
-      category TEXT NOT NULL DEFAULT '',
-      active INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL DEFAULT ''
-    );
+    CREATE INDEX IF NOT EXISTS idx_averbador_sessions_portal
+      ON averbador_sessions(portal_id, created_at);
 
-    CREATE TABLE IF NOT EXISTS whatsapp_messages (
+    CREATE INDEX IF NOT EXISTS idx_credential_connection_logs_portal
+      ON credential_connection_logs(portal_id, created_at);
+
+    CREATE TABLE IF NOT EXISTS santana_query_batches (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      client_id INTEGER,
-      phone TEXT NOT NULL DEFAULT '',
-      direction TEXT NOT NULL DEFAULT 'outbound',
-      provider TEXT NOT NULL DEFAULT '',
-      template_id INTEGER,
-      message_body TEXT NOT NULL DEFAULT '',
-      status TEXT NOT NULL DEFAULT 'pending',
-      provider_message_id TEXT NOT NULL DEFAULT '',
+      user_id INTEGER NOT NULL,
+      source_file_name TEXT NOT NULL DEFAULT '',
+      total_cpfs INTEGER NOT NULL DEFAULT 0,
+      processed_count INTEGER NOT NULL DEFAULT 0,
+      success_count INTEGER NOT NULL DEFAULT 0,
+      not_found_count INTEGER NOT NULL DEFAULT 0,
+      error_count INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'pendente',
+      cpf_list_json TEXT NOT NULL DEFAULT '[]',
+      results_json TEXT NOT NULL DEFAULT '[]',
       error_message TEXT NOT NULL DEFAULT '',
-      sent_by INTEGER,
-      sent_at TEXT,
-      received_at TEXT,
-      delivered_at TEXT,
-      read_at TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL DEFAULT '',
-      FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL,
-      FOREIGN KEY (template_id) REFERENCES whatsapp_templates(id) ON DELETE SET NULL,
-      FOREIGN KEY (sent_by) REFERENCES users(id) ON DELETE SET NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS whatsapp_send_jobs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      client_id INTEGER,
-      phone TEXT NOT NULL DEFAULT '',
-      template_id INTEGER,
-      message_body TEXT NOT NULL DEFAULT '',
-      status TEXT NOT NULL DEFAULT 'pending',
-      error_message TEXT NOT NULL DEFAULT '',
-      scheduled_at TEXT,
-      created_by INTEGER,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL DEFAULT '',
-      FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL,
-      FOREIGN KEY (template_id) REFERENCES whatsapp_templates(id) ON DELETE SET NULL,
-      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS whatsapp_flows (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      description TEXT NOT NULL DEFAULT '',
-      active INTEGER NOT NULL DEFAULT 1,
-      initial_template_id INTEGER,
-      initial_message TEXT NOT NULL DEFAULT '',
-      fallback_message TEXT NOT NULL DEFAULT '',
-      fallback_human_after INTEGER NOT NULL DEFAULT 2,
-      steps_json TEXT NOT NULL DEFAULT '[]',
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL DEFAULT '',
-      FOREIGN KEY (initial_template_id) REFERENCES whatsapp_templates(id) ON DELETE SET NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS whatsapp_flow_executions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      flow_id INTEGER NOT NULL,
-      client_id INTEGER,
-      phone TEXT NOT NULL DEFAULT '',
-      status TEXT NOT NULL DEFAULT 'active',
-      current_step_id TEXT NOT NULL DEFAULT '',
-      unmatched_count INTEGER NOT NULL DEFAULT 0,
       started_at TEXT,
       finished_at TEXT,
-      last_message_at TEXT,
-      created_by INTEGER,
       created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL DEFAULT '',
-      FOREIGN KEY (flow_id) REFERENCES whatsapp_flows(id) ON DELETE CASCADE,
-      FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL,
-      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
-    CREATE TABLE IF NOT EXISTS whatsapp_flow_logs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      flow_execution_id INTEGER,
-      client_id INTEGER,
-      phone TEXT NOT NULL DEFAULT '',
-      inbound_message TEXT NOT NULL DEFAULT '',
-      matched_trigger TEXT NOT NULL DEFAULT '',
-      outbound_message TEXT NOT NULL DEFAULT '',
-      action_taken TEXT NOT NULL DEFAULT '',
-      created_at TEXT NOT NULL,
-      FOREIGN KEY (flow_execution_id) REFERENCES whatsapp_flow_executions(id) ON DELETE SET NULL,
-      FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL
-    );
+    CREATE INDEX IF NOT EXISTS idx_santana_query_batches_status
+      ON santana_query_batches(status, created_at);
 
     CREATE TABLE IF NOT EXISTS ribeirao_query_sessions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1490,6 +1402,16 @@ function initSchema(database) {
       FOREIGN KEY (base_id) REFERENCES bases(id) ON DELETE SET NULL
     );
   `);
+
+  ensureColumns(database, 'ribeirao_query_batches', [
+    'cpf_list_json TEXT NOT NULL DEFAULT \'[]\'',
+  ]);
+  ensureColumns(database, 'averbador_credentials', [
+    'api_url TEXT NOT NULL DEFAULT \'\'',
+  ]);
+  ensureColumns(database, 'santana_query_batches', [
+    'portal_id TEXT NOT NULL DEFAULT \'prefeitura_santana_parnaiba\'',
+  ]);
 
   ensureColumns(database, 'clients', [
     'base_id INTEGER',
@@ -1676,16 +1598,12 @@ function initSchema(database) {
     'cpf_hash TEXT NOT NULL DEFAULT \'\'',
     'phone_hash TEXT NOT NULL DEFAULT \'\'',
     'email_hash TEXT NOT NULL DEFAULT \'\'',
-    'whatsapp_allowed INTEGER NOT NULL DEFAULT 1',
-    'whatsapp_opt_out INTEGER NOT NULL DEFAULT 0',
-    'whatsapp_blocked INTEGER NOT NULL DEFAULT 0',
-    'whatsapp_status TEXT NOT NULL DEFAULT \'\'',
-    'whatsapp_last_contact_at TEXT',
-    'whatsapp_last_response_at TEXT',
   ]);
 
   ensureColumns(database, 'ribeirao_margin_queries', [
     'batch_id INTEGER',
+    'credential_id INTEGER',
+    'portal_id TEXT NOT NULL DEFAULT \'prefeitura_ribeirao_preto\'',
     'margem_emprestimo_total REAL',
     'margem_emprestimo_disponivel REAL',
     'margem_cartao_total REAL',
@@ -1721,162 +1639,6 @@ function initSchema(database) {
     'created_at TEXT NOT NULL DEFAULT \'\'',
   ]);
 
-  ensureColumns(database, 'averbador_credentials', [
-    'portal_id TEXT NOT NULL DEFAULT \'\'',
-    'portal_name TEXT NOT NULL DEFAULT \'\'',
-    'portal_url TEXT NOT NULL DEFAULT \'\'',
-    'login TEXT NOT NULL DEFAULT \'\'',
-    'encrypted_password TEXT NOT NULL DEFAULT \'\'',
-    'requires_captcha INTEGER NOT NULL DEFAULT 0',
-    'requires_assisted_login INTEGER NOT NULL DEFAULT 0',
-    'session_status TEXT NOT NULL DEFAULT \'nao_conectado\'',
-    'last_access_at TEXT',
-    'session_expires_at TEXT',
-    'last_test_at TEXT',
-    'last_error TEXT NOT NULL DEFAULT \'\'',
-    'created_by INTEGER',
-    'updated_by INTEGER',
-    'created_at TEXT NOT NULL DEFAULT \'\'',
-    'updated_at TEXT NOT NULL DEFAULT \'\'',
-  ]);
-
-  ensureColumns(database, 'averbador_sessions', [
-    'credential_id INTEGER',
-    'portal_id TEXT NOT NULL DEFAULT \'\'',
-    'status TEXT NOT NULL DEFAULT \'nao_conectado\'',
-    'last_login_at TEXT',
-    'expires_at TEXT',
-    'requires_manual_action INTEGER NOT NULL DEFAULT 0',
-    'created_at TEXT NOT NULL DEFAULT \'\'',
-    'updated_at TEXT NOT NULL DEFAULT \'\'',
-  ]);
-
-  ensureColumns(database, 'credential_connection_logs', [
-    'credential_id INTEGER',
-    'portal_id TEXT NOT NULL DEFAULT \'\'',
-    'action TEXT NOT NULL DEFAULT \'\'',
-    'status TEXT NOT NULL DEFAULT \'\'',
-    'message TEXT NOT NULL DEFAULT \'\'',
-    'error_message TEXT NOT NULL DEFAULT \'\'',
-    'created_by INTEGER',
-    'created_at TEXT NOT NULL DEFAULT \'\'',
-  ]);
-
-  ensureColumns(database, 'whatsapp_config', [
-    'provider TEXT NOT NULL DEFAULT \'unofficial\'',
-    'api_url TEXT NOT NULL DEFAULT \'\'',
-    'encrypted_token TEXT NOT NULL DEFAULT \'\'',
-    'default_country_code TEXT NOT NULL DEFAULT \'55\'',
-    'default_number TEXT NOT NULL DEFAULT \'\'',
-    'instance_id TEXT NOT NULL DEFAULT \'\'',
-    'enabled INTEGER NOT NULL DEFAULT 1',
-    'send_delay_seconds INTEGER NOT NULL DEFAULT 120',
-    'daily_limit_per_number INTEGER NOT NULL DEFAULT 30',
-    'status TEXT NOT NULL DEFAULT \'not_configured\'',
-    'qrcode TEXT NOT NULL DEFAULT \'\'',
-    'last_error TEXT NOT NULL DEFAULT \'\'',
-    'last_test_at TEXT',
-    'connected_at TEXT',
-    'updated_by INTEGER',
-    'created_at TEXT NOT NULL DEFAULT \'\'',
-    'updated_at TEXT NOT NULL DEFAULT \'\'',
-  ]);
-
-  ensureColumns(database, 'whatsapp_templates', [
-    'name TEXT NOT NULL DEFAULT \'\'',
-    'body TEXT NOT NULL DEFAULT \'\'',
-    'category TEXT NOT NULL DEFAULT \'\'',
-    'active INTEGER NOT NULL DEFAULT 1',
-    'created_at TEXT NOT NULL DEFAULT \'\'',
-    'updated_at TEXT NOT NULL DEFAULT \'\'',
-  ]);
-
-  ensureColumns(database, 'whatsapp_messages', [
-    'client_id INTEGER',
-    'phone TEXT NOT NULL DEFAULT \'\'',
-    'direction TEXT NOT NULL DEFAULT \'outbound\'',
-    'provider TEXT NOT NULL DEFAULT \'\'',
-    'template_id INTEGER',
-    'message_body TEXT NOT NULL DEFAULT \'\'',
-    'status TEXT NOT NULL DEFAULT \'pending\'',
-    'provider_message_id TEXT NOT NULL DEFAULT \'\'',
-    'error_message TEXT NOT NULL DEFAULT \'\'',
-    'sent_by INTEGER',
-    'sent_at TEXT',
-    'received_at TEXT',
-    'delivered_at TEXT',
-    'read_at TEXT',
-    'created_at TEXT NOT NULL DEFAULT \'\'',
-    'updated_at TEXT NOT NULL DEFAULT \'\'',
-  ]);
-
-  ensureColumns(database, 'whatsapp_send_jobs', [
-    'client_id INTEGER',
-    'phone TEXT NOT NULL DEFAULT \'\'',
-    'template_id INTEGER',
-    'message_body TEXT NOT NULL DEFAULT \'\'',
-    'status TEXT NOT NULL DEFAULT \'pending\'',
-    'error_message TEXT NOT NULL DEFAULT \'\'',
-    'scheduled_at TEXT',
-    'created_by INTEGER',
-    'created_at TEXT NOT NULL DEFAULT \'\'',
-    'updated_at TEXT NOT NULL DEFAULT \'\'',
-  ]);
-
-  ensureColumns(database, 'whatsapp_flows', [
-    'name TEXT NOT NULL DEFAULT \'\'',
-    'description TEXT NOT NULL DEFAULT \'\'',
-    'active INTEGER NOT NULL DEFAULT 1',
-    'initial_template_id INTEGER',
-    'initial_message TEXT NOT NULL DEFAULT \'\'',
-    'fallback_message TEXT NOT NULL DEFAULT \'\'',
-    'fallback_human_after INTEGER NOT NULL DEFAULT 2',
-    'steps_json TEXT NOT NULL DEFAULT \'[]\'',
-    'created_at TEXT NOT NULL DEFAULT \'\'',
-    'updated_at TEXT NOT NULL DEFAULT \'\'',
-  ]);
-
-  ensureColumns(database, 'whatsapp_flow_executions', [
-    'flow_id INTEGER NOT NULL DEFAULT 0',
-    'client_id INTEGER',
-    'phone TEXT NOT NULL DEFAULT \'\'',
-    'status TEXT NOT NULL DEFAULT \'active\'',
-    'current_step_id TEXT NOT NULL DEFAULT \'\'',
-    'unmatched_count INTEGER NOT NULL DEFAULT 0',
-    'started_at TEXT',
-    'finished_at TEXT',
-    'last_message_at TEXT',
-    'created_by INTEGER',
-    'created_at TEXT NOT NULL DEFAULT \'\'',
-    'updated_at TEXT NOT NULL DEFAULT \'\'',
-  ]);
-
-  ensureColumns(database, 'whatsapp_flow_logs', [
-    'flow_execution_id INTEGER',
-    'client_id INTEGER',
-    'phone TEXT NOT NULL DEFAULT \'\'',
-    'inbound_message TEXT NOT NULL DEFAULT \'\'',
-    'matched_trigger TEXT NOT NULL DEFAULT \'\'',
-    'outbound_message TEXT NOT NULL DEFAULT \'\'',
-    'action_taken TEXT NOT NULL DEFAULT \'\'',
-    'created_at TEXT NOT NULL DEFAULT \'\'',
-  ]);
-
-  ensureColumns(database, 'campanhas_crm', [
-    'esteira_id INTEGER',
-    'grupo TEXT NOT NULL DEFAULT \'\'',
-    'total_selecionados INTEGER NOT NULL DEFAULT 0',
-    'total_enviados INTEGER NOT NULL DEFAULT 0',
-  ]);
-
-  ensureColumns(database, 'campanha_clientes', [
-    'simulacao_id INTEGER',
-    'banco TEXT NOT NULL DEFAULT \'\'',
-    'prazo INTEGER',
-    'valor_parcela REAL',
-    'faixa_valor TEXT NOT NULL DEFAULT \'\'',
-  ]);
-
   database.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_base_cpf ON clients(base_id, cpf)');
   database.exec('CREATE INDEX IF NOT EXISTS idx_clients_cpf_hash ON clients(cpf_hash)');
   database.exec('CREATE INDEX IF NOT EXISTS idx_client_phones_client ON client_phones(client_id)');
@@ -1891,17 +1653,6 @@ function initSchema(database) {
   database.exec('CREATE INDEX IF NOT EXISTS idx_client_consultation_emails_consultation ON client_consultation_emails(consultation_id)');
   database.exec('CREATE INDEX IF NOT EXISTS idx_customer_consents_customer_channel ON customer_consents(customer_id, channel, consent_status)');
   database.exec('CREATE INDEX IF NOT EXISTS idx_audit_log_entity ON audit_log(entity_type, entity_id, created_at)');
-  database.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_averbador_credentials_portal ON averbador_credentials(portal_id)');
-  database.exec('CREATE INDEX IF NOT EXISTS idx_averbador_sessions_portal ON averbador_sessions(portal_id, status)');
-  database.exec('CREATE INDEX IF NOT EXISTS idx_credential_connection_logs_portal ON credential_connection_logs(portal_id, created_at)');
-  database.exec('CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_phone ON whatsapp_messages(phone, created_at)');
-  database.exec('CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_provider_id ON whatsapp_messages(provider_message_id)');
-  database.exec('CREATE INDEX IF NOT EXISTS idx_whatsapp_flow_exec_client ON whatsapp_flow_executions(client_id, status)');
-  database.exec('CREATE INDEX IF NOT EXISTS idx_whatsapp_flow_logs_exec ON whatsapp_flow_logs(flow_execution_id, created_at)');
-  database.exec('CREATE INDEX IF NOT EXISTS idx_campanhas_crm_status ON campanhas_crm(status)');
-  database.exec('CREATE INDEX IF NOT EXISTS idx_campanhas_crm_esteira_grupo ON campanhas_crm(esteira_id, grupo)');
-  database.exec('CREATE INDEX IF NOT EXISTS idx_campanha_clientes_campanha_grupo ON campanha_clientes(campanha_id, status)');
-  database.exec('CREATE INDEX IF NOT EXISTS idx_campanha_clientes_busca ON campanha_clientes(campanha_id, banco, produto, faixa_valor)');
 }
 
 function ensureColumns(database, table, columns) {
@@ -2802,14 +2553,22 @@ export async function initDb() {
       rawDb = fs.existsSync(dbPath) ? new sqlJs.Database(fs.readFileSync(dbPath)) : new sqlJs.Database();
       db = createAdapter(rawDb);
 
-      initSchema(db);
-      backfillSensitiveHashes(db);
-      rebuildClientsTableForBaseSupport(db);
-      backfillBasesFromCampaigns(db);
-      backfillCampaignAssignments(db);
-      normalizeLegacyUsers(db);
-      db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_login ON users(login)');
-      seedDefaults(db);
+      // Startup migrations can touch many rows. Defer the sql.js export until
+      // all schema and backfill work is complete instead of rewriting the
+      // entire database after every statement.
+      transactionDepth += 1;
+      try {
+        initSchema(db);
+        backfillSensitiveHashes(db);
+        rebuildClientsTableForBaseSupport(db);
+        backfillBasesFromCampaigns(db);
+        backfillCampaignAssignments(db);
+        normalizeLegacyUsers(db);
+        db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_login ON users(login)');
+        seedDefaults(db);
+      } finally {
+        transactionDepth -= 1;
+      }
       persistDb();
       return db;
     })();
@@ -3900,9 +3659,21 @@ export function saveClientLookupPhones({ clientId, userId, phones = [], source =
   `);
 
   const existingPrimary = queryOne(database, 'SELECT id FROM client_phones WHERE client_id = ? AND is_primary = 1 AND status = ?', [Number(clientId), 'active']);
+  const orderedPhones = [...phones].sort((a, b) => {
+    const score = (phone) => {
+      const type = String(phone.type || '').toLowerCase();
+      const label = String(phone.raw_label || phone.label || phone.quality || '').toLowerCase();
+      const normalized = String(phone.normalized || phone.normalized_phone || phone.number || phone.phone_number || '').replace(/\D/g, '').replace(/^55/, '');
+      if (type.includes('whatsapp') || label.includes('whatsapp')) return 0;
+      if (type.includes('cel') || label.includes('cel') || (normalized.length === 11 && normalized[2] === '9')) return 1;
+      if (type.includes('fix') || normalized.length === 10) return 3;
+      return 2;
+    };
+    return score(a) - score(b);
+  });
   let primaryCandidate = null;
   let saved = 0;
-  for (const phone of phones) {
+  for (const phone of orderedPhones) {
     const normalized = String(phone.normalized || phone.normalized_phone || '').trim();
     if (!normalized) {
       continue;
@@ -4098,7 +3869,7 @@ export function getValidClientConsultationByCpf(cpf, { now = nowIso() } = {}) {
       SELECT id
       FROM client_consultations
       WHERE cpf = ?
-        AND status != 'expired'
+        AND status = 'success'
         AND datetime(expires_at) > datetime(?)
       ORDER BY datetime(consulted_at) DESC, id DESC
       LIMIT 1
@@ -4525,6 +4296,229 @@ export function writeAuditLog({ actorUserId = null, action, entityType, entityId
       nowIso()
     );
   persistDb();
+}
+
+export function listAverbadorCredentials() {
+  return queryAll(
+    getDb(),
+    `
+      SELECT *
+      FROM averbador_credentials
+      ORDER BY portal_name COLLATE NOCASE ASC, id ASC
+    `
+  );
+}
+
+export function getAverbadorCredentialById(id) {
+  return queryOne(getDb(), 'SELECT * FROM averbador_credentials WHERE id = ? LIMIT 1', [Number(id || 0)]);
+}
+
+export function getAverbadorCredentialByPortalId(portalId) {
+  return queryOne(
+    getDb(),
+    'SELECT * FROM averbador_credentials WHERE portal_id = ? LIMIT 1',
+    [String(portalId || '')]
+  );
+}
+
+export function upsertAverbadorCredential(payload = {}) {
+  const database = getDb();
+  const createdAt = payload.created_at || nowIso();
+  const updatedAt = nowIso();
+  database
+    .prepare(
+      `
+        INSERT INTO averbador_credentials (
+          portal_id,
+          portal_name,
+          portal_url,
+          api_url,
+          login,
+          encrypted_password,
+          requires_captcha,
+          requires_assisted_login,
+          session_status,
+          last_access_at,
+          session_expires_at,
+          last_test_at,
+          last_error,
+          created_by,
+          updated_by,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(portal_id) DO UPDATE SET
+          portal_name = excluded.portal_name,
+          portal_url = excluded.portal_url,
+          api_url = excluded.api_url,
+          login = excluded.login,
+          encrypted_password = excluded.encrypted_password,
+          requires_captcha = excluded.requires_captcha,
+          requires_assisted_login = excluded.requires_assisted_login,
+          session_status = excluded.session_status,
+          last_access_at = excluded.last_access_at,
+          session_expires_at = excluded.session_expires_at,
+          last_test_at = excluded.last_test_at,
+          last_error = excluded.last_error,
+          updated_by = excluded.updated_by,
+          updated_at = excluded.updated_at
+      `
+    )
+    .run(
+      String(payload.portal_id || ''),
+      String(payload.portal_name || ''),
+      String(payload.portal_url || ''),
+      String(payload.api_url || ''),
+      String(payload.login || ''),
+      String(payload.encrypted_password || ''),
+      payload.requires_captcha ? 1 : 0,
+      payload.requires_assisted_login ? 1 : 0,
+      String(payload.session_status || 'nao_conectado'),
+      payload.last_access_at || null,
+      payload.session_expires_at || null,
+      payload.last_test_at || null,
+      String(payload.last_error || ''),
+      payload.created_by ? Number(payload.created_by) : null,
+      payload.updated_by ? Number(payload.updated_by) : null,
+      createdAt,
+      updatedAt
+    );
+  persistDb();
+  return getAverbadorCredentialByPortalId(payload.portal_id);
+}
+
+export function updateAverbadorCredentialById(id, payload = {}) {
+  const database = getDb();
+  const current = getAverbadorCredentialById(id);
+  if (!current) {
+    return null;
+  }
+  const allowed = [
+    'portal_name',
+    'portal_url',
+    'login',
+    'encrypted_password',
+    'requires_captcha',
+    'requires_assisted_login',
+    'session_status',
+    'last_access_at',
+    'session_expires_at',
+    'last_test_at',
+    'last_error',
+    'updated_by',
+  ];
+  const entries = allowed.filter((key) => Object.prototype.hasOwnProperty.call(payload, key));
+  if (!entries.length) {
+    return current;
+  }
+  const assignments = entries.map((key) => `${key} = ?`).join(', ');
+  const values = entries.map((key) => {
+    if (key === 'requires_captcha' || key === 'requires_assisted_login') {
+      return payload[key] ? 1 : 0;
+    }
+    if (key === 'updated_by') {
+      return payload[key] ? Number(payload[key]) : null;
+    }
+    return payload[key] === undefined ? null : payload[key];
+  });
+  database
+    .prepare(`UPDATE averbador_credentials SET ${assignments}, updated_at = ? WHERE id = ?`)
+    .run(...values, nowIso(), Number(id));
+  persistDb();
+  return getAverbadorCredentialById(id);
+}
+
+export function upsertAverbadorSession(payload = {}) {
+  const database = getDb();
+  const result = database
+    .prepare(
+      `
+        INSERT INTO averbador_sessions (
+          credential_id,
+          portal_id,
+          status,
+          last_login_at,
+          expires_at,
+          requires_manual_action,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `
+    )
+    .run(
+      payload.credential_id ? Number(payload.credential_id) : null,
+      String(payload.portal_id || ''),
+      String(payload.status || 'nao_conectado'),
+      payload.last_login_at || null,
+      payload.expires_at || null,
+      payload.requires_manual_action ? 1 : 0,
+      nowIso(),
+      nowIso()
+    );
+  persistDb();
+  return queryOne(database, 'SELECT * FROM averbador_sessions WHERE id = ?', [Number(result?.lastInsertRowid || 0)]);
+}
+
+export function insertCredentialConnectionLog(payload = {}) {
+  const database = getDb();
+  const result = database
+    .prepare(
+      `
+        INSERT INTO credential_connection_logs (
+          credential_id,
+          portal_id,
+          action,
+          status,
+          message,
+          error_message,
+          created_by,
+          created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `
+    )
+    .run(
+      payload.credential_id ? Number(payload.credential_id) : null,
+      String(payload.portal_id || ''),
+      String(payload.action || ''),
+      String(payload.status || ''),
+      String(payload.message || ''),
+      String(payload.error_message || ''),
+      payload.created_by ? Number(payload.created_by) : null,
+      nowIso()
+    );
+  persistDb();
+  return queryOne(database, 'SELECT * FROM credential_connection_logs WHERE id = ?', [Number(result?.lastInsertRowid || 0)]);
+}
+
+export function listCredentialConnectionLogs(params = {}) {
+  const limit = Math.min(200, Math.max(1, Number(params.limit || 50)));
+  const portalId = String(params.portal_id || params.portalId || '').trim();
+  const filters = [];
+  const values = [];
+  if (portalId) {
+    filters.push('l.portal_id = ?');
+    values.push(portalId);
+  }
+  values.push(limit);
+  return queryAll(
+    getDb(),
+    `
+      SELECT
+        l.*,
+        c.portal_name,
+        u.name AS created_by_name
+      FROM credential_connection_logs l
+      LEFT JOIN averbador_credentials c ON c.id = l.credential_id
+      LEFT JOIN users u ON u.id = l.created_by
+      ${filters.length ? `WHERE ${filters.join(' AND ')}` : ''}
+      ORDER BY datetime(l.created_at) DESC, l.id DESC
+      LIMIT ?
+    `,
+    values
+  );
 }
 
 export function getActiveConsent(customerId, channel = 'whatsapp') {
@@ -5204,814 +5198,83 @@ export function recordUserLogin(id) {
   return getUserById(id);
 }
 
-function normalizeCredentialRow(row) {
-  if (!row) {
-    return null;
-  }
-  return {
-    ...row,
-    id: Number(row.id || 0),
-    requires_captcha: Boolean(row.requires_captcha),
-    requires_assisted_login: Boolean(row.requires_assisted_login),
-  };
-}
-
-export function listAverbadorCredentials() {
-  const database = getDb();
-  return queryAll(database, 'SELECT * FROM averbador_credentials ORDER BY portal_name ASC, portal_id ASC').map(
-    normalizeCredentialRow
-  );
-}
-
-export function getAverbadorCredentialById(id) {
-  const database = getDb();
-  return normalizeCredentialRow(queryOne(database, 'SELECT * FROM averbador_credentials WHERE id = ? LIMIT 1', [Number(id || 0)]));
-}
-
-export function getAverbadorCredentialByPortalId(portalId) {
-  const database = getDb();
-  return normalizeCredentialRow(
-    queryOne(database, 'SELECT * FROM averbador_credentials WHERE portal_id = ? LIMIT 1', [String(portalId || '')])
-  );
-}
-
-export function upsertAverbadorCredential(payload = {}) {
+export function createSantanaBatchRecord({
+  userId,
+  portalId = 'prefeitura_santana_parnaiba',
+  sourceFileName = '',
+  cpfs = [],
+}) {
   const database = getDb();
   const now = nowIso();
-  const portalId = String(payload.portal_id || '').trim();
-  if (!portalId) {
-    throw new Error('portal_id é obrigatório para salvar a credencial.');
-  }
-
-  const current = getAverbadorCredentialByPortalId(portalId);
-  if (current) {
-    database
-      .prepare(
-        `
-          UPDATE averbador_credentials
-          SET
-            portal_name = ?,
-            portal_url = ?,
-            login = ?,
-            encrypted_password = ?,
-            requires_captcha = ?,
-            requires_assisted_login = ?,
-            session_status = ?,
-            last_access_at = ?,
-            session_expires_at = ?,
-            last_test_at = ?,
-            last_error = ?,
-            created_by = COALESCE(created_by, ?),
-            updated_by = ?,
-            updated_at = ?
-          WHERE id = ?
-        `
-      )
-      .run(
-        payload.portal_name || current.portal_name || '',
-        payload.portal_url || current.portal_url || '',
-        payload.login ?? current.login ?? '',
-        payload.encrypted_password ?? current.encrypted_password ?? '',
-        payload.requires_captcha ? 1 : 0,
-        payload.requires_assisted_login ? 1 : 0,
-        payload.session_status || current.session_status || 'nao_conectado',
-        payload.last_access_at ?? current.last_access_at ?? null,
-        payload.session_expires_at ?? current.session_expires_at ?? null,
-        payload.last_test_at ?? current.last_test_at ?? null,
-        payload.last_error ?? current.last_error ?? '',
-        payload.created_by ?? null,
-        payload.updated_by ?? null,
-        now,
-        current.id
-      );
-    return getAverbadorCredentialById(current.id);
-  }
-
-  database
+  const uniqueCpfs = [...new Set((cpfs || []).map((item) => cleanDigits(item).padStart(11, '0')).filter((item) => item.length === 11))];
+  const result = database
     .prepare(
       `
-        INSERT INTO averbador_credentials (
-          portal_id, portal_name, portal_url, login, encrypted_password, requires_captcha,
-          requires_assisted_login, session_status, last_access_at, session_expires_at,
-          last_test_at, last_error, created_by, updated_by, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO santana_query_batches (
+          user_id, portal_id, source_file_name, total_cpfs, processed_count, success_count,
+          not_found_count, error_count, status, cpf_list_json, results_json,
+          error_message, started_at, finished_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 0, 0, 0, 0, 'pendente', ?, '[]', '', NULL, NULL, ?, ?)
       `
     )
-    .run(
-      portalId,
-      payload.portal_name || '',
-      payload.portal_url || '',
-      payload.login || '',
-      payload.encrypted_password || '',
-      payload.requires_captcha ? 1 : 0,
-      payload.requires_assisted_login ? 1 : 0,
-      payload.session_status || 'nao_conectado',
-      payload.last_access_at || null,
-      payload.session_expires_at || null,
-      payload.last_test_at || null,
-      payload.last_error || '',
-      payload.created_by ?? null,
-      payload.updated_by ?? null,
-      now,
-      now
-    );
-
-  return getAverbadorCredentialByPortalId(portalId);
+    .run(Number(userId || 0), String(portalId || 'prefeitura_santana_parnaiba'), String(sourceFileName || ''), uniqueCpfs.length, JSON.stringify(uniqueCpfs), now, now);
+  const id = Number(result?.lastInsertRowid || queryOne(database, 'SELECT MAX(id) AS id FROM santana_query_batches')?.id || 0);
+  return getSantanaBatchById(id);
 }
 
-export function updateAverbadorCredentialById(id, updates = {}) {
-  const database = getDb();
-  const current = getAverbadorCredentialById(id);
-  if (!current) {
-    return null;
-  }
-  const now = nowIso();
-
-  database
-    .prepare(
-      `
-        UPDATE averbador_credentials
-        SET
-          portal_name = ?,
-          portal_url = ?,
-          login = ?,
-          encrypted_password = ?,
-          requires_captcha = ?,
-          requires_assisted_login = ?,
-          session_status = ?,
-          last_access_at = ?,
-          session_expires_at = ?,
-          last_test_at = ?,
-          last_error = ?,
-          updated_by = ?,
-          updated_at = ?
-        WHERE id = ?
-      `
-    )
-    .run(
-      updates.portal_name ?? current.portal_name ?? '',
-      updates.portal_url ?? current.portal_url ?? '',
-      updates.login ?? current.login ?? '',
-      updates.encrypted_password ?? current.encrypted_password ?? '',
-      (updates.requires_captcha ?? current.requires_captcha) ? 1 : 0,
-      (updates.requires_assisted_login ?? current.requires_assisted_login) ? 1 : 0,
-      updates.session_status ?? current.session_status ?? 'nao_conectado',
-      updates.last_access_at ?? current.last_access_at ?? null,
-      updates.session_expires_at ?? current.session_expires_at ?? null,
-      updates.last_test_at ?? current.last_test_at ?? null,
-      updates.last_error ?? current.last_error ?? '',
-      updates.updated_by ?? current.updated_by ?? null,
-      now,
-      current.id
-    );
-
-  return getAverbadorCredentialById(current.id);
-}
-
-export function upsertAverbadorSession(payload = {}) {
-  const database = getDb();
-  const now = nowIso();
-  const credentialId = payload.credential_id ? Number(payload.credential_id) : null;
-  const portalId = String(payload.portal_id || '').trim();
-  const current = credentialId
-    ? queryOne(database, 'SELECT * FROM averbador_sessions WHERE credential_id = ? ORDER BY id DESC LIMIT 1', [credentialId])
-    : queryOne(database, 'SELECT * FROM averbador_sessions WHERE portal_id = ? ORDER BY id DESC LIMIT 1', [portalId]);
-
-  if (current) {
-    database
-      .prepare(
-        `
-          UPDATE averbador_sessions
-          SET
-            credential_id = ?,
-            portal_id = ?,
-            status = ?,
-            last_login_at = ?,
-            expires_at = ?,
-            requires_manual_action = ?,
-            updated_at = ?
-          WHERE id = ?
-        `
-      )
-      .run(
-        credentialId,
-        portalId || current.portal_id || '',
-        payload.status || current.status || 'nao_conectado',
-        payload.last_login_at ?? current.last_login_at ?? null,
-        payload.expires_at ?? current.expires_at ?? null,
-        payload.requires_manual_action ? 1 : 0,
-        now,
-        current.id
-      );
-    return queryOne(database, 'SELECT * FROM averbador_sessions WHERE id = ?', [current.id]);
-  }
-
-  database
-    .prepare(
-      `
-        INSERT INTO averbador_sessions (
-          credential_id, portal_id, status, last_login_at, expires_at,
-          requires_manual_action, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `
-    )
-    .run(
-      credentialId,
-      portalId,
-      payload.status || 'nao_conectado',
-      payload.last_login_at || null,
-      payload.expires_at || null,
-      payload.requires_manual_action ? 1 : 0,
-      now,
-      now
-    );
-
-  return queryOne(database, 'SELECT * FROM averbador_sessions ORDER BY id DESC LIMIT 1');
-}
-
-export function insertCredentialConnectionLog(payload = {}) {
-  const database = getDb();
-  const now = nowIso();
-  database
-    .prepare(
-      `
-        INSERT INTO credential_connection_logs (
-          credential_id, portal_id, action, status, message, error_message, created_by, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `
-    )
-    .run(
-      payload.credential_id ? Number(payload.credential_id) : null,
-      String(payload.portal_id || ''),
-      String(payload.action || ''),
-      String(payload.status || ''),
-      String(payload.message || ''),
-      String(payload.error_message || ''),
-      payload.created_by ?? null,
-      now
-    );
-  return queryOne(database, 'SELECT * FROM credential_connection_logs ORDER BY id DESC LIMIT 1');
-}
-
-export function listCredentialConnectionLogs(params = {}) {
-  const database = getDb();
-  const limit = Math.min(Math.max(Number(params.limit || 50), 1), 200);
-  const portalId = String(params.portal_id || params.portalId || '').trim();
-  if (portalId) {
-    return queryAll(
-      database,
-      `
-        SELECT *
-        FROM credential_connection_logs
-        WHERE portal_id = ?
-        ORDER BY datetime(created_at) DESC, id DESC
-        LIMIT ?
-      `,
-      [portalId, limit]
-    );
-  }
-  return queryAll(
-    database,
-    `
-      SELECT *
-      FROM credential_connection_logs
-      ORDER BY datetime(created_at) DESC, id DESC
-      LIMIT ?
-    `,
-    [limit]
-  );
-}
-
-function parseJsonSafe(value, fallback) {
-  try {
-    return JSON.parse(String(value || ''));
-  } catch {
-    return fallback;
-  }
-}
-
-function whatsappConfigDto(row, includeSecret = false) {
-  if (!row) {
-    return null;
-  }
-  const dto = {
-    ...row,
-    id: Number(row.id || 1),
-    enabled: Number(row.enabled ?? 1) === 1,
-    send_delay_seconds: Number(row.send_delay_seconds || 120),
-    daily_limit_per_number: Number(row.daily_limit_per_number || 30),
-    has_token: Boolean(row.encrypted_token),
-  };
-  if (!includeSecret) {
-    delete dto.encrypted_token;
-  }
-  return dto;
-}
-
-export function getWhatsappConfigRecord({ includeSecret = false } = {}) {
-  const database = getDb();
-  return whatsappConfigDto(queryOne(database, 'SELECT * FROM whatsapp_config WHERE id = 1 LIMIT 1'), includeSecret);
-}
-
-export function saveWhatsappConfigRecord(payload = {}) {
-  const database = getDb();
-  const now = nowIso();
-  const current = getWhatsappConfigRecord({ includeSecret: true }) || {};
-  database
-    .prepare(
-      `
-        INSERT INTO whatsapp_config (
-          id, provider, api_url, encrypted_token, default_country_code, default_number,
-          instance_id, enabled, send_delay_seconds, daily_limit_per_number, status, qrcode,
-          last_error, last_test_at, connected_at, updated_by, created_at, updated_at
-        ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          provider = excluded.provider,
-          api_url = excluded.api_url,
-          encrypted_token = excluded.encrypted_token,
-          default_country_code = excluded.default_country_code,
-          default_number = excluded.default_number,
-          instance_id = excluded.instance_id,
-          enabled = excluded.enabled,
-          send_delay_seconds = excluded.send_delay_seconds,
-          daily_limit_per_number = excluded.daily_limit_per_number,
-          status = excluded.status,
-          qrcode = excluded.qrcode,
-          last_error = excluded.last_error,
-          last_test_at = excluded.last_test_at,
-          connected_at = excluded.connected_at,
-          updated_by = excluded.updated_by,
-          updated_at = excluded.updated_at
-      `
-    )
-    .run(
-      payload.provider ?? current.provider ?? 'unofficial',
-      payload.api_url ?? current.api_url ?? '',
-      payload.encrypted_token ?? current.encrypted_token ?? '',
-      payload.default_country_code ?? current.default_country_code ?? '55',
-      payload.default_number ?? current.default_number ?? '',
-      payload.instance_id ?? current.instance_id ?? '',
-      payload.enabled === false ? 0 : 1,
-      Number(payload.send_delay_seconds ?? current.send_delay_seconds ?? 120),
-      Number(payload.daily_limit_per_number ?? current.daily_limit_per_number ?? 30),
-      payload.status ?? current.status ?? 'not_configured',
-      payload.qrcode ?? current.qrcode ?? '',
-      payload.last_error ?? current.last_error ?? '',
-      payload.last_test_at ?? current.last_test_at ?? null,
-      payload.connected_at ?? current.connected_at ?? null,
-      payload.updated_by ?? current.updated_by ?? null,
-      current.created_at || now,
-      now
-    );
-  return getWhatsappConfigRecord({ includeSecret: true });
-}
-
-function whatsappTemplateDto(row) {
-  if (!row) return null;
-  return { ...row, id: Number(row.id), active: Number(row.active ?? 1) === 1 };
-}
-
-export function listWhatsappTemplates(params = {}) {
-  const database = getDb();
-  const where = [];
-  const values = [];
-  if (params.active !== undefined) {
-    where.push('active = ?');
-    values.push(params.active === false ? 0 : 1);
-  }
-  const rows = queryAll(
-    database,
-    `SELECT * FROM whatsapp_templates ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY id DESC`,
-    values
-  );
-  return rows.map(whatsappTemplateDto);
-}
-
-export function getWhatsappTemplateById(id) {
-  const database = getDb();
-  return whatsappTemplateDto(queryOne(database, 'SELECT * FROM whatsapp_templates WHERE id = ? LIMIT 1', [Number(id || 0)]));
-}
-
-export function saveWhatsappTemplateRecord(input = {}) {
-  const database = getDb();
-  const now = nowIso();
-  const id = Number(input.id || 0);
-  if (id) {
-    database
-      .prepare('UPDATE whatsapp_templates SET name = ?, body = ?, category = ?, active = ?, updated_at = ? WHERE id = ?')
-      .run(input.name || '', input.body || '', input.category || '', input.active === false ? 0 : 1, now, id);
-    return getWhatsappTemplateById(id);
-  }
-  database
-    .prepare('INSERT INTO whatsapp_templates (name, body, category, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(input.name || '', input.body || '', input.category || '', input.active === false ? 0 : 1, now, now);
-  return getWhatsappTemplateById(lastInsertId(database));
-}
-
-function whatsappMessageDto(row) {
-  if (!row) return null;
-  return { ...row, id: Number(row.id), client_id: row.client_id === null ? null : Number(row.client_id) };
-}
-
-export function listWhatsappMessages(params = {}) {
-  const database = getDb();
-  const where = [];
-  const values = [];
-  const search = String(params.search || '').trim();
-  if (search) {
-    where.push('(phone LIKE ? OR provider_message_id LIKE ? OR message_body LIKE ?)');
-    values.push(`%${search}%`, `%${search}%`, `%${search}%`);
-  }
-  if (params.client_id || params.clientId) {
-    where.push('client_id = ?');
-    values.push(Number(params.client_id || params.clientId));
-  }
-  const limit = Math.min(Math.max(Number(params.limit || 100), 1), 500);
-  values.push(limit);
-  return queryAll(
-    database,
-    `SELECT * FROM whatsapp_messages ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY datetime(created_at) DESC, id DESC LIMIT ?`,
-    values
-  ).map(whatsappMessageDto);
-}
-
-export function createWhatsappMessageRecord(input = {}) {
-  const database = getDb();
-  const now = nowIso();
-  database
-    .prepare(
-      `
-        INSERT INTO whatsapp_messages (
-          client_id, phone, direction, provider, template_id, message_body, status,
-          provider_message_id, error_message, sent_by, sent_at, received_at,
-          delivered_at, read_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `
-    )
-    .run(
-      input.client_id ?? null,
-      input.phone || '',
-      input.direction || 'outbound',
-      input.provider || '',
-      input.template_id ?? null,
-      input.message_body || '',
-      input.status || 'pending',
-      input.provider_message_id || '',
-      input.error_message || '',
-      input.sent_by ?? null,
-      input.sent_at ?? null,
-      input.received_at ?? null,
-      input.delivered_at ?? null,
-      input.read_at ?? null,
-      now,
-      now
-    );
-  return whatsappMessageDto(queryOne(database, 'SELECT * FROM whatsapp_messages WHERE id = ?', [lastInsertId(database)]));
-}
-
-export function updateWhatsappMessageRecord(id, updates = {}) {
-  const database = getDb();
-  const current = whatsappMessageDto(queryOne(database, 'SELECT * FROM whatsapp_messages WHERE id = ? LIMIT 1', [Number(id || 0)]));
-  if (!current) return null;
-  database
-    .prepare(
-      `
-        UPDATE whatsapp_messages
-        SET status = ?, error_message = ?, delivered_at = ?, read_at = ?, updated_at = ?
-        WHERE id = ?
-      `
-    )
-    .run(
-      updates.status ?? current.status ?? 'pending',
-      updates.error_message ?? current.error_message ?? '',
-      updates.delivered_at ?? current.delivered_at ?? null,
-      updates.read_at ?? current.read_at ?? null,
-      nowIso(),
-      current.id
-    );
-  return whatsappMessageDto(queryOne(database, 'SELECT * FROM whatsapp_messages WHERE id = ?', [current.id]));
-}
-
-export function countWhatsappMessagesSentToday({ phone = '', provider = '' } = {}) {
-  const database = getDb();
-  const today = todayIsoDate();
-  const row = queryOne(
-    database,
-    `
-      SELECT COUNT(*) AS count
-      FROM whatsapp_messages
-      WHERE direction = 'outbound'
-        AND status IN ('sent', 'delivered', 'read')
-        AND date(COALESCE(sent_at, created_at)) = ?
-        AND (? = '' OR phone = ?)
-        AND (? = '' OR provider = ?)
-    `,
-    [today, phone, phone, provider, provider]
-  );
-  return Number(row?.count || 0);
-}
-
-export function getLastWhatsappOutboundByPhone(phone) {
-  const database = getDb();
-  return whatsappMessageDto(
-    queryOne(
-      database,
-      `
-        SELECT *
-        FROM whatsapp_messages
-        WHERE phone = ? AND direction = 'outbound'
-        ORDER BY datetime(COALESCE(sent_at, created_at)) DESC, id DESC
-        LIMIT 1
-      `,
-      [String(phone || '')]
-    )
-  );
-}
-
-export function createWhatsappSendJobRecord(input = {}) {
-  const database = getDb();
-  const now = nowIso();
-  database
-    .prepare(
-      `
-        INSERT INTO whatsapp_send_jobs (
-          client_id, phone, template_id, message_body, status, error_message,
-          scheduled_at, created_by, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `
-    )
-    .run(
-      input.client_id ?? null,
-      input.phone || '',
-      input.template_id ?? null,
-      input.message_body || '',
-      input.status || 'pending',
-      input.error_message || '',
-      input.scheduled_at ?? null,
-      input.created_by ?? null,
-      now,
-      now
-    );
-  return queryOne(database, 'SELECT * FROM whatsapp_send_jobs WHERE id = ?', [lastInsertId(database)]);
-}
-
-export function findClientByPhone(phone) {
-  const database = getDb();
-  const normalized = normalizePhoneToBrazilInternational(phone);
-  return queryOne(
-    database,
-    `
-      SELECT c.*
-      FROM clients c
-      LEFT JOIN client_phones cp ON cp.client_id = c.id
-      WHERE c.phone = ?
-         OR cp.phone_number = ?
-         OR cp.normalized_phone = ?
-      ORDER BY c.id DESC
-      LIMIT 1
-    `,
-    [String(phone || ''), String(phone || ''), normalized || String(phone || '')]
-  );
-}
-
-export function updateClientWhatsappState(clientId, updates = {}) {
-  const database = getDb();
-  const current = queryOne(database, 'SELECT * FROM clients WHERE id = ? LIMIT 1', [Number(clientId || 0)]);
-  if (!current) return null;
-  const allowedStatuses = new Set(['novo_na_fila', 'em_atendimento', 'aguardando_retorno', 'finalizado', 'convertido', 'sem_interesse']);
-  const statusAtendimento = updates.status_atendimento && allowedStatuses.has(String(updates.status_atendimento))
-    ? String(updates.status_atendimento)
-    : current.status_atendimento;
-  database
-    .prepare(
-      `
-        UPDATE clients
-        SET
-          whatsapp_allowed = ?,
-          whatsapp_opt_out = ?,
-          whatsapp_blocked = ?,
-          whatsapp_status = ?,
-          whatsapp_last_contact_at = ?,
-          whatsapp_last_response_at = ?,
-          status_atendimento = ?,
-          updated_at = ?
-        WHERE id = ?
-      `
-    )
-    .run(
-      updates.whatsapp_allowed ?? current.whatsapp_allowed ?? 1,
-      updates.whatsapp_opt_out ?? current.whatsapp_opt_out ?? 0,
-      updates.whatsapp_blocked ?? current.whatsapp_blocked ?? 0,
-      updates.whatsapp_status ?? current.whatsapp_status ?? '',
-      updates.whatsapp_last_contact_at ?? current.whatsapp_last_contact_at ?? null,
-      updates.whatsapp_last_response_at ?? current.whatsapp_last_response_at ?? null,
-      statusAtendimento,
-      nowIso(),
-      Number(clientId)
-    );
-  return queryOne(database, 'SELECT * FROM clients WHERE id = ?', [Number(clientId)]);
-}
-
-function whatsappFlowDto(row) {
+export function getSantanaBatchById(id) {
+  const row = queryOne(getDb(), 'SELECT * FROM santana_query_batches WHERE id = ? LIMIT 1', [Number(id || 0)]);
   if (!row) return null;
   return {
     ...row,
     id: Number(row.id),
-    active: Number(row.active ?? 1) === 1,
-    steps: parseJsonSafe(row.steps_json, []),
+    user_id: Number(row.user_id),
+    total_cpfs: Number(row.total_cpfs || 0),
+    processed_count: Number(row.processed_count || 0),
+    success_count: Number(row.success_count || 0),
+    not_found_count: Number(row.not_found_count || 0),
+    error_count: Number(row.error_count || 0),
+    progress_percent: row.total_cpfs ? Math.round((Number(row.processed_count || 0) / Number(row.total_cpfs)) * 100) : 0,
+    results: safeJsonParse(row.results_json, []),
   };
 }
 
-export function listWhatsappFlows(params = {}) {
-  const database = getDb();
-  const where = [];
-  const values = [];
-  if (params.active !== undefined) {
-    where.push('active = ?');
-    values.push(params.active === false ? 0 : 1);
+export function updateSantanaBatchRecord(id, updates = {}) {
+  const allowed = new Set([
+    'processed_count',
+    'success_count',
+    'not_found_count',
+    'error_count',
+    'status',
+    'results_json',
+    'error_message',
+    'started_at',
+    'finished_at',
+  ]);
+  const entries = Object.entries(updates).filter(([key]) => allowed.has(key));
+  if (!entries.length) return getSantanaBatchById(id);
+  const numeric = new Set(['processed_count', 'success_count', 'not_found_count', 'error_count']);
+  const values = entries.map(([key, value]) => (numeric.has(key) ? Number(value || 0) : String(value ?? '')));
+  getDb()
+    .prepare(`UPDATE santana_query_batches SET ${entries.map(([key]) => `${key} = ?`).join(', ')}, updated_at = ? WHERE id = ?`)
+    .run(...values, nowIso(), Number(id));
+  return getSantanaBatchById(id);
+}
+
+export function listSantanaBatches(limit = 20, portalId = '') {
+  const normalizedPortalId = String(portalId || '').trim();
+  if (normalizedPortalId) {
+    return queryAll(
+      getDb(),
+      'SELECT * FROM santana_query_batches WHERE portal_id = ? ORDER BY id DESC LIMIT ?',
+      [normalizedPortalId, Math.max(1, Math.min(100, Number(limit || 20)))]
+    ).map((row) => getSantanaBatchById(row.id));
   }
   return queryAll(
-    database,
-    `SELECT * FROM whatsapp_flows ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY id DESC`,
-    values
-  ).map(whatsappFlowDto);
-}
-
-export function getWhatsappFlowById(id) {
-  const database = getDb();
-  return whatsappFlowDto(queryOne(database, 'SELECT * FROM whatsapp_flows WHERE id = ? LIMIT 1', [Number(id || 0)]));
-}
-
-export function saveWhatsappFlowRecord(input = {}) {
-  const database = getDb();
-  const now = nowIso();
-  const id = Number(input.id || 0);
-  const stepsJson = JSON.stringify(Array.isArray(input.steps) ? input.steps : parseJsonSafe(input.steps_json, []));
-  if (id) {
-    database
-      .prepare(
-        `
-          UPDATE whatsapp_flows
-          SET name = ?, description = ?, active = ?, initial_template_id = ?, initial_message = ?,
-              fallback_message = ?, fallback_human_after = ?, steps_json = ?, updated_at = ?
-          WHERE id = ?
-        `
-      )
-      .run(
-        input.name || '',
-        input.description || '',
-        input.active === false ? 0 : 1,
-        input.initial_template_id ?? null,
-        input.initial_message || '',
-        input.fallback_message || '',
-        Number(input.fallback_human_after || 2),
-        stepsJson,
-        now,
-        id
-      );
-    return getWhatsappFlowById(id);
-  }
-  database
-    .prepare(
-      `
-        INSERT INTO whatsapp_flows (
-          name, description, active, initial_template_id, initial_message,
-          fallback_message, fallback_human_after, steps_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `
-    )
-    .run(
-      input.name || '',
-      input.description || '',
-      input.active === false ? 0 : 1,
-      input.initial_template_id ?? null,
-      input.initial_message || '',
-      input.fallback_message || '',
-      Number(input.fallback_human_after || 2),
-      stepsJson,
-      now,
-      now
-    );
-  return getWhatsappFlowById(lastInsertId(database));
-}
-
-function whatsappFlowExecutionDto(row) {
-  if (!row) return null;
-  return { ...row, id: Number(row.id), flow_id: Number(row.flow_id), client_id: row.client_id === null ? null : Number(row.client_id) };
-}
-
-export function listWhatsappFlowExecutions(params = {}) {
-  const database = getDb();
-  const limit = Math.min(Math.max(Number(params.limit || 100), 1), 500);
-  return queryAll(
-    database,
-    'SELECT * FROM whatsapp_flow_executions ORDER BY datetime(created_at) DESC, id DESC LIMIT ?',
-    [limit]
-  ).map(whatsappFlowExecutionDto);
-}
-
-export function getActiveWhatsappFlowExecutionForClient(clientId) {
-  const database = getDb();
-  return whatsappFlowExecutionDto(
-    queryOne(
-      database,
-      `
-        SELECT *
-        FROM whatsapp_flow_executions
-        WHERE client_id = ? AND status IN ('active', 'waiting_response')
-        ORDER BY datetime(created_at) DESC, id DESC
-        LIMIT 1
-      `,
-      [Number(clientId || 0)]
-    )
-  );
-}
-
-export function createWhatsappFlowExecutionRecord(input = {}) {
-  const database = getDb();
-  const now = nowIso();
-  database
-    .prepare(
-      `
-        INSERT INTO whatsapp_flow_executions (
-          flow_id, client_id, phone, status, current_step_id, unmatched_count,
-          started_at, finished_at, last_message_at, created_by, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `
-    )
-    .run(
-      Number(input.flow_id || 0),
-      input.client_id ?? null,
-      input.phone || '',
-      input.status || 'active',
-      input.current_step_id || '',
-      Number(input.unmatched_count || 0),
-      input.started_at || null,
-      input.finished_at || null,
-      input.last_message_at || null,
-      input.created_by ?? null,
-      now,
-      now
-    );
-  return whatsappFlowExecutionDto(queryOne(database, 'SELECT * FROM whatsapp_flow_executions WHERE id = ?', [lastInsertId(database)]));
-}
-
-export function updateWhatsappFlowExecutionRecord(id, updates = {}) {
-  const database = getDb();
-  const current = whatsappFlowExecutionDto(queryOne(database, 'SELECT * FROM whatsapp_flow_executions WHERE id = ? LIMIT 1', [Number(id || 0)]));
-  if (!current) return null;
-  database
-    .prepare(
-      `
-        UPDATE whatsapp_flow_executions
-        SET status = ?, current_step_id = ?, unmatched_count = ?, finished_at = ?, last_message_at = ?, updated_at = ?
-        WHERE id = ?
-      `
-    )
-    .run(
-      updates.status ?? current.status ?? 'active',
-      updates.current_step_id ?? current.current_step_id ?? '',
-      Number(updates.unmatched_count ?? current.unmatched_count ?? 0),
-      updates.finished_at ?? current.finished_at ?? null,
-      updates.last_message_at ?? current.last_message_at ?? null,
-      nowIso(),
-      current.id
-    );
-  return whatsappFlowExecutionDto(queryOne(database, 'SELECT * FROM whatsapp_flow_executions WHERE id = ?', [current.id]));
-}
-
-export function createWhatsappFlowLogRecord(input = {}) {
-  const database = getDb();
-  database
-    .prepare(
-      `
-        INSERT INTO whatsapp_flow_logs (
-          flow_execution_id, client_id, phone, inbound_message, matched_trigger,
-          outbound_message, action_taken, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `
-    )
-    .run(
-      input.flow_execution_id ?? null,
-      input.client_id ?? null,
-      input.phone || '',
-      input.inbound_message || '',
-      input.matched_trigger || '',
-      input.outbound_message || '',
-      input.action_taken || '',
-      nowIso()
-    );
-  return queryOne(database, 'SELECT * FROM whatsapp_flow_logs WHERE id = ?', [lastInsertId(database)]);
-}
-
-export function listWhatsappFlowLogs(params = {}) {
-  const database = getDb();
-  const limit = Math.min(Math.max(Number(params.limit || 100), 1), 500);
-  return queryAll(
-    database,
-    'SELECT * FROM whatsapp_flow_logs ORDER BY datetime(created_at) DESC, id DESC LIMIT ?',
-    [limit]
-  );
+    getDb(),
+    'SELECT * FROM santana_query_batches ORDER BY id DESC LIMIT ?',
+    [Math.max(1, Math.min(100, Number(limit || 20)))]
+  ).map((row) => getSantanaBatchById(row.id));
 }
 
 export function createRibeiraoBatchRecord({
@@ -6020,6 +5283,7 @@ export function createRibeiraoBatchRecord({
   sourceType = 'upload',
   sourceFileName = '',
   totalCpfs = 0,
+  cpfListJson = '[]',
 }) {
   const database = getDb();
   const now = nowIso();
@@ -6039,11 +5303,12 @@ export function createRibeiraoBatchRecord({
           error_count,
           captcha_count,
           status,
+          cpf_list_json,
           started_at,
           finished_at,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, 'pendente', NULL, NULL, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, 'pendente', ?, NULL, NULL, ?, ?)
       `
     )
     .run(
@@ -6054,6 +5319,7 @@ export function createRibeiraoBatchRecord({
       String(sourceType || 'upload').toLowerCase(),
       String(sourceFileName || ''),
       Number(totalCpfs || 0),
+      String(cpfListJson || '[]'),
       now,
       now
     );
@@ -6124,6 +5390,7 @@ export function updateRibeiraoBatchRecord(id, updates = {}) {
     error_count: 'error_count',
     captcha_count: 'captcha_count',
     status: 'status',
+    cpf_list_json: 'cpf_list_json',
     started_at: 'started_at',
     finished_at: 'finished_at',
     base_id: 'base_id',
@@ -7592,7 +6859,6 @@ export function listCampaignOpportunities(params = {}) {
   const faixaMin = params.faixa_min === undefined || params.faixa_min === '' ? null : Number(params.faixa_min);
   const faixaMax = params.faixa_max === undefined || params.faixa_max === '' ? null : Number(params.faixa_max);
   const faixaValor = String(params.faixa_valor || '').trim();
-  const grupo = String(params.grupo || '').trim();
   const idadeMin = params.idade_min === undefined || params.idade_min === '' ? null : Number(params.idade_min);
   const idadeMax = params.idade_max === undefined || params.idade_max === '' ? null : Number(params.idade_max);
   if (convenio) {
@@ -7606,9 +6872,6 @@ export function listCampaignOpportunities(params = {}) {
   }
   if (faixaValor) {
     opportunities = opportunities.filter((item) => item.faixa_valor === faixaValor);
-  }
-  if (grupo) {
-    opportunities = opportunities.filter((item) => item.grupo === grupo);
   }
   if (Number.isFinite(faixaMin)) {
     opportunities = opportunities.filter((item) => item.valor_liberado >= faixaMin);
@@ -7642,8 +6905,6 @@ export function listCampaignOpportunities(params = {}) {
 
 export function createDispatchCampaign({
   nome,
-  esteira_id = null,
-  grupo = '',
   convenio = 'todos',
   sessao_rewhats = '',
   clientes = [],
@@ -7662,28 +6923,9 @@ export function createDispatchCampaign({
   correntista_santander = false,
   conta_diferente_holerite = false,
 }) {
-  const selectedClients = Array.isArray(clientes) && clientes.length
-    ? clientes
-    : listCampaignOpportunities({
-        convenio,
-        produto,
-        banco,
-        faixa_valor,
-        grupo,
-      }).oportunidades;
-  if (!selectedClients.length) {
-    throw new Error('Nenhum cliente elegivel para criar campanha.');
-  }
-
-  const normalizedBanco = normalizeBankKey(banco || selectedClients[0]?.banco);
-  const normalizedProduto = String(produto || selectedClients[0]?.produto || '');
-  const normalizedConvenio = String(convenio || selectedClients[0]?.convenio || 'todos');
-  const bankCoefficient = getCoefficientConfig(getActiveBankCoefficients(), normalizedConvenio, normalizedBanco, normalizedProduto);
-  const fallbackCoefficient = getTodayCampaignCoefficient();
-  const coefficientValue = Number(selectedClients[0]?.coeficiente || bankCoefficient?.coeficiente || fallbackCoefficient.coeficiente);
-  const termValue = Number(selectedClients[0]?.prazo || bankCoefficient?.prazo || fallbackCoefficient.prazo);
-  if (!Number.isFinite(coefficientValue) || coefficientValue <= 0 || !Number.isFinite(termValue) || termValue <= 0) {
-    throw new Error('Coeficiente do dia nao cadastrado para este banco/produto.');
+  const coefficient = getTodayCampaignCoefficient();
+  if (!coefficient.cadastrado) {
+    throw new Error('Coeficiente do dia nao cadastrado.');
   }
   const database = getDb();
   const id = crypto.randomUUID();
@@ -7692,22 +6934,20 @@ export function createDispatchCampaign({
     .prepare(
       `
         INSERT INTO campanhas_crm (
-          id, nome, esteira_id, grupo, convenio, produto, banco, faixa_valor, mensagem_inicial,
+          id, nome, convenio, produto, banco, faixa_valor, mensagem_inicial,
           followup_mensagem, followup_intervalo_horas, janela_inicio, janela_fim,
           intervalo_envios_segundos, incluir_idade_nao_encontrada, apenas_com_telefone,
-          excluir_opt_out, coeficiente, prazo, sessao_rewhats, status, total_selecionados, total_disparos, criada_em
+          excluir_opt_out, coeficiente, prazo, sessao_rewhats, status, criada_em
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'RASCUNHO', ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PREVIA_GERADA', ?)
       `
     )
     .run(
       id,
       String(nome || '').trim(),
-      esteira_id === null || esteira_id === undefined || esteira_id === '' ? null : Number(esteira_id),
-      String(grupo || selectedClients[0]?.grupo || ''),
-      normalizedConvenio,
-      normalizedProduto,
-      normalizedBanco,
+      String(convenio || 'todos'),
+      String(produto || ''),
+      normalizeBankKey(banco),
       String(faixa_valor || ''),
       String(mensagem_inicial || ''),
       String(followup_mensagem || ''),
@@ -7718,37 +6958,27 @@ export function createDispatchCampaign({
       incluir_idade_nao_encontrada ? 1 : 0,
       apenas_com_telefone ? 1 : 0,
       excluir_opt_out ? 1 : 0,
-      coefficientValue,
-      termValue,
+      coefficient.coeficiente,
+      coefficient.prazo,
       String(sessao_rewhats || ''),
-      selectedClients.length,
-      selectedClients.length,
       now
     );
 
   const insert = database.prepare(`
     INSERT INTO campanha_clientes (
-      campanha_id, client_id, simulacao_id, produto, banco, prazo, margem_disponivel,
-      valor_liberado, valor_parcela, faixa_valor, oferta_complementar,
-      produto_complementar, valor_complementar, telefone,
+      campanha_id, client_id, produto, margem_disponivel, valor_liberado,
+      oferta_complementar, produto_complementar, valor_complementar, telefone,
       status, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pendente', ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pendente', ?, ?)
   `);
 
-  for (const client of selectedClients) {
-    const prazo = Number(client.prazo || termValue || 0);
-    const valorLiberado = toMoneyNumber(client.valor_liberado);
+  for (const client of clientes) {
     insert.run(
       id,
       Number(client.client_id),
-      client.simulacao_id === null || client.simulacao_id === undefined ? null : Number(client.simulacao_id),
       String(client.produto || ''),
-      normalizeBankKey(client.banco || normalizedBanco),
-      prazo || null,
       toMoneyNumber(client.margem_disponivel),
-      valorLiberado,
-      prazo ? valorLiberado / prazo : null,
-      String(client.faixa_valor || ''),
+      toMoneyNumber(client.valor_liberado),
       client.oferta_complementar ? 1 : 0,
       client.produto_complementar || null,
       client.valor_complementar === null || client.valor_complementar === undefined ? null : toMoneyNumber(client.valor_complementar),
@@ -7757,7 +6987,7 @@ export function createDispatchCampaign({
       now
     );
   }
-  createDocumentChecklistsForCampaign(database, id, selectedClients, normalizedBanco, {
+  createDocumentChecklistsForCampaign(database, id, clientes, banco, {
     correntista_santander,
     conta_diferente_holerite,
   });
@@ -7791,7 +7021,7 @@ export function getDispatchCampaignById(id) {
   const clientes = queryAll(
     database,
     `
-      SELECT cc.*, c.name AS nome, '***.***.***-**' AS cpf_mascarado
+      SELECT cc.*, c.name AS nome, c.cpf
       FROM campanha_clientes cc
       LEFT JOIN clients c ON c.id = cc.client_id
       WHERE cc.campanha_id = ?
@@ -7810,8 +7040,6 @@ export function getDispatchCampaignById(id) {
       coeficiente: Number(campanha.coeficiente),
       prazo: Number(campanha.prazo),
       total_disparos: Number(campanha.total_disparos || 0),
-      total_selecionados: Number(campanha.total_selecionados || campanha.total_disparos || 0),
-      total_enviados: Number(campanha.total_enviados || campanha.total_disparos || 0),
       total_respostas: Number(campanha.total_respostas || 0),
       total_aceites: Number(campanha.total_aceites || 0),
     },
@@ -7821,8 +7049,6 @@ export function getDispatchCampaignById(id) {
       client_id: Number(row.client_id),
       margem_disponivel: Number(row.margem_disponivel || 0),
       valor_liberado: Number(row.valor_liberado || 0),
-      valor_parcela: row.valor_parcela === null || row.valor_parcela === undefined ? null : Number(row.valor_parcela),
-      prazo: row.prazo === null || row.prazo === undefined ? null : Number(row.prazo),
       oferta_complementar: Number(row.oferta_complementar || 0) === 1,
       valor_complementar: row.valor_complementar === null || row.valor_complementar === undefined ? null : Number(row.valor_complementar),
     })),
@@ -7836,18 +7062,13 @@ export function startDispatchCampaign(id) {
   if (!current) {
     return null;
   }
-  if (String(current.status || '').toUpperCase() !== 'PRONTA_PARA_DISPARO') {
-    const error = new Error('Campanha precisa estar PRONTA_PARA_DISPARO antes do envio real.');
-    error.code = 'CAMPAIGN_NOT_READY';
-    throw error;
-  }
   if (String(process.env.CAMPANHA_REAL_SEND_ENABLED || 'false').toLowerCase() !== 'true') {
     const error = new Error('Disparo real bloqueado nesta fase. Execute dry-run e deixe a campanha como PRONTA_PARA_DISPARO.');
     error.code = 'REAL_SEND_BLOCKED';
     throw error;
   }
   database
-    .prepare("UPDATE campanhas_crm SET status = 'EM_DISPARO', iniciada_em = COALESCE(iniciada_em, ?) WHERE id = ?")
+    .prepare("UPDATE campanhas_crm SET status = 'em_andamento', iniciada_em = COALESCE(iniciada_em, ?) WHERE id = ?")
     .run(nowIso(), current.id);
   persistDb();
   return getDispatchCampaignById(current.id);
@@ -7855,10 +7076,9 @@ export function startDispatchCampaign(id) {
 
 function renderCampaignMessage(template, client, campaign) {
   const value = Number(client.valor_liberado || 0);
-  const installment = client.valor_parcela || (campaign?.prazo ? value / Number(campaign.prazo || 1) : 0);
-  const firstName = String(client.nome || '').trim().split(/\s+/)[0] || String(client.nome || '');
+  const installment = campaign?.prazo ? value / Number(campaign.prazo || 1) : 0;
   return String(template || 'Oie, {nome} 👋 é a Aline, tudo bem?')
-    .replaceAll('{nome}', firstName)
+    .replaceAll('{nome}', String(client.nome || ''))
     .replaceAll('{valor_liberado}', formatMoney(value))
     .replaceAll('{prazo}', String(campaign?.prazo || ''))
     .replaceAll('{parcela}', formatMoney(installment))
@@ -7949,7 +7169,7 @@ export function runCampaignDryRun(id) {
     )
     .run(campanha.id, nowIso(), wouldSend.length, excluded.length, JSON.stringify(result));
   database
-    .prepare("UPDATE campanhas_crm SET status = 'DRY_RUN_OK' WHERE id = ?")
+    .prepare("UPDATE campanhas_crm SET status = 'PRONTA_PARA_DISPARO' WHERE id = ?")
     .run(campanha.id);
   persistDb();
   return {
@@ -7957,94 +7177,6 @@ export function runCampaignDryRun(id) {
     resultado: result,
     campanha: getDispatchCampaignById(campanha.id)?.campanha,
   };
-}
-
-export function getDispatchCampaignPreview(id) {
-  const campaignData = getDispatchCampaignById(id);
-  if (!campaignData) {
-    return null;
-  }
-  const { campanha, clientes } = campaignData;
-  const previa = clientes.map((client) => ({
-    id: client.id,
-    client_id: client.client_id,
-    nome: client.nome || '',
-    cpf: client.cpf_mascarado || '***.***.***-**',
-    telefone: client.telefone || '',
-    produto: client.produto,
-    banco: client.banco || campanha.banco || '',
-    valor_liberado: client.valor_liberado,
-    valor_parcela: client.valor_parcela,
-    prazo: client.prazo || campanha.prazo,
-    faixa_valor: client.faixa_valor || '',
-    chip_seria_usado: campanha.sessao_rewhats || 'não configurado',
-    mensagem_montada: renderCampaignMessage(campanha.mensagem_inicial, client, campanha),
-  }));
-  const valorTotal = previa.reduce((sum, row) => sum + Number(row.valor_liberado || 0), 0);
-  getDb().prepare("UPDATE campanhas_crm SET status = 'PREVIA_GERADA' WHERE id = ? AND status = 'RASCUNHO'").run(campanha.id);
-  persistDb();
-  return {
-    campanha: getDispatchCampaignById(campanha.id)?.campanha || campanha,
-    total: previa.length,
-    previa,
-    resumo: {
-      total_clientes: previa.length,
-      valor_total_estimado: valorTotal,
-      valor_medio: previa.length ? valorTotal / previa.length : 0,
-      banco: campanha.banco || '',
-      coeficiente: campanha.coeficiente,
-      prazo: campanha.prazo,
-      chip: campanha.sessao_rewhats || 'não configurado',
-      followup: campanha.followup_mensagem ? 'configurado' : 'não configurado',
-    },
-  };
-}
-
-export function approveDispatchCampaign(id) {
-  const database = getDb();
-  const campaign = queryOne(database, 'SELECT * FROM campanhas_crm WHERE id = ? LIMIT 1', [String(id || '')]);
-  if (!campaign) {
-    return null;
-  }
-  if (String(campaign.status || '').toUpperCase() !== 'DRY_RUN_OK') {
-    const error = new Error('Campanha precisa ter dry-run concluido antes de aprovar.');
-    error.code = 'DRY_RUN_REQUIRED';
-    throw error;
-  }
-  if (!String(campaign.sessao_rewhats || '').trim()) {
-    const error = new Error('Chip/sessao ReWhats nao configurado.');
-    error.code = 'SESSION_REQUIRED';
-    throw error;
-  }
-  database.prepare("UPDATE campanhas_crm SET status = 'PRONTA_PARA_DISPARO' WHERE id = ?").run(campaign.id);
-  persistDb();
-  return getDispatchCampaignById(campaign.id);
-}
-
-const DISPATCH_STATUS_FLOW = {
-  RASCUNHO: ['PREVIA_GERADA'],
-  PREVIA_GERADA: ['DRY_RUN_OK', 'RASCUNHO'],
-  DRY_RUN_OK: ['PRONTA_PARA_DISPARO', 'PREVIA_GERADA'],
-  PRONTA_PARA_DISPARO: ['EM_DISPARO', 'RASCUNHO'],
-  EM_DISPARO: ['PAUSADA', 'CONCLUIDA'],
-  PAUSADA: ['EM_DISPARO', 'CONCLUIDA'],
-};
-
-export function updateDispatchCampaignStatus(id, status) {
-  const database = getDb();
-  const nextStatus = String(status || '').trim().toUpperCase();
-  const current = queryOne(database, 'SELECT * FROM campanhas_crm WHERE id = ? LIMIT 1', [String(id || '')]);
-  if (!current) return null;
-  const currentStatus = String(current.status || 'RASCUNHO').toUpperCase();
-  const allowed = DISPATCH_STATUS_FLOW[currentStatus] || [];
-  if (!allowed.includes(nextStatus)) {
-    const error = new Error(`Transicao invalida: ${currentStatus} -> ${nextStatus}. Permitidos: ${allowed.join(', ')}`);
-    error.code = 'INVALID_STATUS_TRANSITION';
-    throw error;
-  }
-  database.prepare('UPDATE campanhas_crm SET status = ? WHERE id = ?').run(nextStatus, current.id);
-  persistDb();
-  return getDispatchCampaignById(current.id);
 }
 
 export function listCampaignDryRuns(id) {
@@ -8095,7 +7227,7 @@ export function markCampaignClientSent(clientRowId) {
     .run(nowIso(), nowIso(), nowIso(), Number(clientRowId));
   const row = queryOne(database, 'SELECT campanha_id FROM campanha_clientes WHERE id = ?', [Number(clientRowId)]);
   if (row?.campanha_id) {
-    database.prepare('UPDATE campanhas_crm SET total_disparos = total_disparos + 1, total_enviados = total_enviados + 1 WHERE id = ?').run(row.campanha_id);
+    database.prepare('UPDATE campanhas_crm SET total_disparos = total_disparos + 1 WHERE id = ?').run(row.campanha_id);
   }
   persistDb();
 }
@@ -8117,7 +7249,7 @@ export function markCampaignClientFailed(clientRowId, reason = '') {
 export function completeDispatchCampaign(id) {
   const database = getDb();
   database
-    .prepare("UPDATE campanhas_crm SET status = 'CONCLUIDA', concluida_em = COALESCE(concluida_em, ?) WHERE id = ?")
+    .prepare("UPDATE campanhas_crm SET status = 'concluida', concluida_em = COALESCE(concluida_em, ?) WHERE id = ?")
     .run(nowIso(), String(id || ''));
   persistDb();
   return getDispatchCampaignById(id);

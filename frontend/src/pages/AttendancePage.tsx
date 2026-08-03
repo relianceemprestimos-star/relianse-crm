@@ -10,7 +10,6 @@ import {
   MoveRight,
   PhoneCall,
   Send,
-  ShieldAlert,
   ThumbsDown,
   ThumbsUp,
   TimerReset,
@@ -18,9 +17,9 @@ import {
 import toast from 'react-hot-toast';
 
 import { api } from '../lib/api';
-import { formatCpfDisplay, formatPhoneDisplay, openWhatsAppConversation } from '../lib/whatsapp';
+import { createWhatsAppLink, formatCpfDisplay, formatPhoneDisplay } from '../lib/whatsapp';
 import { formatCurrencyDisplay, marginState, productLabel } from '../lib/margins';
-import type { Client, Settings, WhatsappFlow, WhatsappFlowExecution, WhatsappFlowLog, WhatsappTemplate } from '../types';
+import type { Client, Settings } from '../types';
 import { useAuth } from '../components/AuthProvider';
 import { Badge, Button, Card, Input, Modal, SectionHeader, Textarea } from '../components/ui';
 
@@ -59,15 +58,6 @@ export default function AttendancePage() {
   });
   const [settings, setSettings] = useState<Settings | null>(null);
   const [queuePosition, setQueuePosition] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
-  const [whatsappApiMessage, setWhatsappApiMessage] = useState('');
-  const [whatsappApiSending, setWhatsappApiSending] = useState(false);
-  const [whatsappTemplates, setWhatsappTemplates] = useState<WhatsappTemplate[]>([]);
-  const [selectedWhatsappTemplateId, setSelectedWhatsappTemplateId] = useState('');
-  const [whatsappFlows, setWhatsappFlows] = useState<WhatsappFlow[]>([]);
-  const [activeFlowExecution, setActiveFlowExecution] = useState<WhatsappFlowExecution | null>(null);
-  const [flowLogs, setFlowLogs] = useState<WhatsappFlowLog[]>([]);
-  const [selectedFlowId, setSelectedFlowId] = useState('');
-  const [flowActionLoading, setFlowActionLoading] = useState(false);
 
   const baseScope = useMemo(
     () => ({
@@ -81,20 +71,9 @@ export default function AttendancePage() {
     let active = true;
     async function loadSettings() {
       try {
-        const [settingsResponse, dashboardResponse, whatsappTemplatesResponse, whatsappFlowsResponse] = await Promise.all([
-          api.getSettings(),
-          api.getDashboard(baseScope),
-          api.getWhatsappTemplates({ active: 1 }),
-          api.getWhatsappFlows({ active: 1, with_steps: false }),
-        ]);
+        const [settingsResponse, dashboardResponse] = await Promise.all([api.getSettings(), api.getDashboard(baseScope)]);
         if (!active) return;
         setSettings(settingsResponse.settings);
-        setWhatsappTemplates(whatsappTemplatesResponse.rows || []);
-        const activeFlows = whatsappFlowsResponse.rows || [];
-        setWhatsappFlows(activeFlows);
-        if (activeFlows.length) {
-          setSelectedFlowId(String(activeFlows[0].id));
-        }
         setQueuePosition({
           current: dashboardResponse.nextClient?.queue_position ?? 0,
           total: dashboardResponse.nextClient?.queue_total ?? dashboardResponse.stats.queue_clients ?? 0,
@@ -109,16 +88,6 @@ export default function AttendancePage() {
       active = false;
     };
   }, [baseScope]);
-
-  useEffect(() => {
-    if (client && settings?.whatsapp_message && !whatsappApiMessage) {
-      setWhatsappApiMessage(
-        settings.whatsapp_message
-          .replace(/\{nome\}/g, client.name || '')
-          .replace(/\{cpf\}/g, client.cpf || '')
-      );
-    }
-  }, [client?.id, settings?.whatsapp_message]);
 
   useEffect(() => {
     let active = true;
@@ -142,12 +111,11 @@ export default function AttendancePage() {
             setClient(started.client);
             setTimeline((started.interactions || []).map((item: TimelineItem) => item));
           }
-          await refreshClient(details.client.id);
         } else {
           const nextResponse = await api.getNextClient(baseScope);
           if (!nextResponse.next) {
             if (active) setClient(null);
-            toast('NÃ£o hÃ¡ clientes na fila no momento.');
+            toast('Não há clientes na fila no momento.');
             return;
           }
 
@@ -167,7 +135,6 @@ export default function AttendancePage() {
             current: nextResponse.next.queue_position,
             total: nextResponse.next.queue_total,
           });
-          await refreshClient(started.client.id);
         }
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Falha ao carregar o atendimento.');
@@ -196,123 +163,83 @@ export default function AttendancePage() {
     const details = await api.getClient(clientId);
     setClient(details.client);
     setTimeline((details.interactions || []).map((item: TimelineItem) => item));
-    const [executionResponse, logsResponse] = await Promise.all([
-      api.getWhatsappFlowExecutions({ client_id: clientId, limit: 1 }),
-      api.getWhatsappFlowLogs({ client_id: clientId, limit: 10 }),
-    ]);
-    setActiveFlowExecution((executionResponse.rows || [])[0] || null);
-    setFlowLogs(logsResponse.rows || []);
+  }
+
+  function getActiveClientId() {
+    const idFromClient = Number(client?.id || 0);
+    const idFromUrl = Number(searchParams.get('clientId') || 0);
+    const id = idFromClient || idFromUrl;
+    return Number.isFinite(id) && id > 0 ? id : 0;
+  }
+
+  function friendlyLookupError(error: unknown) {
+    const message = error instanceof Error ? error.message : 'Falha ao buscar telefone.';
+    if (/effectiveCpf is not defined/i.test(message)) {
+      return 'Busca de telefone atualizada. Recarregue a página e tente novamente.';
+    }
+    if (/Cannot read properties of null|Cannot read properties of undefined|reading 'id'|reading "id"/i.test(message)) {
+      return 'Não consegui identificar o cliente para buscar telefone. Reabra o atendimento e tente novamente.';
+    }
+    return message || 'Falha ao buscar telefone.';
   }
 
   async function openClientWhatsApp() {
     if (!client || !settings) return;
 
-    const link = openWhatsAppConversation(client, settings.whatsapp_message, settings);
+    const link = createWhatsAppLink(client, settings.whatsapp_message, settings);
     if (!link) {
-      toast.error('Telefone indisponÃ­vel para o WhatsApp.');
+      toast.error('Telefone indisponível para o WhatsApp.');
       return;
     }
 
     try {
       await api.openWhatsappLog(client.id);
-    } catch {
-      // ignore logging failure
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'WhatsApp bloqueado por regra de consentimento.');
+      return;
     }
 
+    window.open(link, '_blank', 'noopener,noreferrer');
     toast.success('WhatsApp aberto em nova aba.');
     await refreshClient();
   }
 
-  async function sendClientWhatsappApi() {
-    if (!client) return;
-    const message = whatsappApiMessage.trim();
-    if (!message) {
-      toast.error('Digite a mensagem antes de enviar.');
-      return;
-    }
-    try {
-      setWhatsappApiSending(true);
-      await api.sendWhatsapp({
-        client_id: client.id,
-        phone: client.phone,
-        message,
-      });
-      toast.success('Mensagem enviada pela WhatsApp API.');
-      setWhatsappApiMessage('');
-      await refreshClient();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Falha ao enviar pela WhatsApp API.');
-    } finally {
-      setWhatsappApiSending(false);
-    }
-  }
-
-  async function startClientWhatsappFlow() {
-    if (!client || !selectedFlowId) {
-      toast.error('Selecione um fluxo para iniciar.');
-      return;
-    }
-    try {
-      setFlowActionLoading(true);
-      await api.startWhatsappFlow({
-        flow_id: Number(selectedFlowId),
-        client_id: client.id,
-        phone: client.phone || undefined,
-      });
-      toast.success('Fluxo WhatsApp iniciado.');
-      await refreshClient(client.id);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Falha ao iniciar fluxo.');
-    } finally {
-      setFlowActionLoading(false);
-    }
-  }
-
-  async function stopClientWhatsappFlow() {
-    if (!client || !activeFlowExecution?.id) return;
-    try {
-      setFlowActionLoading(true);
-      await api.stopWhatsappFlow({ execution_id: activeFlowExecution.id, reason: 'stopped' });
-      toast.success('Fluxo WhatsApp interrompido.');
-      await refreshClient(client.id);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Falha ao interromper fluxo.');
-    } finally {
-      setFlowActionLoading(false);
-    }
-  }
-
   async function handleLookupPhone(force = false) {
-    if (!client) return;
+    const clientId = getActiveClientId();
+    if (!clientId) {
+      toast.error('Cliente não carregado. Reabra o atendimento antes de buscar telefone.');
+      return;
+    }
     try {
       setLookupLoading(true);
-      const response = await api.lookupClientPhone(client.id, force);
+      const response = await api.lookupClientPhone(clientId, force);
       if (response.client) {
         setClient(response.client);
       } else {
-        await refreshClient();
+        await refreshClient(clientId);
       }
       const status = response.job?.status || response.result?.status;
       if (status === 'success') {
         toast.success('Telefone encontrado e salvo no cliente.');
       } else if (status === 'requires_manual_login') {
-        toast.error('Nova Vida precisa de login manual ou mapeamento antes da consulta.');
+        toast.error('Datafour precisa de credencial válida antes da consulta.');
       } else if (status === 'not_found') {
-        toast('Nenhum telefone encontrado no Nova Vida.');
+        toast('Nenhum telefone encontrado no Datafour.');
       } else {
         toast.error(response.job?.error_message || response.result?.message || 'Busca de telefone não concluída.');
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Falha ao buscar telefone.');
+      toast.error(friendlyLookupError(error));
     } finally {
       setLookupLoading(false);
     }
   }
 
   async function handleSetPrimaryPhone(phoneId: number) {
-    if (!client) return;
+    const clientId = getActiveClientId();
+    if (!clientId || !phoneId) return;
     try {
-      const response = await api.setPrimaryPhone(client.id, phoneId);
+      const response = await api.setPrimaryPhone(clientId, phoneId);
       setClient(response.client);
       toast.success('Telefone principal atualizado.');
     } catch (error) {
@@ -321,9 +248,10 @@ export default function AttendancePage() {
   }
 
   async function handleInactivatePhone(phoneId: number) {
-    if (!client) return;
+    const clientId = getActiveClientId();
+    if (!clientId || !phoneId) return;
     try {
-      const response = await api.inactivatePhone(client.id, phoneId);
+      const response = await api.inactivatePhone(clientId, phoneId);
       setClient(response.client);
       toast.success('Telefone inativado.');
     } catch (error) {
@@ -345,7 +273,7 @@ export default function AttendancePage() {
     if (!client) return;
 
     if (!force && !canProceed) {
-      toast.error('Registre uma observaÃ§Ã£o ou escolha uma aÃ§Ã£o antes de avanÃ§ar.');
+      toast.error('Registre uma observação ou escolha uma ação antes de avançar.');
       return;
     }
 
@@ -356,7 +284,7 @@ export default function AttendancePage() {
     }
 
     if (next.next.client.id === client.id) {
-      toast('Ainda nÃ£o hÃ¡ prÃ³ximo cliente disponÃ­vel.');
+      toast('Ainda não há próximo cliente disponível.');
       return;
     }
 
@@ -377,13 +305,13 @@ export default function AttendancePage() {
     setScheduleNote('');
     setScheduleDate('');
     setConvertForm({ bank: '', amount: '', installment: '', term: '', note: '' });
-    toast.success('PrÃ³ximo cliente carregado.');
+    toast.success('Próximo cliente carregado.');
   }
 
   async function handleFinalizar() {
     if (!client) return;
     if (!canProceed) {
-      const confirmed = window.confirm('VocÃª quer finalizar sem observaÃ§Ã£o registrada?');
+      const confirmed = window.confirm('Você quer finalizar sem observação registrada?');
       if (!confirmed) return;
     }
 
@@ -404,7 +332,7 @@ export default function AttendancePage() {
 
   async function handleNoInterest() {
     if (!client) return;
-    const confirmed = window.confirm('Confirmar marcaÃ§Ã£o como sem interesse?');
+    const confirmed = window.confirm('Confirmar marcação como sem interesse?');
     if (!confirmed) return;
 
     try {
@@ -462,7 +390,7 @@ export default function AttendancePage() {
       setConvertOpen(false);
       await goNextClient(true);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Falha ao salvar conversÃ£o.');
+      toast.error(error instanceof Error ? error.message : 'Falha ao salvar conversão.');
     } finally {
       setSavingAction(false);
     }
@@ -470,16 +398,16 @@ export default function AttendancePage() {
 
   async function handleSaveObservationOnly() {
     if (!client || (!note.trim() && !privateNote.trim())) {
-      toast.error('Digite uma observaÃ§Ã£o antes de salvar.');
+      toast.error('Digite uma observação antes de salvar.');
       return;
     }
 
     try {
       setSavingAction(true);
       await saveObservation();
-      toast.success('ObservaÃ§Ã£o salva.');
+      toast.success('Observação salva.');
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Falha ao salvar observaÃ§Ã£o.');
+      toast.error(error instanceof Error ? error.message : 'Falha ao salvar observação.');
     } finally {
       setSavingAction(false);
     }
@@ -526,26 +454,16 @@ export default function AttendancePage() {
                     }
                   >
                     <MoveLeft size={16} />
-                    Voltar Ã  fila
+                    Voltar à fila
                   </Button>
                   <Button variant="secondary" onClick={() => void goNextClient()}>
                     <MoveRight size={16} />
-                    PrÃ³ximo cliente
+                    Próximo cliente
                   </Button>
                 </div>
               </div>
 
-              <div className="mt-5 rounded-2xl border border-amber-300/25 bg-amber-300/10 p-4 text-sm text-amber-50">
-                <div className="flex items-start gap-3">
-                  <ShieldAlert size={18} className="mt-0.5 shrink-0" />
-                  <div>
-                    <p className="font-semibold text-white">Dados sensíveis — uso interno autorizado.</p>
-                    <p className="mt-1 text-amber-50/80">CPF e telefone completos ficam visíveis aqui porque esta é a tela de atendimento individual.</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-6 grid gap-3 md:grid-cols-2">
+                            <div className="mt-6 grid gap-3 md:grid-cols-2">
                 <InfoLine label="CPF" value={formatCpfDisplay(client.cpf)} />
                 <InfoLine label="Telefone" value={formatPhoneDisplay(client.phone)} />
                 <InfoLine label="E-mail" value={client.email || '-'} />
@@ -562,13 +480,13 @@ export default function AttendancePage() {
                 </Button>
                 <Button variant="secondary" className="py-4" onClick={() => void handleLookupPhone(true)} disabled={lookupLoading}>
                   <PhoneCall size={16} />
-                  {lookupLoading ? 'Buscando...' : 'Buscar telefone no Nova Vida'}
+                  {lookupLoading ? 'Buscando...' : 'Buscar telefone no Datafour'}
                 </Button>
                 <Button variant="secondary" className="py-4" onClick={() => setRawOpen(true)}>
                   <Eye size={16} />
                   Ver dados originais
                 </Button>
-                <Badge tone="neutral">Vendedor: {client.assigned_to_name || user?.name || 'â€”'}</Badge>
+                <Badge tone="neutral">Vendedor: {client.assigned_to_name || user?.name || '-'}</Badge>
               </div>
 
               <div className="mt-4 rounded-2xl border border-border bg-bg/60 p-4">
@@ -581,8 +499,11 @@ export default function AttendancePage() {
                 </div>
                 <div className="mt-3 space-y-2">
                   {client.phones?.length ? (
-                    client.phones.map((phone) => (
-                      <div key={phone.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-bg/70 p-3 text-sm">
+                    client.phones.map((phone, index) => {
+                      const phoneId = Number(phone.id || 0);
+                      const phoneKey = phoneId || `${phone.normalized_phone || phone.phone_number || 'phone'}-${index}`;
+                      return (
+                      <div key={phoneKey} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-bg/70 p-3 text-sm">
                         <div>
                           <p className="font-semibold text-white">{phone.normalized_phone || phone.phone_number}</p>
                           <p className="text-xs text-slate-500">
@@ -594,123 +515,30 @@ export default function AttendancePage() {
                           <Button variant="ghost" className="px-3 py-2" onClick={() => navigator.clipboard?.writeText(phone.normalized_phone || phone.phone_number)}>
                             Copiar
                           </Button>
-                          {!phone.is_primary ? (
-                            <Button variant="ghost" className="px-3 py-2" onClick={() => void handleSetPrimaryPhone(phone.id)}>
+                          {!phone.is_primary && phoneId ? (
+                            <Button variant="ghost" className="px-3 py-2" onClick={() => void handleSetPrimaryPhone(phoneId)}>
                               Principal
                             </Button>
                           ) : null}
-                          <Button variant="ghost" className="px-3 py-2" onClick={() => void handleInactivatePhone(phone.id)}>
+                          {phoneId ? <Button variant="ghost" className="px-3 py-2" onClick={() => void handleInactivatePhone(phoneId)}>
                             Inativar
-                          </Button>
+                          </Button> : null}
                         </div>
                       </div>
-                    ))
+                      );
+                    })
                   ) : (
                     <div className="rounded-2xl border border-dashed border-border bg-white/3 p-4 text-sm text-slate-500">
-                      Nenhum telefone encontrado ainda. Use a busca Nova Vida somente para clientes com oportunidade real.
+                      Nenhum telefone encontrado ainda. Use a busca Datafour somente para clientes com oportunidade real.
                     </div>
                   )}
-                </div>
-              </div>
-
-              <div className="mt-4 rounded-2xl border border-accent/20 bg-accent/5 p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.2em] text-accent">WhatsApp API</p>
-                    <p className="mt-1 text-sm text-slate-300">Envio manual registrado no histórico do cliente.</p>
-                  </div>
-                  <Badge tone="info">Controle operacional</Badge>
-                </div>
-                <div className="mt-3 space-y-3">
-                  <p className="rounded-2xl border border-border bg-bg/60 p-3 text-xs text-slate-400">
-                    Envios exigem opt-in ativo do cliente e devem permanecer restritos ao atendimento interno.
-                  </p>
-                  <select
-                    className="w-full rounded-2xl border border-border bg-bg/80 px-4 py-3 text-sm text-slate-100 outline-none transition focus:border-accent/60 focus:ring-2 focus:ring-accent/10"
-                    value={selectedWhatsappTemplateId}
-                    onChange={(event) => {
-                      const nextId = event.target.value;
-                      setSelectedWhatsappTemplateId(nextId);
-                      const selected = whatsappTemplates.find((template) => String(template.id) === nextId);
-                      if (selected) {
-                        setWhatsappApiMessage(
-                          String(selected.body || '')
-                            .replace(/\{\{nome\}\}/g, client.name || '')
-                            .replace(/\{nome\}/g, client.name || '')
-                        );
-                      }
-                    }}
-                  >
-                    <option value="">Mensagem manual</option>
-                    {whatsappTemplates.map((template) => (
-                      <option key={template.id} value={template.id}>
-                        {template.name}
-                      </option>
-                    ))}
-                  </select>
-                  <Textarea
-                    rows={4}
-                    value={whatsappApiMessage}
-                    onChange={(event) => setWhatsappApiMessage(event.target.value)}
-                    placeholder="Digite a mensagem para enviar pela API configurada"
-                  />
-                  <div className="flex flex-wrap gap-2">
-                    <Button onClick={() => void sendClientWhatsappApi()} disabled={whatsappApiSending || !whatsappApiMessage.trim()}>
-                      <Send size={16} />
-                      {whatsappApiSending ? 'Enviando...' : 'Enviar mensagem'}
-                    </Button>
-                    <Button variant="secondary" onClick={() => setWhatsappApiMessage('')}>
-                      Limpar mensagem
-                    </Button>
-                  </div>
-                  <p className="text-xs text-slate-500">
-                    O backend bloqueia envio para cliente sem interesse, bloqueado, marcado como não abordar ou sem telefone válido.
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-4 rounded-2xl border border-border bg-bg/60 p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Fluxo WhatsApp</p>
-                    <p className="mt-1 text-sm text-slate-300">Fluxo automatico controlado com gatilhos e transicao para humano.</p>
-                  </div>
-                  <Badge tone={activeFlowExecution ? 'info' : 'neutral'}>
-                    {activeFlowExecution ? `Ativo: ${activeFlowExecution.status}` : 'Sem fluxo ativo'}
-                  </Badge>
-                </div>
-                <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto_auto]">
-                  <select
-                    className="w-full rounded-2xl border border-border bg-bg/80 px-4 py-3 text-sm text-slate-100 outline-none transition focus:border-accent/60 focus:ring-2 focus:ring-accent/10"
-                    value={selectedFlowId}
-                    onChange={(event) => setSelectedFlowId(event.target.value)}
-                  >
-                    <option value="">Selecione o fluxo</option>
-                    {whatsappFlows.map((flow) => (
-                      <option key={flow.id} value={flow.id}>
-                        {flow.name}
-                      </option>
-                    ))}
-                  </select>
-                  <Button onClick={() => void startClientWhatsappFlow()} disabled={flowActionLoading || !selectedFlowId || Boolean(activeFlowExecution)}>
-                    <Send size={16} />
-                    Iniciar fluxo
-                  </Button>
-                  <Button variant="secondary" onClick={() => void stopClientWhatsappFlow()} disabled={flowActionLoading || !activeFlowExecution}>
-                    <TimerReset size={16} />
-                    Parar fluxo
-                  </Button>
-                </div>
-                <div className="mt-3 rounded-2xl border border-border bg-bg/70 p-3 text-xs text-slate-400">
-                  <p>Ultima resposta recebida: {flowLogs[0]?.inbound_message || '-'}</p>
-                  <p className="mt-1">Ultima acao aplicada: {flowLogs[0]?.action_taken || '-'}</p>
                 </div>
               </div>
 
               {client.has_duplicate_in_other_base ? (
                 <div className="mt-4 rounded-2xl border border-accent/20 bg-accent/10 p-4 text-sm text-slate-200">
                   <p className="font-semibold text-white">Cliente encontrado em outras bases</p>
-                  <p className="mt-1 text-slate-300">Este CPF aparece em mÃºltiplas bases importadas.</p>
+                  <p className="mt-1 text-slate-300">Este CPF aparece em múltiplas bases importadas.</p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {(client.duplicate_bases || []).map((base) => (
                       <Badge key={base.id} tone="accent">
@@ -731,7 +559,7 @@ export default function AttendancePage() {
                     <span className="text-slate-500">Tipo:</span> {client.base_type || '-'}
                   </div>
                   <div>
-                    <span className="text-slate-500">ConvÃªnio:</span> {client.base_convenio || '-'}
+                    <span className="text-slate-500">Convênio:</span> {client.base_convenio || '-'}
                   </div>
                   <div>
                     <span className="text-slate-500">Estado/Cidade:</span> {client.base_state || '-'}{client.base_city ? ` / ${client.base_city}` : ''}
@@ -745,7 +573,7 @@ export default function AttendancePage() {
               <div className="mt-4 rounded-2xl border border-border bg-bg/60 p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Dados Nova Vida</p>
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Dados Datafour</p>
                     <p className="mt-1 text-sm text-slate-300">Dados cadastrais enriquecidos pela última consulta autorizada.</p>
                   </div>
                   <Badge tone={client.nova_vida_data ? 'success' : 'neutral'}>{client.nova_vida_lookup_status || 'never_searched'}</Badge>
@@ -754,7 +582,7 @@ export default function AttendancePage() {
                   <div className="mt-4 space-y-4">
                     <div className="grid gap-3 md:grid-cols-2">
                       <InfoLine label="Última consulta" value={client.nova_vida_data.searched_at_formatted || client.nova_vida_last_lookup_at_formatted || '-'} />
-                      <InfoLine label="Nome Nova Vida" value={client.nova_vida_data.full_name || '-'} />
+                      <InfoLine label="Nome Datafour" value={client.nova_vida_data.full_name || '-'} />
                       <InfoLine label="Nascimento" value={client.nova_vida_data.birth_date || '-'} />
                       <InfoLine label="Idade" value={client.nova_vida_data.age === null || client.nova_vida_data.age === undefined ? '-' : String(client.nova_vida_data.age)} />
                       <InfoLine label="Sexo" value={client.nova_vida_data.gender || '-'} />
@@ -782,14 +610,14 @@ export default function AttendancePage() {
                   </div>
                 ) : (
                   <div className="mt-4 rounded-2xl border border-dashed border-border bg-white/3 p-4 text-sm text-slate-500">
-                    Nenhuma consulta cadastral Nova Vida salva ainda.
+                    Nenhuma consulta cadastral Datafour salva ainda.
                   </div>
                 )}
               </div>
             </Card>
 
             <Card className="p-6">
-              <p className="text-sm text-slate-400">PosiÃ§Ã£o na fila</p>
+              <p className="text-sm text-slate-400">Posição na fila</p>
               <div className="mt-3 rounded-3xl border border-border bg-bg/60 p-5">
                 <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Atual</p>
                 <p className="mt-2 text-3xl font-bold text-white">{client.queue_position || queuePosition.current || '-'}</p>
@@ -806,15 +634,15 @@ export default function AttendancePage() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-sm text-slate-400">Margens por produto</p>
-                <h3 className="text-xl font-bold text-white">ConsignaÃ§Ã£o, CrÃ©dito e CartÃ£o</h3>
+                <h3 className="text-xl font-bold text-white">Consignação, Crédito e Cartão</h3>
               </div>
               <Badge tone="accent">{client.best_product_label || productLabel(client.best_product_type || '')}</Badge>
             </div>
 
             <div className="mt-5 grid gap-4 lg:grid-cols-3">
-              <MarginCard title="ConsignaÃ§Ã£o" gross={client.margem_bruta_consignacao} net={client.margem_liquida_consignacao} state={cons} />
-              <MarginCard title="CrÃ©dito" gross={client.margem_bruta_credito} net={client.margem_liquida_credito} state={cred} />
-              <MarginCard title="CartÃ£o" gross={client.margem_bruta_cartao} net={client.margem_liquida_cartao} state={card} />
+              <MarginCard title="Consignação" gross={client.margem_bruta_consignacao} net={client.margem_liquida_consignacao} state={cons} />
+              <MarginCard title="Crédito" gross={client.margem_bruta_credito} net={client.margem_liquida_credito} state={cred} />
+              <MarginCard title="Cartão" gross={client.margem_bruta_cartao} net={client.margem_liquida_cartao} state={card} />
             </div>
           </Card>
 
@@ -824,7 +652,7 @@ export default function AttendancePage() {
               <Textarea
                 rows={8}
                 className="mt-4"
-                placeholder="Digite aqui suas observaÃ§Ãµes..."
+                placeholder="Digite aqui suas observações..."
                 value={note}
                 onChange={(event) => setNote(event.target.value)}
               />
@@ -832,14 +660,14 @@ export default function AttendancePage() {
                 <span>{charCount} caracteres</span>
                 <label className="flex items-center gap-2">
                   <input type="checkbox" checked={privateMode} onChange={(event) => setPrivateMode(event.target.checked)} />
-                  Adicionar observaÃ§Ã£o privada
+                  Adicionar observação privada
                 </label>
               </div>
               {privateMode ? (
                 <Textarea
                   rows={4}
                   className="mt-3"
-                  placeholder="ObservaÃ§Ã£o privada..."
+                  placeholder="Observação privada..."
                   value={privateNote}
                   onChange={(event) => setPrivateNote(event.target.value)}
                 />
@@ -847,7 +675,7 @@ export default function AttendancePage() {
               <div className="mt-4 flex flex-wrap gap-3">
                 <Button variant="secondary" onClick={() => void handleSaveObservationOnly()} disabled={savingAction}>
                   <Send size={16} />
-                  Salvar observaÃ§Ã£o
+                  Salvar observação
                 </Button>
                 <Button variant="secondary" onClick={() => setScheduleOpen(true)}>
                   <CalendarClock size={16} />
@@ -872,7 +700,7 @@ export default function AttendancePage() {
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <p className="font-semibold text-white">{timelineLabel(item.type)}</p>
-                          <p className="mt-1 text-sm text-slate-400">{item.note || item.private_note || 'Sem observaÃ§Ã£o'}</p>
+                          <p className="mt-1 text-sm text-slate-400">{item.note || item.private_note || 'Sem observação'}</p>
                         </div>
                         <Badge tone="accent">{new Date(item.created_at).toLocaleString('pt-BR')}</Badge>
                       </div>
@@ -908,24 +736,24 @@ export default function AttendancePage() {
               </Button>
               <Button variant="ghost" className="py-4" onClick={() => void goNextClient()} disabled={savingAction}>
                 <ArrowRight size={16} />
-                PrÃ³ximo cliente
+                Próximo cliente
               </Button>
             </div>
           </Card>
         </div>
       ) : (
-        <Card className="p-8 text-sm text-slate-400">NÃ£o hÃ¡ clientes disponÃ­veis para atendimento.</Card>
+        <Card className="p-8 text-sm text-slate-400">Não há clientes disponíveis para atendimento.</Card>
       )}
 
       <Modal
         open={scheduleOpen}
         title="Agendar retorno"
-        description="Defina a data, hora e a observaÃ§Ã£o do prÃ³ximo contato."
+        description="Defina a data, hora e a observação do próximo contato."
         onClose={() => setScheduleOpen(false)}
       >
         <div className="space-y-4">
           <Input type="datetime-local" value={scheduleDate} onChange={(event) => setScheduleDate(event.target.value)} />
-          <Textarea rows={4} placeholder="ObservaÃ§Ã£o do retorno..." value={scheduleNote} onChange={(event) => setScheduleNote(event.target.value)} />
+          <Textarea rows={4} placeholder="Observação do retorno..." value={scheduleNote} onChange={(event) => setScheduleNote(event.target.value)} />
           <div className="flex justify-end gap-3">
             <Button variant="secondary" onClick={() => setScheduleOpen(false)}>
               Cancelar
@@ -953,7 +781,7 @@ export default function AttendancePage() {
           <Textarea
             rows={4}
             className="md:col-span-2"
-            placeholder="ObservaÃ§Ã£o da conversÃ£o..."
+            placeholder="Observação da conversão..."
             value={convertForm.note}
             onChange={(event) => setConvertForm((current) => ({ ...current, note: event.target.value }))}
           />
@@ -964,7 +792,7 @@ export default function AttendancePage() {
           </Button>
           <Button onClick={() => void handleConvert()} disabled={savingAction}>
             <ThumbsUp size={16} />
-            Confirmar conversÃ£o
+            Confirmar conversão
           </Button>
         </div>
       </Modal>
@@ -1013,7 +841,7 @@ function MarginCard({
       <div className="mt-4 space-y-2 text-sm">
         <p className="text-slate-400">Margem bruta</p>
         <p className="font-semibold text-white">{formatCurrencyDisplay(gross)}</p>
-        <p className="text-slate-400">Margem lÃ­quida</p>
+        <p className="text-slate-400">Margem líquida</p>
         <p className="font-semibold text-white">{formatCurrencyDisplay(net)}</p>
       </div>
     </div>
@@ -1023,7 +851,7 @@ function MarginCard({
 function timelineLabel(type: string) {
   const labels: Record<string, string> = {
     atendimento_iniciado: 'Atendimento iniciado',
-    observacao: 'ObservaÃ§Ã£o adicionada',
+    observacao: 'Observação adicionada',
     retorno_agendado: 'Retorno agendado',
     finalizado: 'Finalizado',
     sem_interesse: 'Sem interesse',

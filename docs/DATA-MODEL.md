@@ -1,43 +1,60 @@
-# Modelo de Dados
+# Modelo de Dados — CRM Reliance
 
-## Visao atual
+## Banco
 
-O CRM Reliance usa SQLite/sql.js com tabelas de usuarios, campanhas, bases, clientes, atendimentos, retornos, consultas de margem e consulta cadastral/telefones. Este PR nao cria migration nem altera schema; ele registra o plano de protecao de dados para os proximos PRs.
+O projeto usa SQLite via `sql.js`, persistido em arquivo/volume local. O schema principal ainda vive em `backend/src/db.js`.
 
-## Dados sensiveis
+## Novas Tabelas
 
-Devem ser tratados como sensiveis:
+### `customer_consents`
 
-- CPF/RG e documentos pessoais.
-- Telefone e email.
-- Endereco.
-- Dados bancarios, conta e agencia.
-- Beneficio INSS, matricula e dados de convenio.
-- Dados de credito, margem, simulacao e proposta.
+Registra opt-in/opt-out por cliente e canal.
 
-## Pendencias de modelo
+- `id`
+- `customer_id`
+- `channel`
+- `consent_status`
+- `source`
+- `ip_address`
+- `user_agent`
+- `consent_text_version`
+- `created_at`
+- `updated_at`
+- `revoked_at`
 
-### Consentimento/opt-in
+### `audit_log`
 
-Criar tabela ou estrutura equivalente para registrar consentimento por cliente e canal, com status ativo/revogado, origem, data/hora, texto/versao do consentimento e metadados seguros.
+Registra acoes criticas com metadados sanitizados.
 
-### Audit log
+- `id`
+- `actor_user_id`
+- `action`
+- `entity_type`
+- `entity_id`
+- `metadata_json`
+- `ip_address`
+- `created_at`
 
-Criar trilha de auditoria para login, envio autorizado, envio bloqueado, opt-out, alteracao de status, consulta sensivel e criacao/alteracao de simulacao ou proposta. Metadata deve ser sanitizada.
+## Campos Sensiveis
 
-### Criptografia e mascara
+Campos sensiveis incluem CPF, telefone, email, endereco, data de nascimento, filiacao, matricula, dados bancarios, margem e payloads brutos de consulta.
 
-Definir utilitario central para hash de identificadores sensiveis, criptografia em repouso quando aplicavel e mascaramento para logs/telas. CPF e telefone completos nao devem aparecer em logs tecnicos.
+## Protecoes Atuais
 
-CPF completo pode continuar disponivel no registro operacional e na tela de atendimento individual quando necessario para conferencia. Visualizacoes com multiplos clientes, filas, dashboards e relatorios de resumo devem priorizar dados mascarados.
+- `clients.cpf_hash`, `clients.phone_hash` e `clients.email_hash` permitem busca/indexacao sem depender apenas do valor puro.
+- `backend/src/dataProtection.js` centraliza hash, criptografia AES-256-GCM, mascaramento e sanitizacao de auditoria.
+- Audit logs devem receber apenas metadados sanitizados.
 
-### Nova Vida
+## Limite Atual
 
-Dados retornados pelo Nova Vida sao tratados como dados pessoais sensiveis para fins operacionais. A busca interna autorizada nao depende de opt-in de comunicacao; consentimento deve ser exigido para envio ativo posterior por WhatsApp, email ou SMS.
+Ha dados legados em texto puro por compatibilidade com o CRM atual. A migracao completa para campos criptografados deve ser feita em etapa propria, com backup, script de migracao e validacao de leitura/escrita.
 
-## Fora do escopo deste PR
+```mermaid
+erDiagram
+  clients ||--o{ customer_consents : has
+  users ||--o{ audit_log : writes
+  clients ||--o{ audit_log : referenced_by
+  clients ||--o{ client_phones : has
+  clients ||--o{ client_margins : has
+```
 
-- Criacao de migrations.
-- Alteracao de tabelas.
-- Migracao de dados historicos.
-- Implementacao backend de consentimento/auditoria.

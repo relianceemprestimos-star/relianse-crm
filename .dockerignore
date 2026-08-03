@@ -22,7 +22,6 @@ data/evidencias
 backend/data/evidencias
 uploads
 logs
-automation-registry/runs
 *.log
 *.pid
 tmp_*

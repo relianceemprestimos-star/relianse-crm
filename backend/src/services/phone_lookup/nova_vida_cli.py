@@ -3,8 +3,11 @@ import json
 import os
 import re
 import sys
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
@@ -28,6 +31,20 @@ def env_value(*names: str) -> str:
         if value is not None and str(value).strip():
             return str(value).strip()
     return ""
+
+
+def int_env(name: str, default: int) -> int:
+    try:
+        return max(0, int(str(os.getenv(name, default)).strip()))
+    except Exception:
+        return default
+
+
+def float_env(name: str, default: float) -> float:
+    try:
+        return max(0.0, float(str(os.getenv(name, default)).strip()))
+    except Exception:
+        return default
 
 
 def load_dotenv() -> None:
@@ -64,7 +81,7 @@ def mask_cpf(cpf: str) -> str:
     return f"***{digits[-3:]}"
 
 
-def normalize_phone_number(value: Any) -> str | None:
+def normalize_phone_number(value: Any) -> Optional[str]:
     digits = clean_digits(value)
     if digits.startswith("00"):
         digits = digits[2:]
@@ -193,7 +210,7 @@ def collect_page(page) -> dict[str, Any]:
     )
 
 
-def status_from_login_page(page_data: dict[str, Any]) -> dict[str, Any] | None:
+def status_from_login_page(page_data: dict[str, Any]) -> Optional[dict[str, Any]]:
     text = str(page_data.get("bodySample") or "").lower()
     if "falha ao autenticar" in text or "usuario invalido" in text or "usuário inválido" in text:
         return {
@@ -208,6 +225,112 @@ def status_from_login_page(page_data: dict[str, Any]) -> dict[str, Any] | None:
             "message": "O Nova Vida exibiu reCAPTCHA/protecao manual. Salve uma sessao autorizada antes da busca automatica.",
         }
     return None
+
+
+def capsolver_key() -> str:
+    return env_value("CAPSOLVER_API_KEY", "CAPSOLVE_API_KEY", "CAPTCHA_SOLVER_API_KEY", "CAPTCHA_API_KEY")
+
+
+def capsolver_enabled() -> bool:
+    return bool_env("CAPSOLVER_ENABLED", False) and bool(capsolver_key())
+
+
+def post_json(url: str, payload: dict[str, Any], timeout: int = 30) -> dict[str, Any]:
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def recaptcha_site_key(page) -> str:
+    return page.evaluate(
+        """() => {
+          const explicit = document.querySelector("[data-sitekey]");
+          if (explicit && explicit.getAttribute("data-sitekey")) return explicit.getAttribute("data-sitekey");
+          const urls = Array.from(document.querySelectorAll("script[src*='recaptcha'], iframe[src*='recaptcha']"))
+            .map((el) => el.getAttribute("src") || "");
+          for (const src of urls) {
+            try {
+              const url = new URL(src, location.href);
+              const render = url.searchParams.get("render");
+              const key = url.searchParams.get("k");
+              if (render && render !== "explicit") return render;
+              if (key) return key;
+            } catch (_) {}
+          }
+          return "";
+        }"""
+    )
+
+
+def apply_recaptcha_token(page, token: str) -> None:
+    page.evaluate(
+        """(token) => {
+          const setValue = (selector) => {
+            document.querySelectorAll(selector).forEach((el) => {
+              el.value = token;
+              el.textContent = token;
+              el.dispatchEvent(new Event("input", { bubbles: true }));
+              el.dispatchEvent(new Event("change", { bubbles: true }));
+            });
+          };
+          setValue("#recaptchaToken, [name='RecaptchaToken']");
+          setValue("textarea[name='g-recaptcha-response']");
+        }""",
+        token,
+    )
+
+
+def solve_recaptcha_v3(page) -> dict[str, Any]:
+    if not capsolver_enabled():
+        return {"ok": False, "reason": "disabled"}
+
+    site_key = recaptcha_site_key(page)
+    if not site_key:
+        return {"ok": False, "reason": "sitekey_not_found"}
+
+    task_payload = {
+        "clientKey": capsolver_key(),
+        "task": {
+            "type": "ReCaptchaV3TaskProxyLess",
+            "websiteURL": page.url,
+            "websiteKey": site_key,
+            "pageAction": env_value("NOVA_VIDA_RECAPTCHA_ACTION") or "login",
+            "minScore": float_env("NOVA_VIDA_RECAPTCHA_MIN_SCORE", 0.3),
+        },
+    }
+
+    try:
+        created = post_json("https://api.capsolver.com/createTask", task_payload, timeout=30)
+        if created.get("errorId"):
+            return {"ok": False, "reason": "createTask", "code": created.get("errorCode")}
+        task_id = created.get("taskId")
+        if not task_id:
+            return {"ok": False, "reason": "missing_task_id"}
+
+        deadline = time.time() + int_env("CAPSOLVER_TIMEOUT_SECONDS", 120)
+        while time.time() < deadline:
+            time.sleep(3)
+            result = post_json(
+                "https://api.capsolver.com/getTaskResult",
+                {"clientKey": capsolver_key(), "taskId": task_id},
+                timeout=30,
+            )
+            if result.get("errorId"):
+                return {"ok": False, "reason": "getTaskResult", "code": result.get("errorCode")}
+            if result.get("status") == "ready":
+                token = (result.get("solution") or {}).get("gRecaptchaResponse") or ""
+                if not token:
+                    return {"ok": False, "reason": "missing_token"}
+                apply_recaptcha_token(page, token)
+                return {"ok": True, "taskId": task_id}
+        return {"ok": False, "reason": "timeout"}
+    except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+        return {"ok": False, "reason": type(exc).__name__}
 
 
 def credentials() -> dict[str, str]:
@@ -269,18 +392,6 @@ def is_logged_in(page) -> bool:
     return any(keyword in text for keyword in keywords)
 
 
-def is_login_screen(page) -> bool:
-    try:
-        data = collect_page(page)
-        text = str(data.get("bodySample") or "").lower()
-        url = str(data.get("url") or "").lower()
-        if page.locator("#sUsuario, #sSenha, #sCliente").count() > 0:
-            return True
-        return "/login" in url and any(word in text for word in ("entrar", "senha", "usuario", "usuário", "cliente"))
-    except Exception:
-        return False
-
-
 def login_if_needed(page) -> dict[str, Any]:
     creds = credentials()
     response = page.goto(creds["url"], wait_until="domcontentloaded", timeout=60000)
@@ -316,6 +427,8 @@ def login_if_needed(page) -> dict[str, Any]:
     if page.locator("#sCliente").count() > 0:
         page.fill("#sCliente", creds["client"], timeout=10000)
 
+    recaptcha_result = solve_recaptcha_v3(page)
+
     try:
         with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
             page.click("#submitEntrar", timeout=10000)
@@ -328,7 +441,8 @@ def login_if_needed(page) -> dict[str, Any]:
 
     after = collect_page(page)
     if is_logged_in(page):
-        save_session_state(page)
+        storage_state_path().parent.mkdir(parents=True, exist_ok=True)
+        page.context.storage_state(path=str(storage_state_path()))
         return {"ok": True, "stage": "login", "page": after}
 
     status = status_from_login_page(after) or {
@@ -336,12 +450,7 @@ def login_if_needed(page) -> dict[str, Any]:
         "code": "NOVA_VIDA_LOGIN_NOT_CONFIRMED",
         "message": "O Nova Vida nao confirmou login e permaneceu fora da area autenticada.",
     }
-    return {"ok": False, "stage": "login", **status, "page": after}
-
-
-def save_session_state(page) -> None:
-    storage_state_path().parent.mkdir(parents=True, exist_ok=True)
-    page.context.storage_state(path=str(storage_state_path()))
+    return {"ok": False, "stage": "login", **status, "page": after, "recaptcha": recaptcha_result}
 
 
 def find_search_navigation(page) -> list[dict[str, Any]]:
@@ -533,10 +642,215 @@ def parse_personal_data(page) -> dict[str, Any]:
     }
 
 
+def extract_documents_from_advanced_results(text: str, preferred_name: str = "") -> list[dict[str, Any]]:
+    body = re.sub(r"\s+", " ", text or "").strip()
+    if not body:
+        return []
+
+    preferred = re.sub(r"\s+", " ", preferred_name or "").strip().upper()
+    candidates: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    pattern = re.compile(
+        r"(?P<name>[A-ZÁÀÂÃÉÈÊÍÌÎÓÒÔÕÚÙÛÇ][A-ZÁÀÂÃÉÈÊÍÌÎÓÒÔÕÚÙÛÇ'´`^~.\- ]{4,120}?)\s+Documento:\s*(?P<cpf>\d{3}\.?\d{3}\.?\d{3}-?\d{2})",
+        re.I,
+    )
+    for match in pattern.finditer(body):
+        cpf = clean_digits(match.group("cpf"))
+        if len(cpf) != 11 or cpf in seen:
+            continue
+        found_name = re.sub(r"\s+", " ", match.group("name") or "").strip(" -:;")
+        normalized_found = re.sub(r"\s+", " ", found_name.upper()).strip()
+        confidence = 100 if preferred and normalized_found == preferred else 80 if preferred and preferred in normalized_found else 60
+        candidates.append({"cpf": cpf, "name": found_name, "confidence": confidence})
+        seen.add(cpf)
+
+    if not candidates:
+        for match in re.finditer(r"Documento:\s*(\d{3}\.?\d{3}\.?\d{3}-?\d{2})", body, re.I):
+            cpf = clean_digits(match.group(1))
+            if len(cpf) == 11 and cpf not in seen:
+                candidates.append({"cpf": cpf, "name": "", "confidence": 40})
+                seen.add(cpf)
+    return sorted(candidates, key=lambda item: int(item.get("confidence") or 0), reverse=True)
+
+
+def extract_document_from_advanced_results(text: str, preferred_name: str = "") -> str:
+    candidates = extract_documents_from_advanced_results(text, preferred_name)
+    return clean_digits(candidates[0].get("cpf") if candidates else "")
+
+
+def open_advanced_search_if_needed(page) -> None:
+    name_input = page.locator("input[name=nome]").first
+    if name_input.count() == 0:
+        return
+    try:
+        if name_input.is_visible(timeout=1000):
+            return
+    except Exception:
+        pass
+    for selector in [
+        "button[data-bs-target='#advancedSearch']",
+        "button:has-text('tune')",
+        "button.btn-secondary",
+    ]:
+        try:
+            locator = page.locator(selector)
+            if locator.count() > 0:
+                locator.first.click(timeout=3000)
+                page.wait_for_timeout(800)
+                return
+        except Exception:
+            continue
+
+
+def search_document_from_name(page, name: str) -> str:
+    if not name or page.locator("input[name=nome]").count() == 0:
+        return ""
+
+    open_advanced_search_if_needed(page)
+    name_input = page.locator("input[name=nome]").first
+    try:
+        name_input.fill(name, timeout=8000)
+    except Exception:
+        return ""
+
+    clicked = False
+    for selector in [
+        "form:has(input[name=nome]) button[type=submit]",
+        "button:has-text('Pesquisar')",
+    ]:
+        try:
+            locator = page.locator(selector)
+            if locator.count() > 0:
+                locator.last.click(timeout=8000)
+                clicked = True
+                break
+        except Exception:
+            continue
+    if not clicked:
+        try:
+            name_input.press("Enter", timeout=3000)
+        except Exception:
+            pass
+
+    page.wait_for_timeout(int_env("NOVA_VIDA_NAME_SEARCH_WAIT_MS", 3000))
+    text = page.evaluate("() => document.body ? document.body.innerText : ''")
+    return extract_document_from_advanced_results(text, name)
+
+
+def search_documents_from_name(page, name: str) -> list[dict[str, Any]]:
+    if not name or page.locator("input[name=nome]").count() == 0:
+        return []
+    open_advanced_search_if_needed(page)
+    name_input = page.locator("input[name=nome]").first
+    try:
+        name_input.fill(name, timeout=8000)
+    except Exception:
+        return []
+    clicked = False
+    for selector in [
+        "form:has(input[name=nome]) button[type=submit]",
+        "button:has-text('Pesquisar')",
+    ]:
+        try:
+            locator = page.locator(selector)
+            if locator.count() > 0:
+                locator.last.click(timeout=8000)
+                clicked = True
+                break
+        except Exception:
+            continue
+    if not clicked:
+        try:
+            name_input.press("Enter", timeout=3000)
+        except Exception:
+            pass
+    page.wait_for_timeout(int_env("NOVA_VIDA_NAME_SEARCH_WAIT_MS", 3000))
+    text = page.evaluate("() => document.body ? document.body.innerText : ''")
+    return extract_documents_from_advanced_results(text, name)
+
+
+def search_document_dashboard(page, document: str) -> dict[str, Any]:
+    digits = clean_digits(document)
+    if not digits:
+        return {
+            "status": "failed",
+            "code": "NOVA_VIDA_SEARCH_INPUT_REQUIRED",
+            "message": "Informe CPF para abrir cadastro Nova Vida.",
+            "phones": [],
+            "page": collect_page(page),
+        }
+
+    try:
+        if "/dashboard" not in str(page.url).lower():
+            page.goto(credentials()["url"], wait_until="domcontentloaded", timeout=60000)
+        page.fill("#documento", digits, timeout=10000)
+        try:
+            with page.expect_navigation(wait_until="domcontentloaded", timeout=20000):
+                page.locator("#buscaDashboard button[type=submit], #buscaDashboard input[type=submit]").first.click(timeout=10000)
+        except Exception:
+            page.wait_for_timeout(8000)
+    except Exception:
+        return {
+            "status": "failed",
+            "code": "NOVA_VIDA_DOCUMENT_SEARCH_FAILED",
+            "message": "Não foi possível executar a busca por CPF no Nova Vida.",
+            "phones": [],
+            "page": collect_page(page),
+        }
+
+    page_data = collect_page(page)
+    body = str(page_data.get("bodySample") or "").lower()
+    if "documento inválido" in body or "documento invalido" in body:
+        return {
+            "status": "not_found",
+            "code": "NOVA_VIDA_INVALID_DOCUMENT",
+            "message": "O Nova Vida informou documento invalido.",
+            "phones": [],
+            "page": page_data,
+            "searchInput": {"id": "documento", "name": "documento"},
+        }
+
+    phones = extract_phones_from_page(page)
+    enrichment = parse_personal_data(page)
+    if phones:
+        return {
+            "status": "success",
+            "code": "",
+            "message": "Telefones encontrados no Nova Vida.",
+            "cpf": digits,
+            "phones": phones,
+            **enrichment,
+            "searchInput": {"id": "documento", "name": "documento"},
+            "page": page_data,
+        }
+
+    if "/pf/cadastro" in str(page.url).lower():
+        return {
+            "status": "not_found",
+            "code": "NOVA_VIDA_NO_PHONES_FOUND",
+            "message": "Cadastro encontrado no Nova Vida, mas nenhum telefone foi localizado.",
+            "cpf": digits,
+            "phones": [],
+            **enrichment,
+            "searchInput": {"id": "documento", "name": "documento"},
+            "page": page_data,
+        }
+
+    return {
+        "status": "not_found",
+        "code": "NOVA_VIDA_NO_RECORD_FOUND",
+        "message": "Nenhum cadastro encontrado no Nova Vida.",
+        "phones": [],
+        "page": page_data,
+        "searchInput": {"id": "documento", "name": "documento"},
+    }
+
+
 def try_generic_search(page, cpf: str, name: str) -> dict[str, Any]:
     data = collect_page(page)
     nav = find_search_navigation(page)
-    query = clean_digits(cpf) or name
+    document = clean_digits(cpf)
+    query = document or name
 
     if not query:
         return {
@@ -548,49 +862,16 @@ def try_generic_search(page, cpf: str, name: str) -> dict[str, Any]:
             "navigationCandidates": nav,
         }
 
-    if page.locator("#documento").count() > 0:
-        page.fill("#documento", query, timeout=10000)
-        try:
-            with page.expect_navigation(wait_until="domcontentloaded", timeout=20000):
-                page.locator("#buscaDashboard button[type=submit], #buscaDashboard input[type=submit]").first.click(timeout=10000)
-        except Exception:
-            page.wait_for_timeout(8000)
+    if not document and name:
+        document = search_document_from_name(page, name)
+        if document:
+            try:
+                page.goto(credentials()["url"], wait_until="domcontentloaded", timeout=60000)
+            except Exception:
+                pass
 
-        page_data = collect_page(page)
-        body = str(page_data.get("bodySample") or "").lower()
-        if "documento inválido" in body or "documento invalido" in body:
-            return {
-                "status": "not_found",
-                "code": "NOVA_VIDA_INVALID_DOCUMENT",
-                "message": "O Nova Vida informou documento invalido.",
-                "phones": [],
-                "page": page_data,
-                "searchInput": {"id": "documento", "name": "documento"},
-            }
-
-        phones = extract_phones_from_page(page)
-        enrichment = parse_personal_data(page)
-        if phones:
-            return {
-                "status": "success",
-                "code": "",
-                "message": "Telefones encontrados no Nova Vida.",
-                "phones": phones,
-                **enrichment,
-                "searchInput": {"id": "documento", "name": "documento"},
-                "page": page_data,
-            }
-
-        if "/pf/cadastro" in str(page.url).lower():
-            return {
-                "status": "not_found",
-                "code": "NOVA_VIDA_NO_PHONES_FOUND",
-                "message": "Cadastro encontrado no Nova Vida, mas nenhum telefone foi localizado.",
-                "phones": [],
-                **enrichment,
-                "searchInput": {"id": "documento", "name": "documento"},
-                "page": page_data,
-            }
+    if page.locator("#documento").count() > 0 and document:
+        return search_document_dashboard(page, document)
 
     candidates = page.locator(
         "input[type=text], input[type=search], input:not([type]), textarea"
@@ -641,34 +922,6 @@ def try_generic_search(page, cpf: str, name: str) -> dict[str, Any]:
     }
 
 
-def search_with_auto_reconnect(page, cpf: str, name: str) -> dict[str, Any]:
-    result = try_generic_search(page, cpf, name)
-    if not is_login_screen(page):
-        if result.get("status") == "success":
-            save_session_state(page)
-        return result
-
-    reconnect = login_if_needed(page)
-    if not reconnect.get("ok"):
-        return {
-            "status": "requires_manual_login",
-            "code": "NOVA_VIDA_SESSION_EXPIRED_MANUAL_LOGIN_REQUIRED",
-            "message": "Sessao Nova Vida expirada. Login manual necessario.",
-            "phones": [],
-            "stage": reconnect.get("stage", "reconnect"),
-            "reconnectAttempted": True,
-            "reconnectOk": False,
-            "login": reconnect,
-        }
-
-    retry = try_generic_search(page, cpf, name)
-    retry["reconnectAttempted"] = True
-    retry["reconnectOk"] = True
-    if retry.get("status") == "success":
-        save_session_state(page)
-    return retry
-
-
 def command_map() -> None:
     with sync_playwright() as playwright:
         browser = launch_browser(playwright)
@@ -714,11 +967,11 @@ def command_search(cpf: str, name: str) -> None:
                 )
                 return
 
-            result = search_with_auto_reconnect(page, cpf, name)
+            result = try_generic_search(page, cpf, name)
             output(
                 {
                     "source": SOURCE,
-                    "cpf": clean_digits(cpf),
+                    "cpf": clean_digits(result.get("cpf") or cpf),
                     "name": name or "",
                     **result,
                 }
@@ -752,6 +1005,146 @@ def command_search(cpf: str, name: str) -> None:
             browser.close()
 
 
+def command_candidates(name: str) -> None:
+    with sync_playwright() as playwright:
+        browser = launch_browser(playwright)
+        context = new_context(browser)
+        page = context.new_page()
+        try:
+            login = login_if_needed(page)
+            if not login.get("ok"):
+                output(
+                    {
+                        "status": login.get("status", "failed"),
+                        "source": SOURCE,
+                        "name": name or "",
+                        "candidates": [],
+                        "code": login.get("code", "NOVA_VIDA_LOGIN_FAILED"),
+                        "message": login.get("message", "Falha no login Nova Vida."),
+                        "stage": login.get("stage", "login"),
+                    }
+                )
+                return
+            candidates = search_documents_from_name(page, name)
+            output(
+                {
+                    "status": "success" if candidates else "not_found",
+                    "source": SOURCE,
+                    "name": name or "",
+                    "candidates": candidates,
+                    "message": f"{len(candidates)} CPF(s) candidato(s) localizado(s) por nome." if candidates else "Nenhum CPF candidato localizado por nome.",
+                }
+            )
+        except Exception as exc:
+            output(
+                {
+                    "status": "failed",
+                    "source": SOURCE,
+                    "name": name or "",
+                    "candidates": [],
+                    "code": "NOVA_VIDA_WORKER_ERROR",
+                    "message": f"{type(exc).__name__}: {str(exc)[:260]}",
+                }
+            )
+        finally:
+            context.close()
+            browser.close()
+
+
+def command_candidates_batch(input_path: str) -> None:
+    try:
+        items = json.loads(Path(input_path).read_text(encoding="utf-8"))
+    except Exception as exc:
+        output(
+            {
+                "status": "failed",
+                "source": SOURCE,
+                "code": "NOVA_VIDA_BATCH_INPUT_ERROR",
+                "message": f"{type(exc).__name__}: {str(exc)[:260]}",
+                "results": [],
+            }
+        )
+        return
+
+    if not isinstance(items, list):
+        output(
+            {
+                "status": "failed",
+                "source": SOURCE,
+                "code": "NOVA_VIDA_BATCH_INPUT_INVALID",
+                "message": "Arquivo de entrada precisa ser uma lista JSON.",
+                "results": [],
+            }
+        )
+        return
+
+    results: list[dict[str, Any]] = []
+    with sync_playwright() as playwright:
+        browser = launch_browser(playwright)
+        context = new_context(browser)
+        page = context.new_page()
+        try:
+            login = login_if_needed(page)
+            if not login.get("ok"):
+                output(
+                    {
+                        "status": login.get("status", "failed"),
+                        "source": SOURCE,
+                        "code": login.get("code", "NOVA_VIDA_LOGIN_FAILED"),
+                        "message": login.get("message", "Falha no login Nova Vida."),
+                        "stage": login.get("stage", "login"),
+                        "results": [],
+                    }
+                )
+                return
+
+            for index, item in enumerate(items):
+                name = str((item or {}).get("name") or "").strip()
+                item_id = str((item or {}).get("id") or "").strip()
+                try:
+                    candidates = search_documents_from_name(page, name)
+                    results.append(
+                        {
+                            "id": item_id,
+                            "name": name,
+                            "status": "success" if candidates else "not_found",
+                            "candidates": candidates,
+                            "message": f"{len(candidates)} CPF(s) candidato(s) localizado(s) por nome." if candidates else "Nenhum CPF candidato localizado por nome.",
+                        }
+                    )
+                except Exception as exc:
+                    results.append(
+                        {
+                            "id": item_id,
+                            "name": name,
+                            "status": "failed",
+                            "candidates": [],
+                            "code": "NOVA_VIDA_BATCH_ITEM_ERROR",
+                            "message": f"{type(exc).__name__}: {str(exc)[:260]}",
+                        }
+                    )
+                if index < len(items) - 1:
+                    try:
+                        page.goto(credentials()["url"], wait_until="domcontentloaded", timeout=60000)
+                    except Exception:
+                        pass
+
+            output(
+                {
+                    "status": "success",
+                    "source": SOURCE,
+                    "count": len(results),
+                    "found": len([item for item in results if item.get("status") == "success"]),
+                    "not_found": len([item for item in results if item.get("status") == "not_found"]),
+                    "failed": len([item for item in results if item.get("status") == "failed"]),
+                    "results": results,
+                }
+            )
+        finally:
+            context.close()
+            browser.close()
+
+
 def main() -> None:
     load_dotenv()
     parser = argparse.ArgumentParser(description="Nova Vida phone lookup worker")
@@ -760,11 +1153,19 @@ def main() -> None:
     search = sub.add_parser("search")
     search.add_argument("--cpf", default="")
     search.add_argument("--name", default="")
+    candidates = sub.add_parser("candidates")
+    candidates.add_argument("--name", default="")
+    candidates_batch = sub.add_parser("candidates-batch")
+    candidates_batch.add_argument("--input", required=True)
     args = parser.parse_args()
     if args.command == "map":
         command_map()
     elif args.command == "search":
         command_search(args.cpf, args.name)
+    elif args.command == "candidates":
+        command_candidates(args.name)
+    elif args.command == "candidates-batch":
+        command_candidates_batch(args.input)
 
 
 if __name__ == "__main__":

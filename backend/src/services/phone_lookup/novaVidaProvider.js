@@ -139,7 +139,7 @@ export async function lookupPhoneNovaVida(client) {
   const phones = dedupePhones(result.phones || []);
   return {
     source: 'Nova Vida',
-    cpf: cleanDigits(client.cpf),
+    cpf: cleanDigits(result.cpf || client.cpf),
     name: result.name || client.name || '',
     full_name: result.full_name || result.name || client.name || '',
     birth_date: result.birth_date || '',
@@ -155,19 +155,12 @@ export async function lookupPhoneNovaVida(client) {
     phones,
     status: result.status || (phones.length ? 'success' : 'not_found'),
     code: result.code || '',
-    message:
-      result.code === 'NOVA_VIDA_SESSION_EXPIRED_MANUAL_LOGIN_REQUIRED'
-        ? 'Sessao Nova Vida expirada. Login manual necessario.'
-        : result.message || (phones.length ? 'Telefones encontrados no Nova Vida.' : 'Nenhum telefone encontrado no Nova Vida.'),
+    message: result.message || (phones.length ? 'Telefones encontrados no Nova Vida.' : 'Nenhum telefone encontrado no Nova Vida.'),
     stage: result.stage || '',
-    reconnectAttempted: Boolean(result.reconnectAttempted),
-    reconnectOk: Boolean(result.reconnectOk),
     raw: {
       page: result.page,
       navigationCandidates: result.navigationCandidates,
       inputCount: result.inputCount,
-      reconnectAttempted: Boolean(result.reconnectAttempted),
-      reconnectOk: Boolean(result.reconnectOk),
     },
   };
 }
@@ -178,4 +171,33 @@ export async function searchPhoneNovaVida({ cpf = '', name = '' } = {}) {
     name,
     phones: [],
   });
+}
+
+export async function searchNovaVidaCpfCandidates({ name = '' } = {}) {
+  if (!hasCredentials()) {
+    return {
+      source: 'Nova Vida',
+      status: 'requires_manual_login',
+      code: 'NOVA_VIDA_NOT_CONFIGURED',
+      message: 'Configure NOVA_VIDA_URL, NOVA_VIDA_USERNAME/NOVA_VIDA_USER, NOVA_VIDA_CLIENT e NOVA_VIDA_PASSWORD no .env.',
+      candidates: [],
+    };
+  }
+  const result = await runNovaVidaCli(['candidates', '--name', String(name || '')]);
+  return {
+    source: 'Nova Vida',
+    status: result.status || (Array.isArray(result.candidates) && result.candidates.length ? 'success' : 'not_found'),
+    code: result.code || '',
+    message: result.message || '',
+    name: result.name || name || '',
+    candidates: Array.isArray(result.candidates)
+      ? result.candidates
+          .map((item) => ({
+            cpf: cleanDigits(item.cpf),
+            name: item.name || '',
+            confidence: Number(item.confidence || 0),
+          }))
+          .filter((item) => item.cpf.length === 11)
+      : [],
+  };
 }

@@ -159,7 +159,7 @@
             <div class="row" style="margin-top:8px;grid-template-columns:1fr 1fr 1fr 1fr;">
               <label>Nome da averbadora (opcional)<input id="credAverbadoraNome" type="text" /></label>
               <label>Status<select id="credAtiva"><option value="true">Ativo</option><option value="false">Inativo</option></select></label>
-              <label>Limite<input id="credLimite" type="number" min="1" value="450" /></label>
+              <label>Limite<input id="credLimite" type="number" min="1" value="400" /></label>
               <div style="display:flex;align-items:end;"><button id="btnSalvarCredencial">Salvar credencial</button></div>
             </div>
           </div>
@@ -509,11 +509,11 @@
             nome_credencial: document.getElementById('credNome').value.trim(),
             usuario: document.getElementById('credUsuario').value.trim(),
             senha: document.getElementById('credSenha').value,
-            limite_consultas: Number(document.getElementById('credLimite').value || '450'),
+            limite_consultas: Number(document.getElementById('credLimite').value || '400'),
             ativa: document.getElementById('credAtiva').value === 'true',
           })});
           document.getElementById('credNome').value = ''; document.getElementById('credUsuario').value = ''; document.getElementById('credSenha').value = '';
-          document.getElementById('credAverbadoraLink').value = ''; document.getElementById('credAverbadoraNome').value = ''; document.getElementById('credLimite').value = '450';
+          document.getElementById('credAverbadoraLink').value = ''; document.getElementById('credAverbadoraNome').value = ''; document.getElementById('credLimite').value = '400';
           showStatus('statusCredenciais', 'Credencial cadastrada com sucesso.'); await Promise.all([loadCredenciais(), loadAverbadoras()]);
         } catch (err) { showStatus('statusCredenciais', err.message); }
       });
@@ -622,4 +622,3 @@
     </script>
   </body>
 </html>
-

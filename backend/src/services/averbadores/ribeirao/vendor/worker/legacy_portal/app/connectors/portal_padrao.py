@@ -1,4 +1,5 @@
-﻿from app.connectors.base import AverbadoraConnector
+from __future__ import annotations
+from app.connectors.base import AverbadoraConnector
 from app.services.margem_consulta import ConsultaResultado, MargemConsultaService
 
 

@@ -59,7 +59,7 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
             return portal.replace("/Inicial/Inicial.aspx", "/Margem/ConsultaMargem.aspx")
         if "ConsultaMargem.aspx" in portal:
             return portal
-        return "https://saec.consigx.com.br/Margem/ConsultaMargem.aspx"
+        return "https://saec.consiglog.com.br/Margem/ConsultaMargem.aspx"
 
     @staticmethod
     def _browser_launch_args() -> list[str]:
@@ -139,7 +139,8 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
                     const clean = (value) => String(value || "").replace(/\\s+/g, " ").trim();
                     const money = (value) => clean(value).match(/-?\\d{1,3}(?:\\.\\d{3})*,\\d{2}|-?\\d+,\\d{2}/)?.[0] || "";
                     const bodyText = normalize(document.body?.innerText || document.body?.textContent || "");
-                    const notFound = /CPF\\/?MATRICULA NAO ENCONTRADO|CPF NAO ENCONTRADO|MATRICULA NAO ENCONTRADA/.test(bodyText);
+                    const notFound = /CPF\\/?MATRICULA NAO ENCONTRADO|CPF NAO ENCONTRADO|MATRICULA NAO ENCONTRADA|DADOS DE CADASTRO NAO LOCALIZADO|CADASTRO NAO LOCALIZADO|SERVIDOR NAO LOCALIZADO/.test(bodyText);
+                    const notAllowed = /CLIENTE NAO PERMITE CONSULTA|CLIENTE NAO AUTORIZA CONSULTA|CONSULTA NAO PERMITIDA|NAO PERMITE CONSULTA|SEM PERMISSAO PARA CONSULTA|CONSULTA BLOQUEADA/.test(bodyText);
                     const tables = Array.from(document.querySelectorAll("table"));
                     const rows = [];
                     const pageText = clean(document.body?.innerText || document.body?.textContent || "");
@@ -378,10 +379,56 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
                       }
                     }
 
+                    if (!rows.length && bodyText.includes("MARGEM BRUTA") && bodyText.includes("MARGEM DISPONIVEL")) {
+                      const sliceBetween = (source, startMarker, endMarkers) => {
+                        const start = source.indexOf(startMarker);
+                        if (start < 0) return "";
+                        let end = source.length;
+                        for (const marker of endMarkers || []) {
+                          const pos = source.indexOf(marker, start + startMarker.length);
+                          if (pos > start && pos < end) end = pos;
+                        }
+                        return source.slice(start, end);
+                      };
+                      const grossSection = sliceBetween(bodyText, "MARGEM BRUTA", ["DADOS FUNCIONAIS", "MARGEM DISPONIVEL"]);
+                      const netSection = sliceBetween(bodyText, "MARGEM DISPONIVEL", ["IMPRIMIR", "VOLTAR", "QUEM SOMOS"]);
+                      const products = [
+                        { service: "CONSIGNACOES FACULTATIVAS", aliases: ["CONSIGNACOES FACULTATIVAS", "CONSIGNACAO FACULTATIVA"] },
+                        { service: "CARTAO DE CREDITO", aliases: ["CARTAO DE CREDITO", "CARTAO CREDITO"] },
+                        { service: "CARTAO DE BENEFICIO", aliases: ["CARTAO DE BENEFICIO", "CARTAO BENEFICIO"] },
+                      ];
+                      const findValue = (section, aliases) => {
+                        for (const alias of aliases) {
+                          const idx = section.indexOf(alias);
+                          if (idx < 0) continue;
+                          const chunk = section.slice(idx, idx + 180);
+                          const values = chunk.match(/-?\\d{1,3}(?:\\.\\d{3})*,\\d{2}|-?\\d+,\\d{2}/g) || [];
+                          if (values.length) return values[0];
+                        }
+                        return "";
+                      };
+                      for (const product of products) {
+                        const total = findValue(grossSection, product.aliases);
+                        const available = findValue(netSection, product.aliases);
+                        if (!total && !available) continue;
+                        rows.push({
+                          service: product.service,
+                          total,
+                          reserved: "",
+                          available,
+                          raw_cells: [product.service, total, "", available],
+                          raw_normalized_cells: [product.service, total, "", available],
+                        });
+                      }
+                      if (rows.length) {
+                        tableFound = true;
+                      }
+                    }
+
                     captureMetadataFromVisibleInputs();
                     captureMetadataFromText();
 
-                    return { notFound, tableFound, rows, metadata, bodyText, tableCount: tables.length };
+                    return { notFound, notAllowed, tableFound, rows, metadata, bodyText, tableCount: tables.length };
                 }"""
             )
             return data if isinstance(data, dict) else {"notFound": False, "tableFound": False, "rows": [], "bodyText": ""}
@@ -744,6 +791,10 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
                 current_url = ""
             if "ConsultaMargemDados.aspx" in current_url:
                 return
+            if "ServidorMatriculaLista.aspx" in current_url:
+                if await self._handle_matricula_selection_page():
+                    await self.page.wait_for_timeout(900)
+                    continue
             try:
                 body_text = await self.page.locator("body").inner_text(timeout=1200)
             except Exception:
@@ -751,11 +802,114 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
             normalized_body = self._normalize_text(body_text)
             if "DETALHES DA MARGEM" in normalized_body:
                 return
+            if "LISTA DE MATRICULA" in normalized_body or (
+                "MATRICULA" in normalized_body and "SERVIDOR" in normalized_body
+            ):
+                if await self._handle_matricula_selection_page():
+                    await self.page.wait_for_timeout(900)
+                    continue
             if "CPF/MATRICULA NAO ENCONTRADO" in normalized_body or "CPF NAO ENCONTRADO" in normalized_body:
                 return
             if await self._wait_any(self.settings.pdc_selector_result_ready, 800):
                 return
             await self.page.wait_for_timeout(500)
+
+    async def _handle_matricula_selection_page(self) -> bool:
+        try:
+            clicked = await self.page.evaluate(
+                """() => {
+                    const normalize = (value) =>
+                      String(value || "")
+                        .normalize("NFD")
+                        .replace(/[\\u0300-\\u036f]/g, "")
+                        .toLowerCase()
+                        .trim();
+                    const isVisible = (el) => {
+                      if (!el) return false;
+                      const style = window.getComputedStyle(el);
+                      if (!style) return false;
+                      const rect = el.getBoundingClientRect();
+                      return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
+                    };
+                    const canClick = (el) => {
+                      if (!el || !isVisible(el)) return false;
+                      if (el instanceof HTMLInputElement || el instanceof HTMLButtonElement) return !el.disabled;
+                      return true;
+                    };
+                    const clickNode = (el) => {
+                        if (!canClick(el)) return false;
+                        try {
+                          el.click();
+                          return true;
+                        } catch (_) {
+                          return false;
+                        }
+                    };
+                    const resolveActionTarget = (el) => {
+                      if (!el) return null;
+                      if (el instanceof HTMLImageElement) {
+                        return el.closest("a,button") || el;
+                      }
+                      return el;
+                    };
+                    const actionLike = (el) => {
+                      const target = resolveActionTarget(el);
+                      const text = normalize(target?.textContent || target?.value || target?.getAttribute("title") || "");
+                      const href = normalize(target?.getAttribute("href") || "");
+                      const onclick = normalize(target?.getAttribute("onclick") || "");
+                      if (text.includes("selecion") || text.includes("acessar") || text.includes("detalh") || text.includes("consult")) return true;
+                      if (href.startsWith("javascript:__dopostback")) return true;
+                      if (onclick.includes("__dopostback") || onclick.includes("consult")) return true;
+                      return false;
+                    };
+                    const candidateControls = (scope) => {
+                      const nodes = Array.from(scope.querySelectorAll("a,button,input[type='button'],input[type='submit'],img"));
+                      return nodes
+                        .map((el) => resolveActionTarget(el))
+                        .filter((el, idx, arr) => el && arr.indexOf(el) === idx)
+                        .filter((el) => canClick(el) && actionLike(el));
+                    };
+
+                    const rows = Array.from(document.querySelectorAll("tr")).filter((row) => {
+                      const text = normalize(row.textContent || "");
+                      const hasAction = candidateControls(row).length > 0;
+                      const tdCount = row.querySelectorAll("td").length;
+                      return hasAction && tdCount > 0 && (text.includes("matricula") || text.includes("cpf") || text.includes("nome") || /\\d{3,}/.test(text));
+                    });
+
+                    for (const row of rows) {
+                      const controls = candidateControls(row);
+                      for (const control of controls) {
+                        if (clickNode(control)) return true;
+                      }
+                    }
+
+                    const tables = Array.from(document.querySelectorAll("table"));
+                    for (const table of tables) {
+                      const tableRows = Array.from(table.querySelectorAll("tr"));
+                      for (const row of tableRows) {
+                        if (row.querySelectorAll("td").length === 0) continue;
+                        const controls = candidateControls(row);
+                        for (const control of controls) {
+                          if (clickNode(control)) return true;
+                        }
+                      }
+                    }
+
+                    const fallback = Array.from(document.querySelectorAll("a,button,input[type='button'],input[type='submit'],img"))
+                      .map((el) => resolveActionTarget(el))
+                      .filter((el, idx, arr) => el && arr.indexOf(el) === idx)
+                      .filter((el) => canClick(el) && actionLike(el));
+                    for (const control of fallback) {
+                      if (clickNode(control)) return true;
+                    }
+
+                    return false;
+                }"""
+            )
+            return bool(clicked)
+        except Exception:
+            return False
 
     async def _is_login_submit_disabled(self) -> bool | None:
         selectors = self._selector_options(self.settings.pdc_selector_login_submit)
@@ -1351,6 +1505,8 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
         )
         if extracted_table.get("notFound"):
             raise RuntimeError("CPF_NOT_FOUND: CPF/Matricula nao encontrado.")
+        if extracted_table.get("notAllowed"):
+            raise RuntimeError("CLIENT_QUERY_NOT_ALLOWED: Cliente nao permite consulta.")
 
         table_rows = extracted_table.get("rows") or []
         metadata = extracted_table.get("metadata") or {}
@@ -1380,6 +1536,8 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
         emprestimo_disponivel = ""
         cartao_total = ""
         cartao_disponivel = ""
+        cartao_beneficio_total = ""
+        cartao_beneficio_disponivel = ""
         margem_rows = []
 
         for row in table_rows:
@@ -1399,7 +1557,10 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
                 }
             )
 
-            if "EMPRESTIMO" in service:
+            if "BENEFICIO" in service:
+                cartao_beneficio_total = cartao_beneficio_total or total
+                cartao_beneficio_disponivel = cartao_beneficio_disponivel or available
+            elif "EMPRESTIMO" in service or "FACULTATIV" in service or "CONSIGNAC" in service:
                 emprestimo_total = emprestimo_total or total
                 emprestimo_disponivel = emprestimo_disponivel or available
             elif "CARTAO" in service:
@@ -1410,23 +1571,46 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
             fallback = await self._extract_margens_from_text()
             emprestimo_total = fallback.get("bruta_facultativa") or ""
             emprestimo_disponivel = fallback.get("disp_facultativa") or ""
-            cartao_total = fallback.get("bruta_cartao") or fallback.get("bruta_cartao_beneficio") or ""
-            cartao_disponivel = fallback.get("disp_cartao") or fallback.get("disp_cartao_beneficio") or ""
-            if emprestimo_total or emprestimo_disponivel or cartao_total or cartao_disponivel:
-                margem_rows = [
-                    {
-                        "service": "MARGEM EMPRESTIMO",
-                        "total": emprestimo_total,
-                        "reserved": "",
-                        "available": emprestimo_disponivel,
-                    },
-                    {
-                        "service": "MARGEM CARTAO",
-                        "total": cartao_total,
-                        "reserved": "",
-                        "available": cartao_disponivel,
-                    },
-                ]
+            cartao_total = fallback.get("bruta_cartao") or ""
+            cartao_disponivel = fallback.get("disp_cartao") or ""
+            cartao_beneficio_total = fallback.get("bruta_cartao_beneficio") or ""
+            cartao_beneficio_disponivel = fallback.get("disp_cartao_beneficio") or ""
+            if (
+                emprestimo_total
+                or emprestimo_disponivel
+                or cartao_total
+                or cartao_disponivel
+                or cartao_beneficio_total
+                or cartao_beneficio_disponivel
+            ):
+                margem_rows = []
+                if emprestimo_total or emprestimo_disponivel:
+                    margem_rows.append(
+                        {
+                            "service": "CONSIGNACOES FACULTATIVAS",
+                            "total": emprestimo_total,
+                            "reserved": "",
+                            "available": emprestimo_disponivel,
+                        }
+                    )
+                if cartao_total or cartao_disponivel:
+                    margem_rows.append(
+                        {
+                            "service": "CARTAO CONSIGNADO",
+                            "total": cartao_total,
+                            "reserved": "",
+                            "available": cartao_disponivel,
+                        }
+                    )
+                if cartao_beneficio_total or cartao_beneficio_disponivel:
+                    margem_rows.append(
+                        {
+                            "service": "CARTAO BENEFICIO",
+                            "total": cartao_beneficio_total,
+                            "reserved": "",
+                            "available": cartao_beneficio_disponivel,
+                        }
+                    )
 
         if not margem_rows:
             raise RuntimeError("MARGIN_ROWS_NOT_FOUND: Nao encontrei linhas de margem na tela de detalhes.")
@@ -1448,27 +1632,52 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
             fallback_values = await self._extract_margens_from_text()
             fallback_emprestimo_total = fallback_values.get("bruta_facultativa") or fallback_values.get("margem_emprestimo_total") or ""
             fallback_emprestimo_disponivel = fallback_values.get("disp_facultativa") or fallback_values.get("margem_emprestimo_disponivel") or ""
-            fallback_cartao_total = fallback_values.get("bruta_cartao") or fallback_values.get("bruta_cartao_beneficio") or fallback_values.get("margem_cartao_total") or ""
-            fallback_cartao_disponivel = fallback_values.get("disp_cartao") or fallback_values.get("disp_cartao_beneficio") or fallback_values.get("margem_cartao_disponivel") or ""
-            if fallback_emprestimo_total or fallback_emprestimo_disponivel or fallback_cartao_total or fallback_cartao_disponivel:
+            fallback_cartao_total = fallback_values.get("bruta_cartao") or fallback_values.get("margem_cartao_total") or ""
+            fallback_cartao_disponivel = fallback_values.get("disp_cartao") or fallback_values.get("margem_cartao_disponivel") or ""
+            fallback_cartao_beneficio_total = fallback_values.get("bruta_cartao_beneficio") or fallback_values.get("margem_cartao_beneficio_total") or ""
+            fallback_cartao_beneficio_disponivel = fallback_values.get("disp_cartao_beneficio") or fallback_values.get("margem_cartao_beneficio_disponivel") or ""
+            if (
+                fallback_emprestimo_total
+                or fallback_emprestimo_disponivel
+                or fallback_cartao_total
+                or fallback_cartao_disponivel
+                or fallback_cartao_beneficio_total
+                or fallback_cartao_beneficio_disponivel
+            ):
                 emprestimo_total = emprestimo_total or fallback_emprestimo_total
                 emprestimo_disponivel = emprestimo_disponivel or fallback_emprestimo_disponivel
                 cartao_total = cartao_total or fallback_cartao_total
                 cartao_disponivel = cartao_disponivel or fallback_cartao_disponivel
-                margem_rows = [
-                    {
-                        "service": "MARGEM EMPRESTIMO",
-                        "total": emprestimo_total,
-                        "reserved": "",
-                        "available": emprestimo_disponivel,
-                    },
-                    {
-                        "service": "MARGEM CARTAO",
-                        "total": cartao_total,
-                        "reserved": "",
-                        "available": cartao_disponivel,
-                    },
-                ]
+                cartao_beneficio_total = cartao_beneficio_total or fallback_cartao_beneficio_total
+                cartao_beneficio_disponivel = cartao_beneficio_disponivel or fallback_cartao_beneficio_disponivel
+                margem_rows = []
+                if emprestimo_total or emprestimo_disponivel:
+                    margem_rows.append(
+                        {
+                            "service": "CONSIGNACOES FACULTATIVAS",
+                            "total": emprestimo_total,
+                            "reserved": "",
+                            "available": emprestimo_disponivel,
+                        }
+                    )
+                if cartao_total or cartao_disponivel:
+                    margem_rows.append(
+                        {
+                            "service": "CARTAO CONSIGNADO",
+                            "total": cartao_total,
+                            "reserved": "",
+                            "available": cartao_disponivel,
+                        }
+                    )
+                if cartao_beneficio_total or cartao_beneficio_disponivel:
+                    margem_rows.append(
+                        {
+                            "service": "CARTAO BENEFICIO",
+                            "total": cartao_beneficio_total,
+                            "reserved": "",
+                            "available": cartao_beneficio_disponivel,
+                        }
+                    )
                 has_any_value = any(
                     bool(item.get("total")) or bool(item.get("available")) for item in margem_rows
                 )
@@ -1489,7 +1698,9 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
             f"emprestimo_total={emprestimo_total or ''} | "
             f"emprestimo_disponivel={emprestimo_disponivel or ''} | "
             f"cartao_total={cartao_total or ''} | "
-            f"cartao_disponivel={cartao_disponivel or ''}",
+            f"cartao_disponivel={cartao_disponivel or ''} | "
+            f"cartao_beneficio_total={cartao_beneficio_total or ''} | "
+            f"cartao_beneficio_disponivel={cartao_beneficio_disponivel or ''}",
             file=sys.stderr,
             flush=True,
         )
@@ -1509,7 +1720,7 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
             status="sucesso" if has_positive_margin else "sem_marg",
             margem_disponivel=emprestimo_disponivel,
             margem_cartao=cartao_disponivel,
-            margem_cartao_beneficio="",
+            margem_cartao_beneficio=cartao_beneficio_disponivel,
             payload_extra={
                 "nome_portal": metadata.get("nome_portal") or "",
                 "matricula": metadata.get("matricula") or "",
@@ -1525,8 +1736,10 @@ class PortalSecundarioLegacyConnector(AverbadoraConnector):
                 "facultativa_disponivel": emprestimo_disponivel or "",
                 "cartao_margem_consignavel": cartao_total or "",
                 "cartao_disponivel": cartao_disponivel or "",
-                "cartao_beneficio_margem_consignavel": "",
-                "cartao_beneficio_disponivel": "",
+                "cartao_beneficio_margem_consignavel": cartao_beneficio_total or "",
+                "cartao_beneficio_disponivel": cartao_beneficio_disponivel or "",
+                "margem_cartao_beneficio_total": cartao_beneficio_total or "",
+                "margem_cartao_beneficio_disponivel": cartao_beneficio_disponivel or "",
                 "detalhes_margem": {
                     "rows": margem_rows,
                     "table_found": table_found,

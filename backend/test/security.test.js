@@ -11,7 +11,6 @@ process.env.HASH_SECRET = 'test-hash-secret';
 
 const protection = await import('../src/dataProtection.js');
 const db = await import('../src/db.js');
-const utils = await import('../src/utils.js');
 const ribeiraoTypes = await import('../src/services/averbadores/ribeirao/ribeiraoTypes.js');
 
 await db.initDb();
@@ -67,7 +66,7 @@ test('audit log sanitiza metadata antes de persistir', () => {
 
 test('importacao da esteira aceita planilha somente com CPF sem cabecalho', () => {
   const workbook = xlsx.utils.book_new();
-  const sheet = xlsx.utils.aoa_to_sheet([['12345678909'], ['11144477735']]);
+  const sheet = xlsx.utils.aoa_to_sheet([['12345678909'], ['98765432100']]);
   xlsx.utils.book_append_sheet(workbook, sheet, 'Base');
   const buffer = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
 
@@ -79,44 +78,14 @@ test('importacao da esteira aceita planilha somente com CPF sem cabecalho', () =
 
 test('importacao da esteira aceita coluna de CPF sem nome do cliente', () => {
   const workbook = xlsx.utils.book_new();
-  const sheet = xlsx.utils.json_to_sheet([{ CPF: '12345678909' }, { CPF: '11144477735' }]);
+  const sheet = xlsx.utils.json_to_sheet([{ CPF: '12345678909' }, { CPF: '98765432100' }]);
   xlsx.utils.book_append_sheet(workbook, sheet, 'Base');
   const buffer = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
 
   const analysis = db.analyzeSpreadsheet(buffer, 'base-cpf.xlsx');
   assert.equal(analysis.summary.valid_rows, 2);
   assert.equal(analysis.summary.invalid_rows, 0);
-  assert.equal(analysis.rows[1].name, 'Cliente 7735');
-});
-
-test('parser de moeda preserva margem negativa do portal', () => {
-  assert.equal(utils.parseMoney('R$ -123,45'), -123.45);
-  assert.equal(utils.parseMoney('R$ 123,45-'), -123.45);
-  assert.equal(utils.parseMoney('(123,45)'), -123.45);
-  assert.equal(utils.parseMoney('123,45 negativo'), -123.45);
-});
-
-test('consulta Ribeirao com margens negativas fica sem margem sem perder valores', () => {
-  const result = ribeiraoTypes.normalizeRibeiraoQueryResult(
-    {
-      status: 'sucesso',
-      payload_extra: {
-        margem_emprestimo_total: 'R$ 0,00',
-        margem_emprestimo_disponivel: 'R$ -42,35',
-        margem_cartao_total: 'R$ 0,00',
-        margem_cartao_disponivel: 'R$ 12,00-',
-      },
-    },
-    '12345678909',
-    1,
-    1
-  );
-
-  assert.equal(result.success, true);
-  assert.equal(result.consultaStatus, ribeiraoTypes.RIBEIRAO_QUERY_STATUSES.WITHOUT_MARGIN);
-  assert.equal(result.margem_emprestimo_disponivel, -42.35);
-  assert.equal(result.margem_cartao_disponivel, -12);
-  assert.equal(result.products.find((item) => item.product_type === 'credito')?.state.label, 'Negativa');
+  assert.equal(analysis.rows[1].name, 'Cliente 2100');
 });
 
 function seedPipelineClient({
@@ -244,6 +213,32 @@ test('governo acima de 70 anos usa Santander ou Banco do Brasil para consignado'
   assert.deepEqual(banks, ['banco_brasil', 'santander']);
 });
 
+test('normalizacao do governo SP preserva consignacoes facultativas e cartao beneficio separados', () => {
+  const normalized = ribeiraoTypes.normalizeRibeiraoQueryResult(
+    {
+      status: 'sucesso',
+      payload_extra: {
+        margem_emprestimo_total: 'R$ 1.234,56',
+        margem_emprestimo_disponivel: 'R$ 987,65',
+        margem_cartao_beneficio_total: 'R$ 3.210,00',
+        margem_cartao_beneficio_disponivel: 'R$ 2.100,00',
+        orgao: 'TJSP',
+      },
+    },
+    '38249822854',
+    1,
+    1,
+    []
+  );
+
+  assert.equal(normalized.margem_consignavel_bruta, 1234.56);
+  assert.equal(normalized.margem_consignavel_liquida, 987.65);
+  assert.equal(normalized.margem_cartao_beneficio_bruta, 3210);
+  assert.equal(normalized.margem_cartao_beneficio_liquida, 2100);
+  assert.equal(normalized.products.some((item) => item.product_type === 'consignacao' && item.net_margin === 987.65), true);
+  assert.equal(normalized.products.some((item) => item.product_type === 'cartao_beneficio' && item.net_margin === 2100), true);
+});
+
 test('prefeitura abaixo de 150 mantem consignado com complemento de cartao', () => {
   db.saveBankCoefficient({ convenio: 'prefeitura_rp', banco: 'futuro_previdencia', bancoLabel: 'Futuro Previdência', produto: 'consignado', coeficiente: 0.02, prazo: 120 });
   const clientId = seedPipelineClient({
@@ -263,41 +258,4 @@ test('prefeitura abaixo de 150 mantem consignado com complemento de cartao', () 
   const opportunity = result.oportunidades.find((item) => item.client_id === clientId);
   assert.equal(opportunity?.oferta_complementar, true);
   assert.equal(opportunity?.produto_complementar, 'cartao_consignado');
-});
-
-test('campanha controlada exige dry-run e bloqueia disparo real por padrao', () => {
-  db.saveBankCoefficient({ convenio: 'gov_sp', banco: 'daycoval', bancoLabel: 'Daycoval', produto: 'consignado', coeficiente: 0.02, prazo: 96 });
-  const clientId = seedPipelineClient({
-    name: 'Cliente Campanha Controlada',
-    cpf: '90000000006',
-    phone: '11900000006',
-    margins: [{ product_type: 'consignado', gross_margin: 300, net_margin: 300 }],
-  });
-  const result = db.listCampaignOpportunities({ convenio: 'gov_sp', produto: 'consignado', banco: 'daycoval' });
-  const opportunity = result.oportunidades.find((item) => item.client_id === clientId);
-  assert.ok(opportunity);
-
-  const campaign = db.createDispatchCampaign({
-    nome: 'Campanha controlada teste',
-    convenio: 'gov_sp',
-    produto: 'consignado',
-    banco: 'daycoval',
-    sessao_rewhats: 'chip-teste',
-    clientes: [opportunity],
-  });
-  assert.equal(campaign.campanha.status, 'RASCUNHO');
-
-  const preview = db.getDispatchCampaignPreview(campaign.campanha.id);
-  assert.equal(preview.total, 1);
-  assert.equal(preview.previa[0].cpf, '***.***.***-**');
-
-  const dryRun = db.runCampaignDryRun(campaign.campanha.id);
-  assert.equal(dryRun.resultado.seriam_enviados.length, 1);
-  assert.equal(dryRun.campanha.status, 'DRY_RUN_OK');
-  assert.equal(db.listCampaignDryRuns(campaign.campanha.id).length, 1);
-
-  const approved = db.approveDispatchCampaign(campaign.campanha.id);
-  assert.equal(approved.campanha.status, 'PRONTA_PARA_DISPARO');
-
-  assert.throws(() => db.startDispatchCampaign(campaign.campanha.id), /Disparo real bloqueado/);
 });

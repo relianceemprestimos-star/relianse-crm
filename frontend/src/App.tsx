@@ -4,26 +4,29 @@ import { Shell } from './components/Shell';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { RoleGuard } from './components/RoleGuard';
 import DashboardPage from './pages/DashboardPage';
+import SmartPipelinePage from './pages/SmartPipelinePage';
 import CampaignsPage from './pages/CampaignsPage';
 import CampaignDetailPage from './pages/CampaignDetailPage';
+import CampaignCoefficientPage from './pages/CampaignCoefficientPage';
 import CampaignOpportunitiesPage from './pages/CampaignOpportunitiesPage';
-import CreateDispatchCampaignPage from './pages/CreateDispatchCampaignPage';
-import CampaignPreviewPage from './pages/CampaignPreviewPage';
-import CampaignDryRunPage from './pages/CampaignDryRunPage';
-import CampaignDispatchPage from './pages/CampaignDispatchPage';
-import CampaignTrackingPage from './pages/CampaignTrackingPage';
+import DispatchCampaignsPage from './pages/DispatchCampaignsPage';
+import DispatchCampaignNewPage from './pages/DispatchCampaignNewPage';
+import DispatchCampaignDetailPage from './pages/DispatchCampaignDetailPage';
+import MpspJulyCampaignPage from './pages/MpspJulyCampaignPage';
+import CampaignDocumentsPage from './pages/CampaignDocumentsPage';
+import ClientDocumentsPage from './pages/ClientDocumentsPage';
+import DocumentsHomePage from './pages/DocumentsHomePage';
 import UploadPage from './pages/UploadPage';
 import BasesPage from './pages/BasesPage';
 import QueuePage from './pages/QueuePage';
 import AttendancePage from './pages/AttendancePage';
 import ReportsPage from './pages/ReportsPage';
 import WhatsAppPage from './pages/WhatsAppPage';
-import WhatsAppApiPage from './pages/WhatsAppApiPage';
 import SettingsPage from './pages/SettingsPage';
 import RibeiraoPage from './pages/RibeiraoPage';
 import PhoneLookupPage from './pages/PhoneLookupPage';
-import CredentialsPage from './pages/CredentialsPage';
 import UsersPage from './pages/UsersPage';
+import CredentialsPage from './pages/CredentialsPage';
 import LoginPage from './pages/LoginPage';
 
 export default function App() {
@@ -35,30 +38,31 @@ export default function App() {
         <Route element={<Shell />}>
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/esteira-inteligente" element={<SmartPipelinePage />} />
           <Route path="/campanhas" element={<CampaignsPage />} />
+          <Route path="/campanhas/coeficiente" element={<CampaignCoefficientPage />} />
           <Route path="/campanhas/oportunidades" element={<CampaignOpportunitiesPage />} />
-          <Route path="/campanhas/nova" element={<CreateDispatchCampaignPage />} />
-          <Route path="/campanhas/:id/previa" element={<CampaignPreviewPage />} />
-          <Route path="/campanhas/:id/dry-run" element={<CampaignDryRunPage />} />
-          <Route path="/campanhas/:id/disparo" element={<CampaignDispatchPage />} />
-          <Route path="/campanhas/:id/acompanhamento" element={<CampaignTrackingPage />} />
+          <Route path="/campanhas/disparos" element={<DispatchCampaignsPage />} />
+          <Route path="/campanhas/mpsp-julho" element={<MpspJulyCampaignPage />} />
+          <Route path="/campanhas/nova" element={<DispatchCampaignNewPage />} />
+          <Route path="/campanhas/disparo/:id/documentos" element={<CampaignDocumentsPage />} />
+          <Route path="/campanhas/disparo/:id/cliente/:telefone/documentos" element={<ClientDocumentsPage />} />
+          <Route path="/campanhas/disparo/:id" element={<DispatchCampaignDetailPage />} />
           <Route path="/campanhas/:id" element={<CampaignDetailPage />} />
+          <Route path="/documentos" element={<DocumentsHomePage />} />
           <Route path="/fila" element={<QueuePage />} />
           <Route path="/atendimento" element={<AttendancePage />} />
           <Route path="/whatsapp" element={<WhatsAppPage />} />
-          <Route path="/whatsapp-api" element={<WhatsAppApiPage />} />
-          <Route path="/whatsapp-fluxos" element={<WhatsAppApiPage />} />
-          <Route path="/upload" element={<UploadPage />} />
-          <Route path="/bases" element={<BasesPage />} />
-          <Route path="/relatorios" element={<ReportsPage />} />
-          <Route path="/consulta-margem" element={<RibeiraoPage />} />
-          <Route path="/consulta-ribeirao" element={<RibeiraoPage />} />
-          <Route path="/consulta-telefones" element={<PhoneLookupPage />} />
-          <Route path="/configuracoes" element={<SettingsPage />} />
 
           <Route element={<RoleGuard allowedRoles={['gerencial']} />}>
+            <Route path="/upload" element={<UploadPage />} />
+            <Route path="/bases" element={<BasesPage />} />
+            <Route path="/relatorios" element={<ReportsPage />} />
+            <Route path="/consulta-ribeirao" element={<RibeiraoPage />} />
+            <Route path="/consulta-telefones" element={<PhoneLookupPage />} />
             <Route path="/credenciais" element={<CredentialsPage />} />
             <Route path="/usuarios" element={<UsersPage />} />
+            <Route path="/configuracoes" element={<SettingsPage />} />
           </Route>
         </Route>
       </Route>

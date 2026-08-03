@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Archive, ArrowRight, FileText, PencilLine, RefreshCcw, ShieldCheck, Layers3 } from 'lucide-react';
+import { Archive, ArrowRight, Download, FileText, Landmark, Layers3, PencilLine, RefreshCcw, ShieldCheck, Upload } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 import { api } from '../lib/api';
 import type { Base } from '../types';
 import { Badge, Button, Card, SectionHeader, StatCard } from '../components/ui';
-import { formatCurrencyDisplay } from '../lib/margins';
 
 type ViewMode = 'active' | 'archived' | 'all';
 
@@ -89,11 +88,62 @@ export default function BasesPage() {
     }
   }
 
+  async function handleDownloadBase(base: Base) {
+    try {
+      const blob = await api.exportClientsWithPhones({ base_id: base.id });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const safeName = String(base.nome_base || `base-${base.id}`)
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-zA-Z0-9_-]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .toLowerCase();
+      link.href = url;
+      link.download = `${safeName || `base-${base.id}`}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      toast.success('Download da base iniciado.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Falha ao baixar a base.');
+    }
+  }
+
+  function purposeLabel(base: Base) {
+    const marker = String(base.observacao || '').toLowerCase();
+    const type = String(base.tipo_base || '').toLowerCase();
+    if (marker.includes('[finalidade:esteira]') || type.includes('esteira') || type.includes('campanha')) {
+      return { label: 'Esteira/Campanha', tone: 'accent' as const };
+    }
+    if (marker.includes('[finalidade:margem]') || type.includes('margem')) {
+      return { label: 'Consulta de Margem', tone: 'info' as const };
+    }
+    return { label: 'Não definida', tone: 'neutral' as const };
+  }
+
   return (
     <div className="space-y-8">
       <SectionHeader
-        title="Bases"
+        title="Base & Margem"
         description="Cada importação vira uma base própria, com origem clara, filtros e histórico organizado."
+        action={
+          <div className="flex flex-wrap gap-3">
+            <Button variant="secondary" onClick={() => navigate('/consulta-ribeirao')}>
+              <Landmark size={16} />
+              Consulta de margem
+            </Button>
+            <Button variant="secondary" onClick={() => navigate('/upload?purpose=margem')}>
+              <Upload size={16} />
+              Importar p/ margem
+            </Button>
+            <Button onClick={() => navigate('/upload?purpose=esteira')}>
+              <Upload size={16} />
+              Importar p/ esteira
+            </Button>
+          </div>
+        }
       />
 
       <div className="grid gap-4 xl:grid-cols-4">
@@ -133,7 +183,7 @@ export default function BasesPage() {
             <table className="min-w-[1600px] text-left text-sm">
               <thead className="bg-bg/80 text-slate-400">
                 <tr>
-                  {['Nome da base', 'Tipo', 'Convênio / órgão', 'Estado', 'Cidade', 'Total', 'Com margem', 'Sem margem', 'Erros', 'Importação', 'Status', 'Ações'].map((header) => (
+                  {['Nome da base', 'Finalidade', 'Tipo', 'Convênio / órgão', 'Estado', 'Cidade', 'Total', 'Com margem', 'Sem margem', 'Erros', 'Importação', 'Status', 'Ações'].map((header) => (
                     <th key={header} className="px-5 py-4 font-medium">
                       {header}
                     </th>
@@ -143,11 +193,15 @@ export default function BasesPage() {
               <tbody>
                 {visibleBases.map((base) => {
                   const active = Number(base.is_active ?? 1) === 1;
+                  const purpose = purposeLabel(base);
                   return (
                     <tr key={base.id} className="border-t border-border/80">
                       <td className="px-5 py-4">
                         <div className="font-semibold text-white">{base.nome_base}</div>
                         <div className="mt-1 text-xs text-slate-500">{base.arquivo_original || '-'}</div>
+                      </td>
+                      <td className="px-5 py-4">
+                        <Badge tone={purpose.tone}>{purpose.label}</Badge>
                       </td>
                       <td className="px-5 py-4 text-slate-300">{base.tipo_base}</td>
                       <td className="px-5 py-4 text-slate-300">{base.convenio || '-'}</td>
@@ -165,6 +219,10 @@ export default function BasesPage() {
                         <div className="flex flex-wrap gap-2">
                           <Button variant="secondary" className="px-4 py-2" onClick={() => navigate(`/fila?base_id=${base.id}`)}>
                             Atender
+                          </Button>
+                          <Button variant="secondary" className="px-4 py-2" onClick={() => void handleDownloadBase(base)}>
+                            <Download size={16} />
+                            Baixar base
                           </Button>
                           <Button variant="ghost" className="px-4 py-2" onClick={() => navigate(`/relatorios?base_id=${base.id}`)}>
                             Relatório

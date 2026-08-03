@@ -3,7 +3,6 @@ import { Bookmark, Calendar, ChevronRight, Copy, Home, Info, Mail, MapPin, Phone
 import toast from 'react-hot-toast';
 
 import { api } from '../lib/api';
-import { maskCpfForList, maskPhoneForList } from '../lib/privacy';
 import type { Client, ClientAddress, PhoneLookupHistoryItem } from '../types';
 import { Badge, Button, Card, Input } from '../components/ui';
 
@@ -126,7 +125,6 @@ function normalizeConsultation(item: any): LookupResult {
 
 export default function PhoneLookupPage() {
   const [cpf, setCpf] = useState('');
-  const [phone, setPhone] = useState('');
   const [name, setName] = useState('');
   const [clientSearch, setClientSearch] = useState('');
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
@@ -163,13 +161,6 @@ export default function PhoneLookupPage() {
       window.clearTimeout(timer);
     };
   }, [clientSearch]);
-
-  function handleClientSearchChange(value: string) {
-    setClientSearch(value);
-    if (selectedClient && value.trim() !== selectedClient.name) {
-      setSelectedClient(null);
-    }
-  }
 
   const resultPhones = useMemo(() => result?.phones || [], [result]);
   const resultAddresses = useMemo(() => result?.addresses || [], [result]);
@@ -213,14 +204,12 @@ export default function PhoneLookupPage() {
     setSelectedClient(client);
     setClientSearch(client.name);
     setCpf(client.cpf || '');
-    setPhone(client.phone || '');
     setName(client.name || '');
     setClientOptions([]);
   }
 
   function clearFields() {
     setCpf('');
-    setPhone('');
     setName('');
     setClientSearch('');
     setSelectedClient(null);
@@ -232,16 +221,10 @@ export default function PhoneLookupPage() {
   async function handleSearch() {
     try {
       setLoading(true);
-      const typedSearch = clientSearch.trim();
-      const typedDigits = typedSearch.replace(/\D/g, '');
-      const typedSearchLooksLikePhone = !selectedClient && typedDigits.length >= 10 && typedDigits.length <= 11;
-      const effectivePhone = phone.trim() || (typedSearchLooksLikePhone ? typedSearch : selectedClient?.phone || '');
-      const effectiveCpf = cpf.trim() || selectedClient?.cpf || (!typedSearchLooksLikePhone && typedDigits.length === 11 ? typedDigits : '');
-      const effectiveName = name.trim() || (!effectiveCpf && !effectivePhone && typedSearch ? typedSearch : '');
       const response = await api.searchPhones({
-        cpf: effectiveCpf,
-        name: effectiveName,
-        phone: effectivePhone,
+        cpf,
+        name,
+        phone: clientSearch,
         client_id: selectedClient?.id || null,
       });
       const normalized = normalizeConsultation(response);
@@ -252,7 +235,7 @@ export default function PhoneLookupPage() {
       } else if (normalized.status === 'success') {
         toast.success('Consulta realizada e salva.');
       } else if (normalized.status === 'requires_manual_login') {
-        toast.error(normalized.message || 'Sessao expirada. Login manual necessario.');
+        toast.error('A fonte solicitou login manual ou validacao.');
       } else {
         toast.error(normalized.message || 'Consulta nao concluida.');
       }
@@ -292,7 +275,6 @@ export default function PhoneLookupPage() {
       setResult(normalized);
       setActiveTab('summary');
       setCpf(normalized.cpf || '');
-      setPhone(normalized.phones?.[0] ? phoneValue(normalized.phones[0]) : item.telefone_pesquisado || '');
       setName(normalized.full_name || normalized.name || '');
       setClientSearch(response.consultation.client_name || normalized.full_name || normalized.name || '');
       toast.success('Consulta reaberta.');
@@ -322,14 +304,14 @@ export default function PhoneLookupPage() {
       </div>
 
       <Card className="overflow-visible rounded-3xl border-accent/15 bg-panel/80 p-6 shadow-[0_22px_70px_rgba(0,0,0,.22)]">
-        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-[1.2fr_0.75fr_0.8fr_1fr]">
+        <div className="grid gap-5 lg:grid-cols-[1.4fr_0.75fr_1.05fr]">
             <label className="relative block text-sm text-slate-300">
               Cliente do CRM
               <div className="relative mt-2">
                 <Input
                   className="h-12 rounded-full pr-12"
                   value={clientSearch}
-                  onChange={(event) => handleClientSearchChange(event.target.value)}
+                  onChange={(event) => setClientSearch(event.target.value)}
                   placeholder="Digite o nome, CPF ou telefone do cliente"
                 />
                 <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
@@ -344,7 +326,7 @@ export default function PhoneLookupPage() {
                       onClick={() => chooseClient(client)}
                     >
                       <span className="font-semibold text-white">{client.name}</span>
-                      <span className="text-xs text-slate-500">{client.cpf ? maskCpfForList(client.cpf) : maskPhoneForList(client.phone)}</span>
+                      <span className="text-xs text-slate-500">{client.cpf || client.phone || '-'}</span>
                     </button>
                   ))}
                 </div>
@@ -354,11 +336,6 @@ export default function PhoneLookupPage() {
             <label className="block text-sm text-slate-300">
               CPF
               <Input className="mt-2 h-12 rounded-full" value={cpf} onChange={(event) => setCpf(event.target.value)} placeholder="Digite o CPF" />
-            </label>
-
-            <label className="block text-sm text-slate-300">
-              Telefone
-              <Input className="mt-2 h-12 rounded-full" value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="Digite o telefone" />
             </label>
 
             <label className="block text-sm text-slate-300">
@@ -419,9 +396,6 @@ export default function PhoneLookupPage() {
                       <span>Cliente desde <strong className="text-slate-200">{selectedClient.created_at_formatted || formatDate(selectedClient.created_at)}</strong></span>
                     ) : null}
                   </div>
-                  <p className="mt-2 rounded-2xl border border-amber-300/25 bg-amber-300/10 px-3 py-2 text-xs text-amber-50">
-                    Dados sensíveis — CPF completo aparece apenas neste resultado individual para conferência operacional.
-                  </p>
                 </div>
               </div>
 
@@ -454,7 +428,7 @@ export default function PhoneLookupPage() {
                   key={tab.id}
                   type="button"
                   onClick={() => setActiveTab(tab.id)}
-                  className={`inline-flex items-center gap-2 rounded-t-2xl border px-5 py-3 text-sm font-semibold transition ${
+                  className={`inline-flex items-center gap-2 rounded-t-2xl border px-4 py-2.5 text-[15px] font-semibold transition ${
                     activeTab === tab.id
                       ? 'border-accent/40 border-b-accent bg-accent/10 text-accent shadow-[inset_0_-2px_0_rgba(0,209,193,1)]'
                       : 'border-border bg-bg/40 text-slate-300 hover:border-accent/40 hover:text-white'
@@ -495,8 +469,8 @@ export default function PhoneLookupPage() {
                     {primaryAddress ? (
                       <div className="space-y-4">
                         <div className="border-b border-border pb-4">
-                          <p className="leading-relaxed text-slate-200">{addressValue(primaryAddress)}</p>
-                          <p className="mt-2 text-xs text-slate-500">{[primaryAddress.city, primaryAddress.state, primaryAddress.zipcode || primaryAddress.zip_code].filter(Boolean).join(' - ')}</p>
+                          <p className="text-sm leading-7 text-slate-200 break-words">{addressValue(primaryAddress)}</p>
+                          <p className="mt-2 text-xs leading-5 text-slate-500">{[primaryAddress.city, primaryAddress.state, primaryAddress.zipcode || primaryAddress.zip_code].filter(Boolean).join(' - ')}</p>
                         </div>
                         <div className="space-y-2">
                           <Button
@@ -521,7 +495,7 @@ export default function PhoneLookupPage() {
                         <div className="flex items-start gap-3 border-b border-border pb-4">
                           <Mail size={17} className="mt-0.5 text-slate-400" />
                           <div>
-                            <p className="font-semibold text-white">{primaryEmail}</p>
+                            <p className="break-all text-sm font-semibold text-white">{primaryEmail}</p>
                             <p className="mt-1 text-xs text-slate-500">Principal</p>
                           </div>
                         </div>
@@ -624,7 +598,7 @@ export default function PhoneLookupPage() {
                 <tr key={item.id} className="border-t border-border/80">
                   <td className="px-5 py-4 text-slate-300">{item.consulted_at_formatted || item.created_at_formatted || item.consulted_at || item.created_at}</td>
                   <td className="px-5 py-4 font-semibold text-white">{item.client_name || item.full_name || item.name || item.nome || '-'}</td>
-                  <td className="px-5 py-4 text-slate-300">{maskCpfForList(item.cpf)}</td>
+                  <td className="px-5 py-4 text-slate-300">{item.cpf || '-'}</td>
                   <td className="px-5 py-4 text-slate-300">{item.phones_count ?? item.phones_found_count ?? 0}</td>
                   <td className="px-5 py-4">
                     <Badge tone={statusTone(item.status)}>{statusLabel(item.status)}</Badge>
@@ -653,25 +627,25 @@ export default function PhoneLookupPage() {
 
 function SummaryBlock({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
   return (
-    <section className="rounded-2xl border border-border bg-panelAlt/70 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,.03)]">
-      <div className="flex items-center gap-3 border-b border-border pb-4">
+    <section className="rounded-2xl border border-border bg-panelAlt/70 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,.03)]">
+      <div className="flex items-center gap-3 border-b border-border pb-3">
         <span className="text-slate-400">{icon}</span>
-        <h3 className="text-base font-bold text-white">{title}</h3>
+        <h3 className="text-[15px] font-bold text-white">{title}</h3>
       </div>
-      <div className="mt-4">{children}</div>
+      <div className="mt-3">{children}</div>
     </section>
   );
 }
 
 function PersonalLine({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex gap-3 py-3">
-      <span className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-bg/80 text-slate-400">
+    <div className="flex gap-3 py-2.5">
+      <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-bg/80 text-slate-400">
         <Bookmark size={14} />
       </span>
       <div>
         <p className="text-xs text-slate-500">{label}</p>
-        <p className="mt-1 text-sm font-semibold text-slate-100">{value}</p>
+        <p className="mt-1 text-[15px] font-semibold leading-7 text-slate-100 break-words">{value}</p>
       </div>
     </div>
   );
@@ -685,8 +659,8 @@ function PhoneRow({ phone, onCopy }: { phone: ResultPhone; onCopy: () => void })
           <Phone size={16} />
         </span>
         <div>
-          <p className="text-sm font-bold text-white">{phoneValue(phone)}</p>
-          <p className="text-xs text-slate-500">{phoneType(phone) || 'tipo não informado'}</p>
+          <p className="text-[15px] font-semibold text-white">{phoneValue(phone)}</p>
+          <p className="text-xs leading-5 text-slate-500">{phoneType(phone) || 'tipo não informado'}</p>
         </div>
       </div>
       <button type="button" className="rounded-lg p-2 text-slate-400 hover:bg-white/5 hover:text-accent" onClick={onCopy}>
@@ -698,7 +672,7 @@ function PhoneRow({ phone, onCopy }: { phone: ResultPhone; onCopy: () => void })
 
 function InlineLink({ label, onClick }: { label: string; onClick: () => void }) {
   return (
-    <button type="button" className="inline-flex items-center gap-2 text-sm font-semibold text-accent hover:brightness-110" onClick={onClick}>
+    <button type="button" className="inline-flex items-center gap-2 text-sm font-semibold leading-6 text-accent hover:brightness-110" onClick={onClick}>
       {label}
       <ChevronRight size={15} />
     </button>
