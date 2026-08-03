@@ -15,7 +15,6 @@ import {
   Layers3,
   LogOut,
   MessagesSquare,
-  PhoneCall,
   Settings,
   SlidersHorizontal,
   Users,
@@ -39,6 +38,7 @@ const navItems: NavItem[] = [
   { to: '/campanhas', label: 'Campanhas', icon: Flag, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/upload', label: 'Upload de Listas', icon: Files, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/bases', label: 'Bases', icon: Layers3, allowedRoles: ['gerencial', 'vendedor'] },
+  { to: '/leads-pool', label: 'Pool de Leads', icon: Workflow, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/fila', label: 'Fila de Clientes', icon: Users, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/regras-coeficientes', label: 'Regras & Coeficientes', icon: SlidersHorizontal, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/atendimento', label: 'Atendimentos', icon: ClipboardList, allowedRoles: ['gerencial', 'vendedor'] },
@@ -47,7 +47,6 @@ const navItems: NavItem[] = [
   { to: '/whatsapp-fluxos', label: 'Fluxos de WhatsApp', icon: Workflow, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/whatsapp', label: 'WhatsApp Web', icon: MessagesSquare, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/consulta-margem', label: 'Consulta de Margem', icon: Landmark, allowedRoles: ['gerencial', 'vendedor'] },
-  { to: '/consulta-telefones', label: 'Consulta de Telefones', icon: PhoneCall, allowedRoles: ['gerencial', 'vendedor'] },
   { to: '/credenciais', label: 'Credenciais', icon: KeyRound, allowedRoles: ['gerencial'] },
   { to: '/usuarios', label: 'Usuários', icon: Users, allowedRoles: ['gerencial'] },
   { to: '/configuracoes', label: 'Configurações', icon: Settings, allowedRoles: ['gerencial', 'vendedor'] },
@@ -59,6 +58,7 @@ const pageTitles: Record<string, string> = {
   '/campanhas/': 'Campanhas',
   '/upload': 'Upload de Listas',
   '/bases': 'Bases',
+  '/leads-pool': 'Pool de Leads',
   '/fila': 'Fila de Clientes',
   '/regras-coeficientes': 'Regras & Coeficientes',
   '/atendimento': 'Atendimento',
@@ -68,7 +68,6 @@ const pageTitles: Record<string, string> = {
   '/whatsapp-fluxos': 'Fluxos de WhatsApp',
   '/consulta-margem': 'Consulta de Margem',
   '/consulta-ribeirao': 'Consulta de Margem',
-  '/consulta-telefones': 'Consulta de Telefones',
   '/credenciais': 'Credenciais',
   '/usuarios': 'Usuários',
   '/configuracoes': 'Configurações',
@@ -161,7 +160,7 @@ export function Shell() {
                   <div className="mt-3 flex items-center justify-between gap-3">
                     <div>
                       <p className="text-sm font-semibold text-white">Modo escuro ativo</p>
-                      <p className="text-xs text-slate-500">Pronto para operaÃ§Ã£o comercial.</p>
+                      <p className="text-xs text-slate-500">Pronto para operação comercial.</p>
                     </div>
                     <Badge tone="accent">Online</Badge>
                   </div>

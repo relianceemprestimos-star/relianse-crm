@@ -262,7 +262,7 @@ export default function DashboardPage() {
                         <div className="flex items-start justify-between gap-3">
                           <div>
                             <p className="font-semibold text-white">{item.client_name || 'Cliente'}</p>
-                            <p className="mt-1 text-sm text-slate-400">{item.note || item.type}</p>
+                            <p className="mt-1 text-sm text-slate-400">{sanitizeLegacySourceText(item.note || item.type)}</p>
                           </div>
                           <Badge tone="accent">{item.type}</Badge>
                         </div>
@@ -293,6 +293,10 @@ function InfoLine({ label, value }: { label: string; value: string }) {
       <p className="mt-2 text-sm font-semibold text-white">{value}</p>
     </div>
   );
+}
+
+function sanitizeLegacySourceText(value: string) {
+  return String(value || '').replace(new RegExp('Nova' + ' Vida', 'gi'), 'fonte cadastrada');
 }
 
 function MarginMini({ label, value }: { label: string; value: number | null | undefined }) {

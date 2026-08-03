@@ -35,7 +35,6 @@ export default function QueuePage() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loading, setLoading] = useState(true);
   const [startingId, setStartingId] = useState<number | null>(null);
-  const [phoneBulkLoading, setPhoneBulkLoading] = useState(false);
   const [filters, setFilters] = useState<QueueFilters>(() => ({
     status_atendimento: '',
     consulta_status: '',
@@ -45,7 +44,7 @@ export default function QueuePage() {
     convenio: '',
     estado: '',
     cidade: '',
-    assigned_to: '',
+    assigned_to: searchParams.get('assigned_to') || '',
     margin_state: '',
     best_product_type: '',
     age_min: '',
@@ -148,29 +147,6 @@ export default function QueuePage() {
     }
   }
 
-  async function handleQueuePhoneLookup() {
-    try {
-      setPhoneBulkLoading(true);
-      const queued = await api.queuePhoneLookupMarginClients({
-        campaign_id: filters.campaign_id || undefined,
-        base_id: filters.base_id || undefined,
-      });
-      if (!queued.created) {
-        toast('Nenhum cliente elegível para busca de telefone.');
-        return;
-      }
-      toast.success(`${queued.created} cliente(s) com margem entraram na fila de busca.`);
-      const worker = await api.runPhoneLookupWorker(queued.created);
-      toast.success(`Fila processada: ${worker.processed} job(s).`);
-      const clientsResponse = await api.getClients(filters);
-      setResponse(clientsResponse);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Falha ao criar fila de busca de telefones.');
-    } finally {
-      setPhoneBulkLoading(false);
-    }
-  }
-
   async function handleExportClientsWithPhones() {
     try {
       const blob = await api.exportClientsWithPhones(filters);
@@ -197,10 +173,15 @@ export default function QueuePage() {
         title="Fila de Clientes"
         description="Visualize a posição dos clientes, filtre por base e avance o próximo atendimento com um clique."
         action={
-          <Button onClick={handleStartNext}>
-            <UserRoundCheck size={16} />
-            Atender próximo cliente
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={() => navigate('/leads-pool')}>
+              Ver pool
+            </Button>
+            <Button onClick={handleStartNext}>
+              <UserRoundCheck size={16} />
+              Atender próximo cliente
+            </Button>
+          </div>
         }
       />
 
@@ -213,12 +194,9 @@ export default function QueuePage() {
 
       <Card className="flex flex-wrap items-center justify-between gap-3 p-5">
         <div>
-          <p className="font-semibold text-white">Busca de Telefones Nova Vida</p>
-          <p className="mt-1 text-sm text-slate-400">Cria fila apenas para clientes com margem, sem telefone e fora de status de recusa.</p>
+          <p className="font-semibold text-white">Exportação operacional</p>
+          <p className="mt-1 text-sm text-slate-400">Baixe a fila filtrada com telefones já salvos no CRM.</p>
         </div>
-        <Button variant="secondary" onClick={() => void handleQueuePhoneLookup()} disabled={phoneBulkLoading}>
-          {phoneBulkLoading ? 'Buscando telefones...' : 'Buscar telefones com margem'}
-        </Button>
         <Button variant="ghost" onClick={() => void handleExportClientsWithPhones()}>
           Exportar com telefones
         </Button>
@@ -496,7 +474,7 @@ function consultaTone(status?: string) {
   return 'neutral';
 }
 
-function baseScopeFilters(filters: Pick<QueueFilters, 'campaign_id' | 'base_id' | 'base_type' | 'convenio' | 'estado' | 'cidade' | 'age_min' | 'age_max'>) {
+function baseScopeFilters(filters: Pick<QueueFilters, 'campaign_id' | 'base_id' | 'base_type' | 'convenio' | 'estado' | 'cidade' | 'age_min' | 'age_max' | 'assigned_to'>) {
   return {
     campaign_id: filters.campaign_id || undefined,
     base_id: filters.base_id || undefined,
@@ -506,5 +484,6 @@ function baseScopeFilters(filters: Pick<QueueFilters, 'campaign_id' | 'base_id' 
     cidade: filters.cidade || undefined,
     age_min: filters.age_min || undefined,
     age_max: filters.age_max || undefined,
+    assigned_to: filters.assigned_to || undefined,
   };
 }

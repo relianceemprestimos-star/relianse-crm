@@ -96,7 +96,9 @@ function formatDate(value?: string | null) {
 }
 
 function normalizeConsultation(item: any): LookupResult {
-  const emails = Array.isArray(item.emails) ? item.emails : [];
+  const emails = Array.isArray(item.emails) ? item.emails.filter(Boolean) : [];
+  const phones = Array.isArray(item.phones) ? item.phones.filter(Boolean) : [];
+  const addresses = Array.isArray(item.addresses) ? item.addresses.filter(Boolean) : [];
   return {
     status: item.status || 'failed',
     source: item.source || item.origin || 'Consulta salva',
@@ -114,9 +116,9 @@ function normalizeConsultation(item: any): LookupResult {
     father_name: item.father_name || '',
     email: item.email || emailValue(emails[0]) || '',
     emails,
-    addresses: Array.isArray(item.addresses) ? item.addresses : [],
+    addresses,
     raw_data: item.raw_data || {},
-    phones: Array.isArray(item.phones) ? item.phones : [],
+    phones,
     message: item.message || item.error_message || '',
     code: item.code || '',
     consulted_at: item.consulted_at || item.created_at || '',
